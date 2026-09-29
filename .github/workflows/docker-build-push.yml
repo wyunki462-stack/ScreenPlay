@@ -1,0 +1,75 @@
+name: Docker Build and Push
+
+# 触发规则
+on:
+  push:
+    branches: [ "main" ]        # 推送到 main 分支时触发
+    tags: [ 'v*.*.*' ]          # 打版本标签（如 v0.6.0-beta.1）时触发
+  pull_request:
+    branches: [ "main" ]        # PR 只构建不推送，用于验证代码能编过
+
+# 权限：允许推送镜像到 GHCR（GitHub 容器镜像仓库，公开仓库免费）
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+
+# 同一分支有新提交时，取消上一个还在跑的任务，省额度
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 登录 GHCR。
+      # username 必须是 github.actor（触发本次运行的账号）—— 固定字符串在
+      # fork 的 PR 上会失败，写错的话表现为 401 unauthorized。
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 自动生成镜像标签：分支名 / 版本 tag / commit 短哈希
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+
+      # 构建并推送。构建期不传任何代理 —— GitHub 的 runner 本身能直连
+      # Docker Hub / npm，不需要国内那套镜像源兜底逻辑。
+      # 版本号从 package.json 读出后注入镜像，/api/health 会返回它。
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 构建完把镜像里的源码指纹打出来 —— 这个哈希和仓库里的 .source-hash
+      # 必须一致，CI 日志里一眼就能确认「镜像和源码是同一份」。
+      - name: Report build fingerprint
+        if: github.event_name != 'pull_request'
+        run: |
+          docker run --rm --entrypoint sh \
+            ghcr.io/${{ github.repository }}:sha-$(git rev-parse --short HEAD) \
+            -c 'cat /app/build-info.json' || true
