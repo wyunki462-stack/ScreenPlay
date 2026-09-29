@@ -1,0 +1,125 @@
+# =============================================================================
+# ScreenPlay — 一条命令：从 GitHub 拉源码、构建、启动
+#
+#   docker compose -f screenplay-git.yml up -d
+#
+# 与 screenplay.yml 的区别：
+#   screenplay.yml      —— 只管运行（要求镜像已经构建好）
+#   本文件（git 版）    —— 直接用 Git 上下文构建，源码由 Docker 自己从 GitHub 取
+#
+# 原理：Compose 支持把 **Git 地址**当 build context：
+#     context: "https://github.com/用户/仓库.git#分支"
+#   BuildKit 会自己 clone 这个仓库，并把它当构建上下文用。所以不需要你先手动
+#   clone 一次。
+#
+# ── 准备工作（只有一件事）──────────────────────────────────────────────────
+#   cp .env.deploy.example .env
+#   然后编辑 .env，把 MEDIA_HOST_DIR 指向本机真实的游戏截图目录。
+#
+# ⚠️ 首次构建耗时较长（十几到二十几分钟）：装系统依赖 + npm 依赖 + 编译前后端。
+# =============================================================================
+
+services:
+  screenplay:
+    build:
+      # ── 源码直接来自 GitHub ──────────────────────────────────────────────
+      # 末尾的 #main 是分支（也可以是 tag 或 commit 哈希）。
+      # 想锁定某个版本就换成具体 tag，例如：
+      #     context: "https://github.com/wyunki462-stack/ScreenPlay.git#v0.6.0-beta.1"
+      context: "${GIT_CONTEXT:-https://github.com/wyunki462-stack/ScreenPlay.git#main}"
+      dockerfile: Dockerfile
+      args:
+        # 官方源 / 国内镜像站。目标设备在国内的话，保持默认的国内源更快。
+        REGISTRY: "${REGISTRY:-docker.io/library/}"
+        APK_MIRROR: "${APK_MIRROR:-}"
+        APK_MIRRORS: "${APK_MIRRORS:-}"
+        NPM_MIRROR_REGISTRY: "${NPM_MIRROR_REGISTRY:-https://registry.npmmirror.com/}"
+        # 构建期代理：构建容器有独立网络，**不能填 127.0.0.1**（那是容器自己）。
+        # 本机有代理（如 7890）时可填 http://host.docker.internal:7890
+        HTTP_PROXY: "${SCREENPLAY_BUILD_PROXY:-}"
+        HTTPS_PROXY: "${SCREENPLAY_BUILD_PROXY:-}"
+        SCREENPLAY_BUILD_PROXY: "${SCREENPLAY_BUILD_PROXY:-}"
+        NO_PROXY: "${SCREENPLAY_BUILD_NO_PROXY:-localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local,host.docker.internal}"
+
+    image: "${IMAGE_TAG:-screenplay:latest}"
+    container_name: screenplay
+    restart: unless-stopped
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    ports:
+      - "${PORT:-3001}:3000"
+
+    environment:
+      PORT: 3000
+      DATA_DIR: /data
+      MEDIA_DIRS: /media
+      WEB_DIST: /app/public
+      CORS_ORIGINS: "${CORS_ORIGINS:-*}"
+
+      # --- 登录认证（默认应用内账户，首次启动创建 admin 并打印随机密码）---
+      AUTH_MODE: "${AUTH_MODE:-local}"
+      AUTH_SESSION_DAYS: "${AUTH_SESSION_DAYS:-30}"
+      AUTH_ALLOWED_USERS: "${AUTH_ALLOWED_USERS:-}"
+      AUTH_ADMIN_PASSWORD: "${AUTH_ADMIN_PASSWORD:-}"
+      AUTH_DISABLED: "${AUTH_DISABLED:-}"
+
+      # --- 元数据源凭据（不填也能跑，只是部分刮削功能不可用）---
+      RAWG_API_KEY: "${RAWG_API_KEY:-}"
+      IGDB_CLIENT_ID: "${IGDB_CLIENT_ID:-}"
+      IGDB_CLIENT_SECRET: "${IGDB_CLIENT_SECRET:-}"
+      STEAM_API_KEY: "${STEAM_API_KEY:-}"
+      STEAMDB_KEY: "${STEAMDB_KEY:-}"
+
+      # --- 运行时代理（与构建期代理完全独立）---
+      # 推荐填 http://host.docker.internal:7890
+      RAWG_PROXY: "${RAWG_PROXY:-}"
+      HTTP_PROXY: "${RUNTIME_HTTP_PROXY:-}"
+      HTTPS_PROXY: "${RUNTIME_HTTPS_PROXY:-}"
+      NO_PROXY: "${RUNTIME_NO_PROXY:-localhost,127.0.0.1,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local,host.docker.internal}"
+      IMAGE_FETCH_ORDER: "${IMAGE_FETCH_ORDER:-}"
+      STEAM_IMAGE_HOSTS: "${STEAM_IMAGE_HOSTS:-}"
+
+      CRAWLER_MIN_INTERVAL_MS: "${CRAWLER_MIN_INTERVAL_MS:-1200}"
+      THUMBNAIL_WIDTH: "${THUMBNAIL_WIDTH:-480}"
+      THUMBNAIL_QUALITY: "${THUMBNAIL_QUALITY:-80}"
+
+      # 启动期存量数据修复（等首轮扫描结束后自动执行；设 0 关闭）
+      MAINTENANCE_ON_BOOT: "${MAINTENANCE_ON_BOOT:-}"
+
+    volumes:
+      # 媒体目录（只读）。
+      # 用 `:?` 刻意让它在**没设置时直接报错退出**，而不是悄悄用默认值：若给个
+      # 默认值而目录不存在，Docker 会默默创建一个空目录挂进去 —— 容器正常启动、
+      # 健康检查也过，只是游戏库永远是空的，排查毫无线索。
+      - "${MEDIA_HOST_DIR:?请在 .env 里设置 MEDIA_HOST_DIR，指向本机真实的游戏截图目录}:/media:ro"
+      - screenplay-data:/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --tries=1 --timeout=4 http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  screenplay-data:
+
+# =============================================================================
+# 如果 Git 上下文构建失败（BuildKit 从 GitHub 取源码的兼容性问题）
+#
+# 症状：构建日志里出现
+#     == [ctx-check] 构建上下文自检 ==
+#       ✗ package.json 缺失
+#   或 COPY 报 「not found」。这说明 COPY 没能从 Git 上下文里拿到文件。
+#
+# 那就换用 screenplay.yml（配合 fetch-and-build.sh）—— 它用「先 clone 到本地、
+# 再把本地目录当上下文」的方式，行为确定，不依赖 Git 上下文特性：
+#     bash fetch-and-build.sh
+#     docker compose -f screenplay.yml up -d --no-build
+#
+# 也可以直接用已经构建好的镜像（从别的机器 docker save 导出后 load）：
+#     gunzip -c screenplay-image.tar.gz | docker load
+#     docker compose -f screenplay.yml up -d --no-build
+# =============================================================================

@@ -126,6 +126,24 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
 COPY backend backend
 COPY web web
 
+# 构建上下文自检。
+#
+# 存在的意义：用 Git 上下文构建（compose 里写 context: <git地址>#分支）时，
+# **整个仓库**会被当作上下文。若此时 COPY 只拿到一部分文件（或什么都没拿到），
+# 后面的 npm run build 会报一堆「找不到模块」—— 那些报错完全指不到「上下文
+# 不完整」这个真正的原因。这里在安装依赖前就把关键文件的存在性打出来，
+# 一眼就能判断上下文对不对。
+RUN set -eu; \
+    echo "== [ctx-check] 构建上下文自检 =="; \
+    for f in package.json package-lock.json backend/package.json backend/src/main.ts \
+             web/package.json web/src/main.tsx web/vite.config.ts \
+             backend/tsconfig.build.json web/tsconfig.json; do \
+      if [ -f "$f" ]; then printf '  ✓ %s\n' "$f"; \
+      else printf '  ✗ %s 缺失\n' "$f"; fi; \
+    done; \
+    echo "  backend/src 文件数: $(find backend/src -type f 2>/dev/null | wc -l)"; \
+    echo "  web/src 文件数:     $(find web/src -type f 2>/dev/null | wc -l)"
+
 RUN HTTP_PROXY="$HTTP_PROXY" \
     HTTPS_PROXY="$HTTPS_PROXY" \
     NO_PROXY="$NO_PROXY" \
