@@ -40,7 +40,7 @@ expect_in_file() {
     bad "$(basename "$_file") 不存在（$_why）"
     return
   fi
-  if grep -Fq -e "$_needle" "$_file" 2>/dev/null; then
+  if grep -qF -- "$_needle" "$_file"; then
     ok "$(basename "$_file") 含 $_why"
   else
     bad "$(basename "$_file") 缺少 $_why —— 产物像是旧的（构建缓存命中？）"
@@ -63,9 +63,11 @@ expect_in_file() {
 # 支持 --include。同一个脚本在两种 grep 下行为不同，只在容器里才现形。
 #
 # 改用 find + xargs（POSIX 与 BusyBox 通吃）：
-#   · -e "$2"    避免符号以 - 开头时被当成选项
-#   · 不用 -q      busybox 在「找到即停」时退出码不可靠；跑完全部文件再
-#                  用 >/dev/null 丢弃输出，行为确定
+#   · -Fl         一份文件命中即可，退出码语义明确
+#   · -e "$2"     避免符号以 - 开头时被当成选项
+#   · 不用 -q     这里只是风格统一，**不是**因为 -q 有问题：实测 busybox
+#                 的 -rqF/-rlF 在有/无 --include 时表现一致，去掉 -q 并不能
+#                 救回原来那条命令。真正的病根只有 --include 一个。
 search_js() {
   find "$1" -type f -name '*.js' -print0 2>/dev/null \
     | xargs -0 grep -Fl -e "$2" 2>/dev/null >/dev/null
