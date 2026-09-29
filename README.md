@@ -476,6 +476,41 @@ curl -s -o /dev/null -w '%{http_code}\n' http://<NAS局域网IP>:3001/api/health
 三项功能的自动化 + 手工验证步骤见 **[docs/VERIFY.md](docs/VERIFY.md)**：
 每项都给出了对应的脚本检查组、预期输出、浏览器侧的手工检查清单，以及边界情况（无官方海报、账户过滤、跨浏览器语言等）。
 
+### 在另一台设备上部署
+
+仓库根那份 `docker-compose.yml` 面向「同机开发」，带 NAS 专属假设（挂载宿主
+`/etc/{passwd,shadow,group}` 做系统账户登录）。**换一台设备用这份专门的部署文件**：
+
+```bash
+# 1) 复制仓库到目标设备（或只复制这两个文件 + 源码目录）
+# 2) 生成配置
+cp .env.deploy.example .env
+
+# 3) 必填：把 MEDIA_HOST_DIR 改成本机真实的游戏截图目录
+#    Linux/NAS: /volume1/photos/games    Windows: D:/Games/Shots
+vi .env
+
+# 4) 起容器
+docker compose -f docker-compose.deploy.yml up -d
+
+# 5) 首次启动的 admin 密码（随机生成）
+docker compose -f docker-compose.deploy.yml logs screenplay | grep -i admin
+```
+
+| 文件 | 用途 |
+| --- | --- |
+| `docker-compose.deploy.yml` | 干净设备上的部署定义（`AUTH_MODE=local`，不依赖宿主账户库） |
+| `.env.deploy.example` | 配置模板，带 ★ 标注必填项 |
+
+> **没设置 `MEDIA_HOST_DIR` 会直接报错停下**，这是刻意的：若给个默认值而目录
+> 不存在，Docker 会默默创建空目录挂进去 —— 容器照常启动、健康检查也过，只是
+> 游戏库永远是空的，排查毫无线索。
+
+**关于预构建镜像**：仓库已配置 GitHub Actions 自动构建并推送到 GHCR
+（`ghcr.io/wyunki462-stack/screenplay`）。等 CI 跑通后，可以把 deploy 文件里的
+`build:` 段换成 `image: ghcr.io/wyunki462-stack/screenplay:latest` +
+`pull_policy: always`，目标设备就**不需要源码、也不需要构建**了。
+
 ### 本轮（Metacritic 媒体评价）的部署与验收 —— 全程只需 Docker
 
 **宿主机不需要 node / npm / 任何构建工具**：前后端的编译全部发生在镜像构建过程
