@@ -118,18 +118,23 @@ volumes:
   screenplay-data:
 
 # =============================================================================
-# 方式 B：拉取 GitHub 上构建好的镜像（无需源码，也无需构建）
+# 方式 B：用 `docker load` 导入的镜像（不需要源码，也不需要构建）
 #
-# ⚠️ 前提：仓库里的 GitHub Actions 必须先把镜像推到 GHCR。
-#    当前 CI 尚未跑通，所以 ghcr.io 上**还没有可用镜像** —— 等 CI 通过后，
-#    把上面整段 `build:` 删掉，换成下面两行即可：
+# 本仓库**不启用** CI 自动构建（workflow 已移除），所以没有现成的远程镜像可拉。
+# 推荐做法是在构建机上导出镜像、传到本设备再 load：
 #
-#     image: ghcr.io/wyunki462-stack/screenplay:latest
-#     pull_policy: always
+#   # 在构建机（比如你的 NAS）上
+#   docker build -t screenplay:latest .
+#   docker save screenplay:latest | gzip > screenplay-image.tar.gz
 #
-#    若 GHCR 上的包是私有的，先登录一次：
-#       echo <你的GitHubToken> | docker login ghcr.io -u wyunki462-stack --password-stdin
+#   # 传到本设备后
+#   gunzip -c screenplay-image.tar.gz | docker load
+#   docker compose -f docker-compose.deploy.yml up -d --no-build
 #
+# 本地已经有 screenplay:latest 这个镜像时，compose 会**直接复用**它而不再构建
+# （上面加 --no-build 是显式声明这一点）。此时本文件里的 build: 段会被忽略。
+#
+# 这样目标设备既不需要源码，也不需要联网。
 # =============================================================================
 # 想改用本机 Linux 系统账户登录（AUTH_MODE=system）时，额外加上：
 #

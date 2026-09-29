@@ -506,10 +506,43 @@ docker compose -f docker-compose.deploy.yml logs screenplay | grep -i admin
 > 不存在，Docker 会默默创建空目录挂进去 —— 容器照常启动、健康检查也过，只是
 > 游戏库永远是空的，排查毫无线索。
 
-**关于预构建镜像**：仓库已配置 GitHub Actions 自动构建并推送到 GHCR
-（`ghcr.io/wyunki462-stack/screenplay`）。等 CI 跑通后，可以把 deploy 文件里的
-`build:` 段换成 `image: ghcr.io/wyunki462-stack/screenplay:latest` +
-`pull_policy: always`，目标设备就**不需要源码、也不需要构建**了。
+**给另一台设备传镜像（不依赖任何镜像仓库）**：在本机构建好，导出成 tar 传过去。
+
+```bash
+# ── 在构建机（本 NAS）上 ─────────────────────────────────────────────
+docker build -t screenplay:latest .
+
+# 导出成一个文件（约 600 MB ~ 1 GB，取决于 ffmpeg 等依赖）
+docker save screenplay:latest | gzip > screenplay-image.tar.gz
+
+# ── 传到目标设备（U 盘 / scp / 共享盘都行）────────────────────────────
+scp screenplay-image.tar.gz user@另一台设备:/tmp/
+
+# ── 在目标设备上 ────────────────────────────────────────────────────
+gunzip -c /tmp/screenplay-image.tar.gz | docker load
+# 看到 Loaded image: screenplay:latest 就成了
+
+cp .env.deploy.example .env      # 然后改 MEDIA_HOST_DIR
+docker compose -f docker-compose.deploy.yml up -d
+```
+
+> 目标设备**不需要源码、不需要构建、不需要联网拉镜像** —— 只要 Docker、
+> 这个 tar 文件、和真实的媒体目录。
+>
+> 注意 `docker-compose.deploy.yml` 里默认带着 `build:` 段。用 tar 方式时，
+> 因为本地已经有 `screenplay:latest` 这个镜像，compose 会**直接复用**它
+> （compose 看到同名镜像就不再构建）。若想强制不构建，加 `--no-build`：
+> `docker compose -f docker-compose.deploy.yml up -d --no-build`
+
+**关于 CI**：本仓库**不启用** GitHub Actions 自动构建（原先的
+`.github/workflows/docker-build-push.yml` 已移除）。理由：CI 的价值是「自动出镜像
+供远程拉取」，而实际部署路径一直是本机 Docker 构建 —— 构建机就在你身边时，
+CI 只是多一条会失败、且报错信息残缺的链路（build-push-action 只打印 BuildKit
+摘要，真实的 npm/TS 报错全被吞掉，排查成本远高于收益）。
+
+以后想恢复也可以：把 workflow 加回来即可，用 `docker/setup-buildx-action` +
+`docker/build-push-action`，并**显式传 `NPM_MIRROR_REGISTRY`**（国内默认是
+registry.npmmirror.com，会让海外 runner 跨太平洋取包）。
 
 ### 本轮（Metacritic 媒体评价）的部署与验收 —— 全程只需 Docker
 
