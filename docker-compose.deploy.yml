@@ -1,0 +1,144 @@
+# =============================================================================
+# ScreenPlay — 独立设备部署用 compose 文件
+#
+# 用途：在**另一台设备**上跑 ScreenPlay，不需要 node / npm，只需要 Docker。
+#
+#   docker compose -f docker-compose.deploy.yml up -d
+#
+# 首次启动会自动扫描媒体目录、建立数据库。数据存在名为 screenplay-data 的
+# 卷里，容器重建不会丢。
+#
+# ── 两种取镜像的方式（见文件末尾注释，二选一）──────────────────────────────
+#   默认：本机从源码构建（当前唯一可用的方式）
+#   备选：拉取 GitHub 上自动构建好的镜像（需 CI 先跑通）
+# =============================================================================
+
+services:
+  screenplay:
+    # ── 方式 A（默认）：在目标设备上构建 ──────────────────────────────────
+    # 需要本项目源码。把整个仓库复制到目标设备，在本文件同级目录执行即可。
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 默认走官方 Docker Hub；国内网络可换镜像站，或直接跑
+        # `bash scripts/docker-build.sh`（会自动探测代理与可用源）。
+        REGISTRY: "${REGISTRY:-docker.io/library/}"
+        APK_MIRROR: "${APK_MIRROR:-}"
+        APK_MIRRORS: "${APK_MIRRORS:-}"
+        # 构建期代理。构建容器有独立网络命名空间，**不能填 127.0.0.1**
+        # （那是容器自己）。留空 = 不走代理。
+        HTTP_PROXY: "${SCREENPLAY_BUILD_PROXY:-}"
+        HTTPS_PROXY: "${SCREENPLAY_BUILD_PROXY:-}"
+        SCREENPLAY_BUILD_PROXY: "${SCREENPLAY_BUILD_PROXY:-}"
+        NPM_MIRROR_REGISTRY: "${NPM_MIRROR_REGISTRY:-https://registry.npmmirror.com/}"
+        NO_PROXY: "${SCREENPLAY_BUILD_NO_PROXY:-localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local,host.docker.internal}"
+
+    image: screenplay:latest
+    container_name: screenplay
+    restart: unless-stopped
+
+    # 让容器内可以用 host.docker.internal 指向宿主机 —— 代理地址写成它，
+    # 换网络/重建容器后网关 IP 变了也不受影响。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    ports:
+      # 左边是宿主机端口，冲突了就改这里（例如 3002:3000）
+      - "${PORT:-3001}:3000"
+
+    environment:
+      PORT: 3000
+      DATA_DIR: /data
+      MEDIA_DIRS: /media
+      WEB_DIST: /app/public
+      CORS_ORIGINS: "${CORS_ORIGINS:-*}"
+
+      # --- 登录认证 ---
+      # 这台设备上默认用**本地账户**（AUTH_MODE=local）：首次启动会创建 admin，
+      # 密码随机生成并打印在容器日志里；也可用 AUTH_ADMIN_PASSWORD 指定。
+      #   查看随机密码：docker compose -f docker-compose.deploy.yml logs screenplay | grep -i admin
+      # 想改用本机 Linux 系统账户，就设为 system 并挂载 /etc/{passwd,shadow,group}
+      # （见文件末尾注释）。
+      AUTH_MODE: "${AUTH_MODE:-local}"
+      AUTH_SESSION_DAYS: "${AUTH_SESSION_DAYS:-30}"
+      AUTH_ALLOWED_USERS: "${AUTH_ALLOWED_USERS:-}"
+      AUTH_ADMIN_PASSWORD: "${AUTH_ADMIN_PASSWORD:-}"
+      AUTH_DISABLED: "${AUTH_DISABLED:-}"
+
+      # --- 元数据源凭据（不填也能跑，只是部分刮削功能不可用）---
+      RAWG_API_KEY: "${RAWG_API_KEY:-}"
+      IGDB_CLIENT_ID: "${IGDB_CLIENT_ID:-}"
+      IGDB_CLIENT_SECRET: "${IGDB_CLIENT_SECRET:-}"
+      STEAM_API_KEY: "${STEAM_API_KEY:-}"
+      STEAMDB_KEY: "${STEAMDB_KEY:-}"
+
+      # --- 运行时代理（与构建期代理完全独立）---
+      # Metacritic 媒体评价、RAWG 等在部分网络下需要能出境访问。
+      # 推荐填 http://host.docker.internal:7890（已由 extra_hosts 指向宿主机）。
+      RAWG_PROXY: "${RAWG_PROXY:-}"
+      HTTP_PROXY: "${RUNTIME_HTTP_PROXY:-}"
+      HTTPS_PROXY: "${RUNTIME_HTTPS_PROXY:-}"
+      NO_PROXY: "${RUNTIME_NO_PROXY:-localhost,127.0.0.1,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local,host.docker.internal}"
+      # 图片抓取顺序：proxy,direct | direct,proxy | direct
+      IMAGE_FETCH_ORDER: "${IMAGE_FETCH_ORDER:-}"
+      STEAM_IMAGE_HOSTS: "${STEAM_IMAGE_HOSTS:-}"
+
+      # --- 抓取行为 ---
+      CRAWLER_MIN_INTERVAL_MS: "${CRAWLER_MIN_INTERVAL_MS:-1200}"
+
+      # --- 缩略图 ---
+      THUMBNAIL_WIDTH: "${THUMBNAIL_WIDTH:-480}"
+      THUMBNAIL_QUALITY: "${THUMBNAIL_QUALITY:-80}"
+
+      # --- 启动期存量数据修复（容器每次启动自动执行）---
+      # 等首轮媒体扫描结束后，自动补足海报轮播下限；首次启动还会补全通关时长。
+      # 设为 0 可关闭。
+      MAINTENANCE_ON_BOOT: "${MAINTENANCE_ON_BOOT:-}"
+
+    volumes:
+      # ① 媒体目录（只读）。在 .env 里把 MEDIA_HOST_DIR 指向本机的游戏截图根目录。
+      #
+      #    这里刻意用 `:?` 让它在**没设置时直接报错退出**，而不是悄悄用默认值：
+      #    若给个 ./media 之类的默认值，而该目录又不存在，Docker 会默默创建一个
+      #    空目录挂进去 —— 容器照常启动、健康检查也过，只是游戏库永远是空的，
+      #    排查起来毫无线索。宁可在这里停下并说清原因。
+      - "${MEDIA_HOST_DIR:?请在 .env 里设置 MEDIA_HOST_DIR，指向本机真实的游戏截图目录}:/media:ro"
+      # ② 数据库 + 缩略图缓存（命名卷，容器重建不丢）
+      - screenplay-data:/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --tries=1 --timeout=4 http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  screenplay-data:
+
+# =============================================================================
+# 方式 B：拉取 GitHub 上构建好的镜像（无需源码，也无需构建）
+#
+# ⚠️ 前提：仓库里的 GitHub Actions 必须先把镜像推到 GHCR。
+#    当前 CI 尚未跑通，所以 ghcr.io 上**还没有可用镜像** —— 等 CI 通过后，
+#    把上面整段 `build:` 删掉，换成下面两行即可：
+#
+#     image: ghcr.io/wyunki462-stack/screenplay:latest
+#     pull_policy: always
+#
+#    若 GHCR 上的包是私有的，先登录一次：
+#       echo <你的GitHubToken> | docker login ghcr.io -u wyunki462-stack --password-stdin
+#
+# =============================================================================
+# 想改用本机 Linux 系统账户登录（AUTH_MODE=system）时，额外加上：
+#
+#     group_add:
+#       - "${SHADOW_GID:-42}"
+#     volumes:
+#       - "/etc/passwd:/host-etc/passwd:ro"
+#       - "/etc/shadow:/host-etc/shadow:ro"
+#       - "/etc/group:/host-etc/group:ro"
+#
+#    （不需要这个功能就别挂 —— 容器不挂载时会自动回退到本地账户。）
+# =============================================================================
