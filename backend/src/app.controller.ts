@@ -1,0 +1,52 @@
+import { Controller, Get } from '@nestjs/common';
+
+/**
+ * Marker of the capabilities this build contains.
+ *
+ * Bump a value here whenever a page-visible feature ships: it turns "did the new
+ * build actually get deployed?" from an argument into a one-line check.
+ */
+export const BACKEND_FEATURES = [
+  'game-neighbors',
+  'duration-backfill',
+  'scraped-posters-all',
+  'duration-cache-guard',
+  // 本轮新增/明确的能力。单独列出来，是为了让「部署的镜像是不是这一版」变成
+  // 一条 curl 就能判断的事：前端产物在 public/ 里，后端产物在 dist/ 里，
+  // 两者都可能被旧镜像覆盖，而 features 列表一定跟着镜像走。
+  'hero-poster-carousel', // 详情页大图区官方海报轮播（左右箭头 + x/y 计数，循环）
+  'duration-coverage-api', // GET /api/games/duration-coverage（设置页补全卡片的数据源）
+  'duration-backfill-ui', // 设置页「一键批量补全通关时长」按钮
+  // 本轮（第四轮）修「只有个别游戏能翻页」时新增的能力。
+  'poster-rotation-all-games', // 官方刮取到的海报/截图全部登记且默认进轮播
+  'poster-rotation-floor', // 官方图不足时用本地相册截图补齐轮播，保证每个游戏都能翻
+  'poster-config-protected', // 用户取消勾选的轮播项不会被重新刮削自动加回
+  // 本轮新增：Metacritic 媒体评价（「媒体评价」标签页 + 批量补全）。
+  // 早先占位的 `critic-reviews` 从未实现，已由下面三个按交付面拆分的名字取代：
+  // 这样「接口在不在」「前端在不在」「覆盖率接口在不在」可以分别判断。
+  'media-reviews-api', // GET /api/games/:id/media-reviews + POST /api/games/backfill-ratings
+  'media-reviews-ui', // 详情页「媒体评价」标签页（媒体名称 / 媒体打分 / 评价原文）
+  'media-reviews-coverage-api', // GET /api/games/media-reviews/coverage（设置页补全卡片）
+] as const;
+
+@Controller()
+export class AppController {
+  @Get('api/health')
+  health(): Record<string, unknown> {
+    return {
+      status: 'ok',
+      uptime: process.uptime(),
+      // 版本号由镜像构建期通过 BUILD_VERSION 注入（Dockerfile 从根 package.json
+      // 读取），而不是依赖 npm_package_version —— 容器里跑的是
+      // `node dist/main.js`，npm 环境变量并不存在，那样只会永远回退到常量。
+      version: process.env.BUILD_VERSION ?? process.env.npm_package_version ?? '0.6.0-beta.1',
+      // Build stamp. `npm_package_version` is only set when npm runs the process,
+      // which is NOT the case in the container (`node dist/main.js`), so it always
+      // fell back to a constant and could not distinguish builds. These two can:
+      // BUILD_TIME is baked in at image build time, and the feature list makes a
+      // stale deployment obvious from a single curl instead of a code review.
+      buildTime: process.env.BUILD_TIME ?? 'dev',
+      features: BACKEND_FEATURES,
+    };
+  }
+}

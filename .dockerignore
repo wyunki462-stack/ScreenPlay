@@ -1,0 +1,23 @@
+# Docker build context exclusions
+node_modules
+**/node_modules
+**/dist
+data
+cache
+thumbnails
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.git
+.gitignore
+flutter
+docs
+media
+README.md
+*.log
+Dockerfile.windows
+*.md
+.vscode
+.idea

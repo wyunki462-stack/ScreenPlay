@@ -1,0 +1,8 @@
+# 测试依赖与打包产物由 scripts/verify-round-*.sh 现场生成，不入库。
+# 注意通配符：各轮次会产出 out-e.cjs / out-f.cjs / out-k.cjs 这类带后缀的变体，
+# 只写 out.cjs 会漏掉它们（那些文件里内嵌了整份前端 i18n，体积 1MB+）。
+node_modules/
+out.cjs
+out.css
+out-*.cjs
+out-*.css

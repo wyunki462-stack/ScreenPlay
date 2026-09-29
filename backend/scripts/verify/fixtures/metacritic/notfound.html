@@ -1,0 +1,35 @@
+<!doctype html>
+<!--
+  合成夹具：条目不存在（404 页）/ 被风控拦截的页面。
+  期望：解析出 0 条。**这条最关键** —— 错误页上仍然有导航、页脚、筛选器，
+  旧解析会把 "All" / "PC" / "Games" 这类文字当成媒体名，凭空造出几条假评价。
+-->
+<html lang="en">
+  <head>
+    <title>Page Not Found - Metacritic</title>
+  </head>
+  <body>
+    <header class="c-navigation">
+      <a href="/">Metacritic</a>
+      <a href="/browse/games/">Games</a>
+      <a href="/browse/movies/">Movies</a>
+    </header>
+
+    <main class="c-error-page">
+      <h1>Page Not Found</h1>
+      <p>The page you requested could not be found.</p>
+    </main>
+
+    <div class="c-filter-bar__review-filters">
+      <select>
+        <option>All</option>
+        <option>PC</option>
+      </select>
+    </div>
+
+    <footer class="c-footer">
+      <a href="/about/reviews/">Reviews</a>
+      <a href="/about/score/">Score</a>
+    </footer>
+  </body>
+</html>

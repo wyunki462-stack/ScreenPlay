@@ -1,0 +1,62 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+web/dist/
+
+# environment / secrets
+.env
+.env.local
+*.local
+
+# data / media caches (mount points)
+data/
+cache/
+thumbnails/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# logs
+*.log
+npm-debug.log*
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Flutter
+flutter/**/build/
+flutter/**/.dart_tool/
+flutter/**/.flutter-plugins*
+flutter/**/.packages
+flutter/**/android/.gradle/
+flutter/**/*.apk
+flutter/**/*.exe
+flutter/**/windows/flutter/
+
+# ---------------------------------------------------------------------------
+# 开发期临时目录与产物（本仓库的验证脚本会在仓库根下建 .tmp-* 工作区）
+# 这些目录里可能有数据库副本、夹具媒体、浏览器截图 —— 一律不进仓库。
+# ---------------------------------------------------------------------------
+.tmp*/
+.tmp-*/
+shots/
+*.tmp
+
+# 本地备份（例如移出的个人配置），绝不提交
+*.backup
+*-backup/
+.nas-mihomo-split-backup*
+
+# Playwright / Chromium 本地下载
+.pw/

@@ -1,0 +1,42 @@
+name: screenplay
+description: "ScreenPlay — 个人游戏媒体图库管理器（Flutter 客户端）。纯客户端：所有数据来自后端 HTTP API。"
+publish_to: 'none'
+version: 0.6.0-beta.1+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 状态管理
+  flutter_riverpod: ^2.6.1
+
+  # HTTP 客户端
+  dio: ^5.7.0
+
+  # 图片网络加载与缓存（海报 / 截图 / 封面）
+  cached_network_image: ^3.4.1
+
+  # 视频播放：官方 video_player + chewie UI 层
+  # （为什么不用 better_player：见 README「视频插件选择」一节）
+  video_player: ^2.9.0
+  chewie: ^1.8.0
+
+  # 瀑布流 / 交错网格（媒体网格中图片与视频混合排布）
+  flutter_staggered_grid_view: ^0.7.0
+
+  # 数字 / 日期格式化
+  intl: ^0.19.0
+
+  # 服务器地址本地持久化（运行时设置屏幕）
+  shared_preferences: ^2.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

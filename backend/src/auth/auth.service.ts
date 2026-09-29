@@ -1,0 +1,316 @@
+/**
+ * Local-only authentication.
+ *
+ * Two providers, both entirely on-box:
+ *   - `system` — verify against the NAS host's own accounts (see
+ *     {@link SystemUsersService}); the password is checked against the mounted
+ *     shadow hash and never stored.
+ *   - `local`  — app-managed accounts with scrypt hashes in the app database.
+ *     Used when the host user database is not mounted, so a fresh install still
+ *     has a way in.
+ *
+ * Sessions live in the SQLite data volume, so a container restart keeps the user
+ * signed in. Nothing here talks to any external service.
+ */
+import { Injectable, Logger, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
+import type { AppConfig } from '../config/configuration';
+import { DatabaseService } from '../database/database.service';
+import { SystemUsersService } from './system-users.service';
+
+const scrypt = promisify(scryptCb) as (
+  password: string | Buffer,
+  salt: string | Buffer,
+  keylen: number,
+  options?: { N?: number; r?: number; p?: number; maxmem?: number },
+) => Promise<Buffer>;
+
+/** scrypt cost. N=16384/r=8/p=1 is the standard interactive-login setting. */
+const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 } as const;
+
+export interface SessionUser {
+  username: string;
+  displayName: string;
+  provider: 'system' | 'local';
+  uid?: number;
+}
+
+export interface LoginResult {
+  token: string;
+  expiresAt: number;
+  user: SessionUser;
+}
+
+@Injectable()
+export class AuthService implements OnModuleInit {
+  private readonly logger = new Logger(AuthService.name);
+
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly config: ConfigService<AppConfig, true>,
+    private readonly systemUsers: SystemUsersService,
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    if (!this.enabled) {
+      this.logger.warn('认证已禁用（AUTH_DISABLED=1）——所有接口无需登录即可访问');
+      return;
+    }
+
+    const dropped = this.pruneSessions();
+    if (dropped > 0) this.logger.log(`清理过期会话 ${dropped} 个`);
+
+    const provider = this.effectiveProvider();
+    if (provider === 'system') {
+      const count = this.systemUsers.loginableUsers().length;
+      this.logger.log(`认证模式：NAS 系统账户（检测到 ${count} 个可登录账户）`);
+    } else {
+      this.systemUsers.logUnavailable();
+      this.logger.warn('认证模式：本地账户（回退）。如需使用 NAS 系统账户，请按 docker-compose.yml 挂载宿主 /etc。');
+    }
+
+    // Always seed a local admin so there is a way in even if the mount is later
+    // removed or the system account cannot be verified.
+    await this.ensureLocalAdmin();
+  }
+
+  get enabled(): boolean {
+    return this.config.get('authEnabled', { infer: true });
+  }
+
+  get mode(): 'system' | 'local' {
+    return this.config.get('authMode', { infer: true });
+  }
+
+  private sessionTtlMs(): number {
+    return this.config.get('authSessionDays', { infer: true }) * 24 * 3600 * 1000;
+  }
+
+  /** Session lifetime in seconds — drives the cookie Max-Age. */
+  get sessionTtlSeconds(): number {
+    return Math.round(this.sessionTtlMs() / 1000);
+  }
+
+  /** Which provider a login would actually use right now. */
+  effectiveProvider(): 'system' | 'local' {
+    if (this.mode === 'local') return 'local';
+    return this.systemUsers.available() ? 'system' : 'local';
+  }
+
+  // ---------------------------------------------------------------- scrypt ---
+
+  private async hashPassword(password: string): Promise<string> {
+    const salt = randomBytes(16);
+    const key = await scrypt(password, salt, SCRYPT.keylen, {
+      N: SCRYPT.N,
+      r: SCRYPT.r,
+      p: SCRYPT.p,
+      maxmem: 64 * 1024 * 1024,
+    });
+    return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64')}$${key.toString('base64')}`;
+  }
+
+  private async verifyScrypt(password: string, stored: string): Promise<boolean> {
+    const f = stored.split('$');
+    if (f.length !== 6 || f[0] !== 'scrypt') return false;
+    const [, n, r, p, saltB64, keyB64] = f;
+    try {
+      const key = await scrypt(password, Buffer.from(saltB64, 'base64'), Buffer.from(keyB64, 'base64').length, {
+        N: Number(n),
+        r: Number(r),
+        p: Number(p),
+        maxmem: 64 * 1024 * 1024,
+      });
+      const expected = Buffer.from(keyB64, 'base64');
+      return key.length === expected.length && timingSafeEqual(key, expected);
+    } catch {
+      return false;
+    }
+  }
+
+  // ------------------------------------------------------- local accounts ---
+
+  private findLocal(username: string): { password_hash: string; display_name: string | null } | null {
+    return (
+      this.db.get<{ password_hash: string; display_name: string | null }>(
+        'SELECT password_hash, display_name FROM auth_users WHERE username = ?',
+        [username],
+      ) ?? null
+    );
+  }
+
+  /** Create the local admin on first run so the app is never unreachable. */
+  async ensureLocalAdmin(): Promise<void> {
+    const existing = this.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM auth_users');
+    if ((existing?.c ?? 0) > 0) return;
+
+    const configured = this.config.get('authAdminPassword', { infer: true });
+    const generated: string | null = configured ? null : randomBytes(9).toString('base64url');
+    const password: string = configured || generated || randomBytes(9).toString('base64url');
+    await this.setLocalPassword('admin', password, '管理员');
+    if (generated) {
+      // Printed once, then only recoverable by setting AUTH_ADMIN_PASSWORD.
+      this.logger.warn(
+        `已创建本地管理员账户 admin，初始密码：${generated}（请登录后立即修改；` +
+          `设置 AUTH_ADMIN_PASSWORD 可固定初始密码）`,
+      );
+    } else {
+      this.logger.log('已按 AUTH_ADMIN_PASSWORD 创建本地管理员账户 admin');
+    }
+  }
+
+  async setLocalPassword(username: string, password: string, displayName?: string): Promise<void> {
+    const hash = await this.hashPassword(password);
+    const now = Date.now();
+    const existing = this.findLocal(username);
+    if (existing) {
+      this.db.run('UPDATE auth_users SET password_hash = ?, display_name = COALESCE(?, display_name), updated_at = ? WHERE username = ?', [
+        hash,
+        displayName ?? null,
+        now,
+        username,
+      ]);
+    } else {
+      this.db.run(
+        'INSERT INTO auth_users (username, password_hash, display_name, created_at, updated_at) VALUES (?,?,?,?,?)',
+        [username, hash, displayName ?? username, now, now],
+      );
+    }
+  }
+
+  // ------------------------------------------------------------ sessions ---
+
+  private createSession(username: string, provider: 'system' | 'local', userAgent?: string): LoginResult {
+    const token = randomBytes(32).toString('base64url');
+    const now = Date.now();
+    const expiresAt = now + this.sessionTtlMs();
+    this.db.run(
+      `INSERT INTO auth_sessions (token, username, provider, created_at, expires_at, last_seen, user_agent)
+       VALUES (?,?,?,?,?,?,?)`,
+      [token, username, provider, now, expiresAt, now, userAgent ?? null],
+    );
+    return {
+      token,
+      expiresAt,
+      user: {
+        username,
+        displayName: this.displayName(username, provider),
+        provider,
+        ...(provider === 'system' ? { uid: this.systemUsers.users().get(username)?.uid } : {}),
+      },
+    };
+  }
+
+  private displayName(username: string, provider: 'system' | 'local'): string {
+    if (provider === 'system') {
+      const gecos = this.systemUsers.users().get(username)?.gecos ?? '';
+      const name = gecos.split(',')[0].trim();
+      return name || username;
+    }
+    const local = this.findLocal(username);
+    return local?.display_name ?? username;
+  }
+
+  /** Resolve a session token, expiring it when past its deadline. */
+  resolve(token: string | undefined): SessionUser | null {
+    if (!token) return null;
+    const row = this.db.get<{
+      username: string;
+      provider: 'system' | 'local';
+      expires_at: number;
+    }>('SELECT username, provider, expires_at FROM auth_sessions WHERE token = ?', [token]);
+    if (!row) return null;
+    if (row.expires_at <= Date.now()) {
+      this.db.run('DELETE FROM auth_sessions WHERE token = ?', [token]);
+      return null;
+    }
+    this.db.run('UPDATE auth_sessions SET last_seen = ? WHERE token = ?', [Date.now(), token]);
+    return {
+      username: row.username,
+      provider: row.provider,
+      displayName: this.displayName(row.username, row.provider),
+      ...(row.provider === 'system' ? { uid: this.systemUsers.users().get(row.username)?.uid } : {}),
+    };
+  }
+
+  logout(token: string | undefined): void {
+    if (token) this.db.run('DELETE FROM auth_sessions WHERE token = ?', [token]);
+  }
+
+  /** Drop expired rows; called at boot. */
+  pruneSessions(): number {
+    const res = this.db.run('DELETE FROM auth_sessions WHERE expires_at <= ?', [Date.now()]);
+    return res.changes;
+  }
+
+  // --------------------------------------------------------------- login ---
+
+  async login(username: string, password: string, userAgent?: string): Promise<LoginResult> {
+    const provider = this.effectiveProvider();
+
+    if (provider === 'system') {
+      const verdict = this.systemUsers.verify(username, password);
+      if (verdict === true) {
+        this.logger.log(`系统账户登录成功：${username}`);
+        return this.createSession(username, 'system', userAgent);
+      }
+      if (verdict === null) {
+        // The account exists but cannot be checked here. Fall through to a local
+        // account of the same name before giving up.
+        const local = this.findLocal(username);
+        if (local && (await this.verifyScrypt(password, local.password_hash))) {
+          this.logger.log(`本地账户登录成功：${username}`);
+          return this.createSession(username, 'local', userAgent);
+        }
+        const reason = this.systemUsers.isUnsupportedHash(username)
+          ? '该账户的密码使用 yescrypt 等本程序无法校验的算法，请在 .env 设置 AUTH_MODE=local 并使用本地账户'
+          : '用户名或密码错误';
+        throw new UnauthorizedException(reason);
+      }
+      // Wrong password: still allow a local account with the same name.
+      const local = this.findLocal(username);
+      if (local && (await this.verifyScrypt(password, local.password_hash))) {
+        return this.createSession(username, 'local', userAgent);
+      }
+      throw new UnauthorizedException('用户名或密码错误');
+    }
+
+    const local = this.findLocal(username);
+    if (!local) throw new UnauthorizedException('用户名或密码错误');
+    if (!(await this.verifyScrypt(password, local.password_hash))) {
+      throw new UnauthorizedException('用户名或密码错误');
+    }
+    return this.createSession(username, 'local', userAgent);
+  }
+
+  async changePassword(username: string, current: string, next: string): Promise<void> {
+    const local = this.findLocal(username);
+    if (!local) throw new UnauthorizedException('该账户不是本地账户，请在 NAS 上修改密码');
+    if (!(await this.verifyScrypt(current, local.password_hash))) {
+      throw new UnauthorizedException('当前密码不正确');
+    }
+    await this.setLocalPassword(username, next);
+  }
+
+  /** Everything the login page needs to render itself. */
+  describe(): {
+    enabled: boolean;
+    mode: 'system' | 'local';
+    provider: 'system' | 'local';
+    systemAvailable: boolean;
+    reason: string | null;
+    users: Array<{ username: string; gecos: string; uid: number }>;
+  } {
+    const systemAvailable = this.systemUsers.available();
+    return {
+      enabled: this.enabled,
+      mode: this.mode,
+      provider: this.effectiveProvider(),
+      systemAvailable,
+      reason: this.mode === 'system' ? this.systemUsers.unavailableReason() : null,
+      users: systemAvailable ? this.systemUsers.loginableUsers() : [],
+    };
+  }
+}

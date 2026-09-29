@@ -1,0 +1,114 @@
+# =============================================================================
+# ScreenPlay — docker-compose (Linux / Docker Desktop on Windows)
+#
+# One command:  docker compose up -d
+# Configuration via .env (see .env.example). Media is mounted read-only from
+# MEDIA_DIRS (the host path uses the MEDIA_HOST_DIR variable below); database +
+# thumbnails persist in the named `screenplay-data` volume.
+# =============================================================================
+
+services:
+  screenplay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # FROM 默认走官方 Docker Hub；脚本/变量可按检测结果覆盖为国内镜像站。
+      args:
+        REGISTRY: "${REGISTRY:-docker.io/library/}"
+        APK_MIRROR: "${APK_MIRROR:-}"
+        APK_MIRRORS: "${APK_MIRRORS:-}"
+        # 容器内换源校验/安装的超时（秒）。国内慢源或大依赖树需要放宽。
+        APK_PROBE_TIMEOUT: "${APK_PROBE_TIMEOUT:-45}"
+        APK_INSTALL_TIMEOUT: "${APK_INSTALL_TIMEOUT:-900}"
+        # 构建期代理：构建容器有独立网络，必须显式注入（不能用 127.0.0.1）。
+        # 留空即不注入；推荐直接跑 scripts/docker-build.sh（自动探测并注入）。
+        HTTP_PROXY: "${SCREENPLAY_BUILD_PROXY:-}"
+        HTTPS_PROXY: "${SCREENPLAY_BUILD_PROXY:-}"
+        HTTP_PROXY_FALLBACK: "${SCREENPLAY_PROXY_FALLBACK:-}"
+        SCREENPLAY_BUILD_PROXY: "${SCREENPLAY_BUILD_PROXY:-}"
+        # npm 国内镜像源：所有代理方案失败时的兜底，仅构建期生效（不写入运行镜像）。
+        NPM_MIRROR_REGISTRY: "${NPM_MIRROR_REGISTRY:-https://registry.npmmirror.com/}"
+        # NO_PROXY 只放内网；构建容器内会自动清洗掉公网镜像站，确保其走代理。
+        NO_PROXY: "${SCREENPLAY_BUILD_NO_PROXY:-localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local,host.docker.internal}"
+    # 复用 scripts/docker-build.sh 构建出的镜像（源故障自动切换后）
+    image: screenplay:latest
+    container_name: screenplay
+    restart: unless-stopped
+    # 让容器内可用 host.docker.internal 指向 NAS 宿主机（用于访问宿主上的代理，如 mihomo 的 7890）。
+    # 好处：换网桥/重建项目后网关 IP 变化也不影响，代理地址可固定写 host.docker.internal。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # 让容器能读取 NAS 宿主机的账户库，登录时直接校验系统用户密码。
+    # 只读挂载，且仅用于在内存中比对密码哈希 —— 哈希不会被存储、记录或外发。
+    # 不挂载时自动回退为应用本地账户（admin），不会导致无法登录。
+    group_add:
+      # 宿主机 shadow 组 GID（Debian 默认 42）；可用 getent group shadow 确认。
+      # 有了它，容器不必以 root 运行即可读取 /etc/shadow。
+      - "${SHADOW_GID:-42}"
+    ports:
+      - "${PORT:-3001}:3000"
+    environment:
+      PORT: 3000
+      DATA_DIR: /data
+      MEDIA_DIRS: /media
+      WEB_DIST: /app/public
+      CORS_ORIGINS: "${CORS_ORIGINS:-*}"
+      # Provider credentials (injected from .env — never hardcoded).
+      RAWG_API_KEY: "${RAWG_API_KEY:-}"
+      # --- 运行时代理（与构建代理完全独立，互不影响）---
+      # RAWG_PROXY 优先级最高；未设置时后端会回退读取标准变量 HTTPS_PROXY/HTTP_PROXY。
+      # 推荐值：http://host.docker.internal:7890（已通过 extra_hosts 指向宿主机）。
+      RAWG_PROXY: "${RAWG_PROXY:-}"
+      # 兼容标准写法：仅当 RAWG_PROXY 为空时生效。
+      HTTP_PROXY: "${RUNTIME_HTTP_PROXY:-}"
+      HTTPS_PROXY: "${RUNTIME_HTTPS_PROXY:-}"
+      # 内网/本地直连白名单（noproxy 语义；后端对私有地址始终直连，此处仅作声明）。
+      NO_PROXY: "${RUNTIME_NO_PROXY:-localhost,127.0.0.1,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local,host.docker.internal}"
+      # 图片(封面/截图)抓取顺序: proxy,direct | direct,proxy | direct
+      IMAGE_FETCH_ORDER: "${IMAGE_FETCH_ORDER:-}"
+      # Steam 图片 CDN 主机偏好(逗号分隔,首选在前); 留空=沿用 API 返回的地址
+      STEAM_IMAGE_HOSTS: "${STEAM_IMAGE_HOSTS:-}"
+      IGDB_CLIENT_ID: "${IGDB_CLIENT_ID:-}"
+      IGDB_CLIENT_SECRET: "${IGDB_CLIENT_SECRET:-}"
+      STEAM_API_KEY: "${STEAM_API_KEY:-}"
+      STEAMDB_KEY: "${STEAMDB_KEY:-}"
+      CRAWLER_MIN_INTERVAL_MS: "${CRAWLER_MIN_INTERVAL_MS:-1200}"
+      THUMBNAIL_WIDTH: "${THUMBNAIL_WIDTH:-480}"
+      THUMBNAIL_QUALITY: "${THUMBNAIL_QUALITY:-80}"
+      # --- 本地登录（全部在本机完成，不依赖任何云端服务）---
+      # AUTH_MODE=system 使用 NAS 系统账户；=local 使用应用内账户。
+        # 无论哪种模式，本地 admin 都会在首次启动时创建，作为兜底入口。
+      AUTH_MODE: "${AUTH_MODE:-system}"
+      AUTH_SESSION_DAYS: "${AUTH_SESSION_DAYS:-30}"
+      # 只允许这些账户登录（逗号分隔）；留空=允许全部普通账户（uid>=1000）。
+      AUTH_ALLOWED_USERS: "${AUTH_ALLOWED_USERS:-}"
+      # 固定本地 admin 初始密码；留空则首次启动随机生成并打印在日志中。
+      AUTH_ADMIN_PASSWORD: "${AUTH_ADMIN_PASSWORD:-}"
+      AUTH_PASSWD_PATH: "${AUTH_PASSWD_PATH:-/host-etc/passwd}"
+      AUTH_SHADOW_PATH: "${AUTH_SHADOW_PATH:-/host-etc/shadow}"
+      AUTH_GROUP_PATH: "${AUTH_GROUP_PATH:-/host-etc/group}"
+      # 应急开关：设为 1 可临时关闭登录校验（忘记密码时使用）。
+      AUTH_DISABLED: "${AUTH_DISABLED:-}"
+    volumes:
+      # 宿主媒体目录 → 容器媒体库。
+      # 在 .env 里设置 MEDIA_HOST_DIR 指向你自己的游戏截图/视频根目录，
+      # 例如 MEDIA_HOST_DIR=/volume1/photos/games 或 D:\Games\Shots。
+      # 默认值只是一个占位路径，不指向任何真实位置。
+      - "${MEDIA_HOST_DIR:-./media}:/media:ro"
+      # Named volume for DB + thumbnail/cache persistence.
+      - screenplay-data:/data
+      # 宿主机账户库，供"使用 NAS 系统账户登录"读取（只读）。
+      # 不想要此功能可注释掉这三行，应用会自动回退到本地账户。
+      - "/etc/passwd:/host-etc/passwd:ro"
+      - "/etc/shadow:/host-etc/shadow:ro"
+      - "/etc/group:/host-etc/group:ro"
+    # 健康检查：容器内探测后端是否真正就绪（进程存活 ≠ 服务可用）。
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --tries=1 --timeout=4 http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  screenplay-data:

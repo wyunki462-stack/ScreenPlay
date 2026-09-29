@@ -1,0 +1,120 @@
+/**
+ * Settings page: API bindings, metadata scraping, and the media library
+ * manager (`library.*`). Chinese is the source dictionary.
+ */
+export const settingsZh: Record<string, string> = {
+  "settings.title": "API 绑定 / 刮削设置",
+  "settings.introLead": "推荐填写 ",
+  "settings.introRest":
+    "（免费、邮箱注册即可，无两步验证），用于全平台（PC / PS / Switch / Xbox 及独占作品）游戏的封面、发行信息、开发商/发行商与平均游玩时长刮削；未填时仅能匹配 Steam 平台。Steam Key 可选，用于抓取全成就列表。",
+
+  "settings.apiKeys": "API 密钥",
+  "settings.rawg.label": "RAWG API Key（推荐）",
+  "settings.rawg.hint": "rawg.io/apidocs 免费注册获得；用于全平台游戏封面与元数据",
+  "settings.rawg.placeholder": "例如 1a2b3c...",
+  "settings.test.testing": "测试中…",
+  "settings.test.connection": "测试连接",
+  "settings.test.image": "测试图片抓取",
+  "settings.test.diagnosing": "诊断中…",
+  "settings.test.proxy": "诊断代理",
+  "settings.test.steamAchievements": "测试成就接口",
+  "settings.proxy.label": "RAWG 代理地址（可选）",
+  "settings.proxy.hint":
+    "API 与图片(封面/截图)都会走这个代理；Docker 部署请填 http://host.docker.internal:7890（不要填 127.0.0.1，那是容器自身）；留空则直连",
+  "settings.proxy.placeholder": "http://host.docker.internal:7890",
+  "settings.proxy.gateway": "容器默认网关：{host}",
+  "settings.proxy.useThis": "用这个",
+  "settings.steam.label": "Steam API Key",
+  "settings.steam.hint": "用于抓取 Steam 全成就列表（无 Key 也能抓封面与价格）",
+  "settings.steam.placeholder": "32 位十六进制 Key",
+  "settings.steamdb.label": "SteamDB Key（可选）",
+  "settings.steamdb.hint": "用于查史低价格，暂未启用",
+  "settings.steamdb.placeholder": "可选",
+  "settings.saving": "保存中…",
+  "settings.scrapeAll": "立即刮削全部游戏",
+  "settings.saved": "已保存 ✓",
+  "settings.scrapeStarted": "已在后台开始刮削 {count} 款游戏，稍后刷新图库查看结果。",
+  "settings.scraping": "正在刮削：{name}",
+  "settings.preparing": "准备中…",
+  "settings.scrapeFailed":
+    "有 {count} 款游戏刮削失败，图库对应卡片已标记 ⚠（通常是数据源被屏蔽或网络不通）。",
+  "settings.saveError": "保存失败：{message}",
+
+  // 需求3：存量游戏一键批量补全通关时长
+  "settings.duration.title": "平均通关时长补全",
+  "settings.duration.intro":
+    "通关时长来自公开的时长数据库（按英文标题索引）。存量游戏如果当初刮削时时长库不可达，就会一直显示「未知」——重新扫描并不会修复它们（这些游戏已有刮削记录，扫描会跳过）。这里只针对缺时长的游戏重跑一次，成本远低于全量重新刮削。",
+  "settings.duration.loading": "正在统计覆盖率…",
+  "settings.duration.coverageFailed": "读取通关时长覆盖率失败，请刷新页面重试。",
+  "settings.duration.coverage": "已有通关时长 {have} / {total} 款",
+  "settings.duration.missing": "缺少通关时长 {count} 款",
+  "settings.duration.source": "{source}×{count}",
+  "settings.duration.run": "一键批量补全通关时长",
+  "settings.duration.starting": "正在启动…",
+  "settings.duration.started": "已在后台补全 {count} 款游戏，进度见下方进度条。",
+  "settings.duration.failed": "补全任务启动失败，请稍后重试。",
+  "settings.duration.tip":
+    "只有真正取到的时长才会写入：空结果不会进入缓存，所以失败的游戏下次仍会重试，而不会被永久记成「未知」。",
+
+  // 媒体评价补全（与时长补全同构：存量修复动作，放在数据源卡片之外）
+  "settings.reviews.title": "媒体评价补全",
+  "settings.reviews.intro":
+    "媒体评价（媒体名称 / 媒体打分 / 媒体评价原文）来自媒体评价站点，需要逐游戏访问一次页面。存量游戏如果是本功能上线前刮削的，就完全没有评价数据；这里可以把它们一次性补上。整个过程串行执行、内置限速，不会并发轰炸数据源。",
+  "settings.reviews.loading": "正在统计覆盖率…",
+  "settings.reviews.coverageFailed": "读取媒体评价覆盖率失败，请刷新页面重试。",
+  "settings.reviews.coverage": "已有媒体评价 {have} / {total} 款",
+  "settings.reviews.awaiting": "待补全 {count} 款",
+  "settings.reviews.failedCount": "上次抓取失败 {count} 款",
+  "settings.reviews.run": "一键批量补全媒体评价",
+  "settings.reviews.runAll": "全量重新抓取（{count} 款）",
+  "settings.reviews.running": "正在抓取…",
+  "settings.reviews.result":
+    "本次处理 {processed} 款：新增评价 {gained} 款 / 共 {stored} 条，失败 {failed} 款，仍缺 {remaining} 款。",
+  "settings.reviews.resultEmpty": "本次没有需要补全的游戏。",
+  "settings.reviews.failed": "补全任务失败，请稍后重试。",
+  "settings.reviews.tip":
+    "抓取失败不会清空已经拿到的评价；数据源本身没有收录评价的游戏会被记成「暂无媒体评价」，不会反复重试。数据源站点通常需要代理才能访问，失败时先确认代理配置。",
+
+  "settings.howTo.title": "密钥获取方式",
+  "settings.howTo.goTo": "前往",
+  "settings.howTo.rawgLabel": "RAWG：",
+  "settings.howTo.rawgText": "用邮箱注册即可获得免费 API Key（无需两步验证）。",
+  "settings.howTo.steamLabel": "Steam：",
+  "settings.howTo.steamText": "申请 Web API Key（需已登录、有消费记录的账号）。",
+  "settings.howTo.tip":
+    "提示：保存密钥后点击「立即刮削全部游戏」；也可在卡片上点「···」→「刷新元数据」单独刮削。",
+
+  "library.title": "媒体库管理",
+  "library.count": "{count} 个",
+  "library.rescan": "重新扫描",
+  "library.add": "添加媒体库",
+  "library.intro":
+    "在这里添加的媒体库保存在数据库中，保存后立即生效，无需重建容器。路径必须是容器内可访问的目录（即已在 docker-compose.yml 中挂载进来的目录）。",
+  "library.empty": "还没有配置媒体库，点击右上角「添加媒体库」开始。",
+  "library.mediaType.auto": "图片+视频",
+  "library.mediaType.image": "仅图片",
+  "library.mediaType.video": "仅视频",
+  "library.recursive": "包含子目录",
+  "library.currentOnly": "仅当前目录",
+  "library.fromEnv": "环境变量",
+  "library.fromEnvTitle": "来自 docker-compose.yml 的 MEDIA_DIRS，无法在此删除",
+  "library.disabled": "已停用",
+  "library.missing": "目录不存在",
+  "library.gameCount": "识别到 {count} 款游戏",
+  "library.envEditOnly": "环境变量来源只能编辑，不能删除",
+  "library.edit": "编辑媒体库",
+  "library.pathLabel": "媒体库路径（容器内绝对路径）",
+  "library.pathHint": "每个子文件夹会被识别为一款游戏。路径需已在容器内挂载。",
+  "library.checking": "正在检查路径…",
+  "library.checkFailed": "无法检查该路径",
+  "library.sampleFolders": "识别到的子文件夹：{names}",
+  "library.sampleSeparator": "、",
+  "library.mountedLabel": "容器内可用的挂载目录",
+  "library.labelLabel": "备注名称（可选）",
+  "library.labelPlaceholder": "例如：主机游戏",
+  "library.mediaTypeLabel": "媒体类型",
+  "library.scanSubfolders": "扫描子目录中的媒体文件",
+  "library.enable": "启用此媒体库（停用后不会参与扫描）",
+  "library.saveHint": "保存后立即重新扫描，无需重启容器",
+  "library.saveAndScan": "保存并扫描",
+};

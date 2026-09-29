@@ -1,0 +1,73 @@
+<!doctype html>
+<!--
+  合成夹具：模拟「没有 __NEXT_DATA__、只有渲染后的 DOM」的页面结构。
+  刻意混入筛选器下拉、平台标签、判定词等噪声，用来验证它们不会被当成媒体名。
+-->
+<html lang="en">
+  <head>
+    <title>Bloodborne Reviews - Metacritic</title>
+  </head>
+  <body>
+    <h1 class="hero-title__text">Bloodborne</h1>
+
+    <!-- Metascore 区块（同上：缺了它绑定会被判定为「无评分」而弃用） -->
+    <div class="c-site-review-score">
+      <span data-testid="metascore">92</span>
+      <span class="c-site-review-score__count">78 Critic Reviews</span>
+      <script type="application/json">{"metaScore":{"score":92,"reviewCount":78}}</script>
+    </div>
+
+    <!-- 噪声 1：筛选器下拉，class 里同样含 "review"，旧解析会把它当媒体 -->
+    <div class="c-filter-bar__review-filters">
+      <select>
+        <option>All</option>
+        <option>PC</option>
+        <option>PS5</option>
+        <option>Positive</option>
+        <option>Mixed</option>
+      </select>
+    </div>
+
+    <div class="c-site-review">
+      <div class="c-site-review__critic">
+        <a href="/critic/ign/">IGN</a>
+      </div>
+      <div class="c-site-review__score">90</div>
+      <div class="c-site-review__review-quote">
+        《血源》把魂系战斗推向更快、更凶的节奏，玩家必须在进攻中求生。
+      </div>
+      <div class="c-site-review__platform">PlayStation 4</div>
+      <time datetime="2015-03-24">Mar 24, 2015</time>
+      <a href="/game/bloodborne/critic-reviews/?platform=playstation-4">Read review</a>
+    </div>
+
+    <div class="c-site-review">
+      <div class="c-site-review__critic">
+        <a href="/critic/gamespot/">GameSpot</a>
+      </div>
+      <div class="c-site-review__score">95</div>
+      <div class="c-site-review__review-quote">
+        A demanding game that rewards patience and punishes carelessness.
+      </div>
+      <div class="c-site-review__platform">PlayStation 4</div>
+    </div>
+
+    <div class="c-site-review">
+      <div class="c-site-review__critic">
+        <a href="/critic/eurogamer/">Eurogamer</a>
+      </div>
+      <div class="c-site-review__score">—</div>
+      <div class="c-site-review__review-quote">
+        没有打分的一篇评论，但评语仍然值得展示。
+      </div>
+    </div>
+
+    <!-- 噪声 2：判定词区块，含 class="review"，不该成为一条媒体评价 -->
+    <div class="c-review-verdict-summary">
+      <span class="review-verdict">Generally favorable</span>
+    </div>
+
+    <!-- 噪声 3：纯数字评论块 -->
+    <div class="review-count-block">78</div>
+  </body>
+</html>

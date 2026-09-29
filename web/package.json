@@ -1,0 +1,35 @@
+{
+  "name": "@screenplay/web",
+  "version": "0.6.0-beta.1",
+  "private": true,
+  "type": "module",
+  "description": "ScreenPlay web frontend — personal game media album manager",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.51.23",
+    "lucide-react": "^0.427.0",
+    "plyr": "^3.7.8",
+    "plyr-react": "^5.3.0",
+    "prop-types": "^15.8.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-photo-view": "^1.2.3",
+    "react-router-dom": "^6.26.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.14",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "playwright": "^1.47.0",
+    "postcss": "^8.4.40",
+    "tailwindcss": "^3.4.7",
+    "typescript": "^5.5.4",
+    "vite": "^5.3.5"
+  }
+}

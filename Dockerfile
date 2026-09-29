@@ -1,0 +1,221 @@
+# =============================================================================
+# ScreenPlay — Linux production image (node:22-alpine)
+#
+# Multi-stage build:
+#   1. build  — installs workspaces (incl. native modules), compiles backend
+#               (NestJS → dist) and web (Vite → dist).
+#   2. run    — slim runtime with ffmpeg for video frame extraction, the
+#               compiled backend + web bundle, and mounted /media + /data.
+#
+# ── 源与代理（仅构建期）─────────────────────────────────────────────────────
+#   构建容器有独立网络命名空间，**不继承宿主机代理**；而且 docker.service 里若
+#   写了 HTTP_PROXY=http://127.0.0.1:7890，在容器内 127.0.0.1 指的是容器自己，
+#   apk/npm 会连到不存在的服务而超时。这正是「宿主机预检正常、容器内构建超时」
+#   的根因。因此代理必须在构建期显式注入（scripts/docker-build.sh 自动探测后
+#   以 --build-arg 传入）。
+#
+#   代理值只作为 ARG 存在，并且**只在各自 RUN 命令的行内以环境变量前缀传递**，
+#   不使用 ENV，因此：
+#     · 不会写进任何镜像层 → 运行镜像里没有代理变量；
+#     · 最终容器的入站访问（LAN IP + 端口、公网域名）完全不受影响。
+#
+#   apk 换源采用「构建容器内真实可用校验 + 自动故障切换」（scripts/apk-setup.sh）：
+#   在容器内用 apk 真实下载 APKINDEX 并试装，宿主机预检的 200 不再被当作可用
+#   依据，消除「宿主机预检正常、容器内超时」的假阳性；单源失败自动切下一个源。
+#   脚本同时清洗 NO_PROXY，确保公网镜像站不会因被列为直连而绕开代理（本机
+#   容器通常没有直连出口）。
+#
+# DNS 注意：
+#   BuildKit 会把 /etc/resolv.conf 只读挂载，无法在 RUN 内改 DNS。若 NAS 的
+#   解析器（通常是路由器网关）很慢/不可用，会导致容器内 apk/npm 超时。请把快
+#   DNS 配到 docker daemon 层（一次性）：/etc/docker/daemon.json 里加
+#   {"dns":["223.5.5.5","223.6.6.6"]} 后 systemctl restart docker（见 README）。
+# =============================================================================
+
+# 镜像仓库前缀（含末尾 /）。默认官方 docker.io；脚本可按检测结果覆盖为国内镜像站。
+ARG REGISTRY=docker.io/library/
+
+# ---------------------------------------------------------------------------
+# 构建期参数（全部仅构建期有效，不持久化进镜像）
+#   代理由 scripts/docker-build.sh 注入，填容器可达的宿主机代理地址，
+#   例如 http://<你的代理主机IP>:7890（docker0 网关 172.17.0.1 也可作为容器可达地址）。
+#   留空 = 完全不注入代理（保持原行为）。
+# ---------------------------------------------------------------------------
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY=""
+ARG HTTP_PROXY_FALLBACK=""
+ARG APK_MIRROR=""
+ARG APK_MIRRORS=""
+ARG APK_PROBE_TIMEOUT=45
+ARG APK_INSTALL_TIMEOUT=900
+# 这两个也必须声明在**第一个 FROM 之前**。
+# 只在 FROM 之后声明时，docker-compose 里传进来的值会被当成「未使用的构建参数」
+# 丢掉（BuildKit 打印 "unused build-arg" 但不报错），于是 npm 国内源兜底与
+# 显式代理在 compose 构建路径下静默失效 —— 只有 scripts/docker-build.sh 那条
+# 路径是好的。声明在这里两者都生效。
+ARG SCREENPLAY_BUILD_PROXY=""
+ARG NPM_MIRROR_REGISTRY="https://registry.npmmirror.com/"
+# 版本号：由 scripts/docker-build.sh 从根 package.json 读出后传入，
+# 最终写进镜像的 ENV，/api/health 直接返回它。
+ARG BUILD_VERSION="0.0.0-dev"
+
+FROM ${REGISTRY}node:22-alpine AS build
+
+# FROM 之后 ARG 作用域重置，需重新声明
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ARG HTTP_PROXY_FALLBACK
+ARG APK_MIRROR
+ARG APK_MIRRORS
+ARG APK_PROBE_TIMEOUT
+ARG APK_INSTALL_TIMEOUT
+ARG SCREENPLAY_BUILD_PROXY
+ARG NPM_MIRROR_REGISTRY
+ARG BUILD_VERSION="0.0.0-dev"
+
+COPY scripts/apk-setup.sh /tmp/apk-setup.sh
+COPY scripts/npm-run.sh /tmp/npm-run.sh
+COPY scripts/proxy-probe.js /tmp/proxy-probe.js
+COPY scripts/verify-build-artifacts.sh /tmp/verify-build-artifacts.sh
+
+# --- build 阶段：容器内真实校验 + 自动换源，再装原生模块编译工具链 ---
+# 关键：用「行内环境变量前缀」把参数交给脚本，而不是 ENV，避免代理写进镜像。
+RUN HTTP_PROXY="$HTTP_PROXY" \
+    HTTPS_PROXY="$HTTPS_PROXY" \
+    NO_PROXY="$NO_PROXY" \
+    HTTP_PROXY_FALLBACK="$HTTP_PROXY_FALLBACK" \
+    APK_MIRROR="$APK_MIRROR" \
+    APK_MIRRORS="$APK_MIRRORS" \
+    APK_PROBE_TIMEOUT="$APK_PROBE_TIMEOUT" \
+    APK_INSTALL_TIMEOUT="$APK_INSTALL_TIMEOUT" \
+    sh /tmp/apk-setup.sh python3 make g++ git
+
+WORKDIR /app
+
+# Layer 1: manifests only (cache-friendly).
+COPY package.json ./
+COPY backend/package.json backend/package.json
+COPY web/package.json web/package.json
+COPY backend/nest-cli.json backend/nest-cli.json
+COPY backend/tsconfig.json backend/tsconfig.json
+COPY backend/tsconfig.build.json backend/tsconfig.build.json
+COPY web/tsconfig.json web/tsconfig.json
+COPY web/tsconfig.node.json web/tsconfig.node.json
+
+# npm install 复用上面「实测可用」的代理（由 apk-setup.sh 写入 /tmp）。
+# npm-run.sh 内部：代理只走环境变量（绝不作为 npm 参数）→ 先在容器内真实探测
+# 代理连通性，探不通就跳过 → 全部不通时兜底国内镜像源 registry.npmmirror.com 直连。
+# SCREENPLAY_BUILD_PROXY 为显式指定的容器可达代理（留空 = 不注入代理逻辑）。
+RUN HTTP_PROXY="$HTTP_PROXY" \
+    HTTPS_PROXY="$HTTPS_PROXY" \
+    NO_PROXY="$NO_PROXY" \
+    HTTP_PROXY_FALLBACK="$HTTP_PROXY_FALLBACK" \
+    SCREENPLAY_BUILD_PROXY="$SCREENPLAY_BUILD_PROXY" \
+    NPM_MIRROR_REGISTRY="$NPM_MIRROR_REGISTRY" \
+    sh /tmp/npm-run.sh install --no-audit --no-fund
+
+# Layer 2: sources.
+COPY backend backend
+COPY web web
+
+RUN HTTP_PROXY="$HTTP_PROXY" \
+    HTTPS_PROXY="$HTTPS_PROXY" \
+    NO_PROXY="$NO_PROXY" \
+    HTTP_PROXY_FALLBACK="$HTTP_PROXY_FALLBACK" \
+    SCREENPLAY_BUILD_PROXY="$SCREENPLAY_BUILD_PROXY" \
+    NPM_MIRROR_REGISTRY="$NPM_MIRROR_REGISTRY" \
+    sh /tmp/npm-run.sh run build
+
+# --- 产物自查：构建失败比部署失败便宜得多 -----------------------------------
+# 「镜像里还是旧代码」是最难排查的一类问题：容器起得来、健康检查也过、页面也
+# 打得开，只是少一个标签页。常见成因是构建缓存命中了旧的 COPY 层，或某个
+# workspace 的 build 静默失败。这里直接检查 backend/dist 与 web/dist 里有没有
+# 本轮功能必须存在的符号，缺一个就让构建在这里失败。
+RUN sh /tmp/verify-build-artifacts.sh
+
+# --- 构建指纹：回答「这个镜像到底是哪份源码构建的」--------------------------
+# 不依赖宿主机的 git（构建上下文里通常没有 .git），改用源码内容哈希：
+# 同一份源码 → 同一个指纹。排查时可以拿它和仓库里的值对比。
+# 用单行 sh（find -exec cat + sort）而非多行续行：这是 Alpine 的 busybox ash，
+# 命令替换里嵌套续行很容易被解析成别的意思。
+# 注意 find 的表达式：-o 的优先级低于隐式 -a，不写括号时 '*.tsx' / '*.css' 会
+# 绕过 -type f。这里用 -type f -a '(' ... ')' 明确表达，busybox find 同样支持。
+RUN SRC_FILES="$(find backend/src web/src -type f -a \
+        '(' -name '*.ts' -o -name '*.tsx' -o -name '*.css' ')' \
+      | LC_ALL=C sort)" \
+ && printf '%s\n' "$SRC_FILES" > /tmp/source-files.txt \
+ && HASH="$(printf '%s\n' "$SRC_FILES" | xargs cat | sha256sum | cut -c1-16)" \
+ && COUNT="$(printf '%s\n' "$SRC_FILES" | grep -c . || true)" \
+ && printf '{\n  "sourceHash": "%s",\n  "builtAt": "%s",\n  "sourceFiles": %s\n}\n' \
+      "$HASH" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COUNT" > /app/build-info.json \
+ && rm -f /tmp/verify-build-artifacts.sh /tmp/source-files.txt \
+ && cat /app/build-info.json
+
+# --- 与仓库里提交的期望指纹比对 ---------------------------------------------
+# 把「镜像里的到底是哪份源码」变成一眼可见的事实。
+# 不一致只警告、不让构建失败（指纹过期不是错误，而中止构建会让用户拿不到镜像）；
+# 真正的把关是上面那道 verify-build-artifacts.sh。
+COPY .source-hash /tmp/expected.source-hash
+COPY scripts/expected-source-hash.sh /tmp/expected-source-hash.sh
+RUN sh /tmp/expected-source-hash.sh && rm -f /tmp/expected-source-hash.sh /tmp/expected.source-hash
+
+# ---------------------------------------------------------------------------
+FROM ${REGISTRY}node:22-alpine AS run
+
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ARG HTTP_PROXY_FALLBACK
+ARG APK_MIRROR
+ARG APK_MIRRORS
+ARG APK_PROBE_TIMEOUT
+ARG APK_INSTALL_TIMEOUT
+
+COPY scripts/apk-setup.sh /tmp/apk-setup.sh
+
+# --- run 阶段：同样用「容器内真实校验」装 ffmpeg 并建用户 ---
+# 同样只用行内环境变量前缀，运行镜像里不残留任何代理变量。
+RUN HTTP_PROXY="$HTTP_PROXY" \
+    HTTPS_PROXY="$HTTPS_PROXY" \
+    NO_PROXY="$NO_PROXY" \
+    HTTP_PROXY_FALLBACK="$HTTP_PROXY_FALLBACK" \
+    APK_MIRROR="$APK_MIRROR" \
+    APK_MIRRORS="$APK_MIRRORS" \
+    APK_PROBE_TIMEOUT="$APK_PROBE_TIMEOUT" \
+    APK_INSTALL_TIMEOUT="$APK_INSTALL_TIMEOUT" \
+    sh /tmp/apk-setup.sh ffmpeg \
+ && addgroup -S screenplay \
+ && adduser -S screenplay -G screenplay \
+ && rm -f /tmp/apk-setup.sh /tmp/screenplay-proxy-env /tmp/apk-probe.log /tmp/apk-add.log
+
+WORKDIR /app/backend
+
+COPY --from=build /app/backend/package.json ./package.json
+COPY --from=build /app/backend/dist ./dist
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/web/dist /app/public
+# 构建指纹（见 build 阶段）：`cat /app/build-info.json` 即可确认镜像对应的源码。
+COPY --from=build /app/build-info.json /app/build-info.json
+
+# 版本号落成 ENV（构建期 ARG 不会持久化，必须显式转成 ENV）
+ARG BUILD_VERSION="0.0.0-dev"
+ENV BUILD_VERSION=$BUILD_VERSION
+
+# 运行期环境变量（不含任何代理设置，入站访问不受影响）
+ENV NODE_ENV=production \
+    PORT=3000 \
+    DATA_DIR=/data \
+    MEDIA_DIRS=/media \
+    WEB_DIST=/app/public
+
+EXPOSE 3000
+VOLUME ["/media", "/data"]
+
+# 健康检查：容器内真实探测后端是否已就绪（而非仅进程存活）。
+# 只打本机回环，不经过任何代理，因此不受出站代理/网络影响。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD wget -q -O /dev/null --tries=1 --timeout=4 http://127.0.0.1:${PORT}/api/health || exit 1
+
+CMD ["node", "dist/main.js"]

@@ -1,0 +1,52 @@
+# =============================================================================
+# ScreenPlay — Windows container image (node:22-windowsservercore)
+#
+# Windows containers cannot use the same multi-stage the same way because
+# native module compilation and PATH handling differ. This single-stage image
+# builds and runs in one layer (slower, but the only practical approach for
+# Windows Server containers). Native modules (better-sqlite3 / sharp) are
+# fetched as prebuilt binaries on Windows; ffmpeg can be copied in or installed
+# via winget/choco at build time.
+# =============================================================================
+
+# escape=`
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS runner
+
+# Install Node 22 LTS via chocolatey (uncomment the choco lines if you have
+# choco available; otherwise replace with a manual Node zip install).
+# RUN powershell -Command "Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
+# RUN choco install -y nodejs-lts ffmpeg
+
+# For a fully declarative alternative, bring your own node + ffmpeg:
+#   nodejs and ffmpeg must be on PATH before the steps below.
+
+WORKDIR C:\app
+
+# Manifests first for layer caching.
+COPY package.json .
+COPY backend/package.json backend/package.json
+COPY web/package.json web/package.json
+COPY backend/nest-cli.json backend/nest-cli.json
+COPY backend/tsconfig.json backend/tsconfig.json
+COPY backend/tsconfig.build.json backend/tsconfig.build.json
+COPY web/tsconfig.json web/tsconfig.json
+COPY web/tsconfig.node.json web/tsconfig.node.json
+
+RUN npm install --no-audit --no-fund
+
+COPY backend backend
+COPY web web
+
+RUN npm run build
+
+ENV NODE_ENV=production `
+    PORT=3000 `
+    DATA_DIR=C:\data `
+    MEDIA_DIRS=C:\media `
+    WEB_DIST=C:\app\web\dist
+
+EXPOSE 3000
+VOLUME ["C:\\media", "C:\\data"]
+
+WORKDIR C:\app\backend
+CMD ["node", "dist/main.js"]

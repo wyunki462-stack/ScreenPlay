@@ -1,0 +1,2037 @@
+# 验证方法（逐项）
+
+本文给出各项功能的**可复现验证步骤**。每项都分两层：
+
+- **自动化**：`scripts/verify-image-fix.sh` 中的对应检查组，会打印 ✓/✗ 并计入通过数；
+- **手工**：在浏览器里用眼睛确认的步骤，专门覆盖脚本测不到的交互细节。
+
+```bash
+# 一次性跑完 16 组（含本文涉及的全部自动化检查）
+cd <仓库根目录>
+AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.sh
+
+# 需求 6 / 7 / 8（卡片比例 / 成就手动选择 / 失败提示）：自建隔离实例，可重复执行
+cd <仓库根目录>
+bash scripts/verify-round-d.sh
+
+# 大图区海报轮播 + 全量游戏遍历（自建隔离实例，含真实 Chromium）
+cd <仓库根目录>
+bash scripts/verify-round-l.sh
+```
+
+> 开启认证后所有 `/api/*` 都需要会话，脚本会自动登录并携带 Cookie。
+> 用本地账户时改为 `AUTH_ADMIN_PASSWORD=密码 bash scripts/verify-image-fix.sh`。
+> 未提供凭据时脚本不会失败退出，而是提示"未登录成功，多数接口返回 401 属预期结果"。
+
+---
+
+## 需求 1：取消封面 / 默认封面标识
+
+**对应脚本组**：第 8 组（海报自选 / 轮播持久化）、第 9 组（取消封面恢复官方默认）、
+第 15 组（取消封面全链路：相册 / 上传 / 官方三来源）
+
+### 自动化
+
+```bash
+bash scripts/verify-image-fix.sh 2>&1 | sed -n '/海报自选/,/手动匹配/p'
+```
+
+预期看到：
+
+| 检查项 | 含义 |
+|---|---|
+| `海报接口可用（N 张，选中 M 张）` | 存在选中标记，界面才有可取消的入口 |
+| `展现模式可切换并持久化` | 静态封面 / 轮播切换后重启仍在 |
+| `取消封面接口可用（已回退到 …）` | 取消后 `poster_url` 回到官方海报 |
+| `取消封面未删除任何海报` | **只改标记，不删文件** |
+| `官方默认封面 isCover=false` | 官方海报不会出现无效的「取消封面」按钮 |
+| `取消封面后已恢复为官方海报` | 状态真正落库 |
+
+### 手工（关键交互，脚本测不到）
+
+1. 打开任一游戏的「编辑海报」弹窗。
+2. **官方海报**那一张：角标应显示**「默认封面」**（灰底 + 对勾），操作区**不应有**「取消封面」。
+3. 任选一张非官方图（上传图或相册图）→ 点「设为封面」：角标变**「封面」**（蓝底 + 星标），操作区出现**「取消封面」**。
+4. 点「取消封面」：应立刻提示成功，角标回到**「默认封面」**，弹窗和卡片封面**实时**变回官方海报。
+5. 关闭弹窗再打开：仍是「默认封面」，**不会回弹**成「封面」（这是原来那个 bug 的回归点）。
+6. 返回图库页，卡片封面应已是官方海报（卡片与详情一致）。
+
+### 三种来源都要验证（第 15 组自动覆盖）
+
+| 来源 | 脚本检查 | 手工检查 |
+|---|---|---|
+| 相册选择 | `相册图片设为封面成功` → `取消后不存在任何用户选择标记` | 设为封面后可取消，封面回到官方海报 |
+| 本地上传 | 同上（`source=upload`） | 取消后**上传的图片仍在**，且可再次设为封面 |
+| 官方刮削 | `回到唯一默认封面（来源 scraped）` | 官方海报显示「默认封面」，没有取消入口 |
+
+### 边界情况
+
+- **没有官方海报的游戏**：设为封面 → 取消 → 应回退到**第一张可用图片**并显示「默认封面」，且**不再出现**「取消封面」。
+- **打开弹窗即自愈**：无需手工调接口。历史数据里"`poster_url` 有值但没有任何选中行"的情况，会在弹窗打开的瞬间自动补齐，并写日志：
+  `Cover url for game … had drifted from poster …; realigned`
+
+### 已修复的根因（「相册图设为封面后取消无效」）
+
+`MetadataService.persist()` 曾把 `games.poster_url` 原样交给 `ensureScrapedPoster()` 登记为**官方海报**。
+而这一列在两种情况下是**本地图片**：
+
+- 游戏没有官方海报时，它是自动回退的首图 `/api/media/<id>/thumbnail`；
+- 用户已经把相册图设为封面后，它是 `/api/media/<id>/preview`。
+
+于是"官方海报"这一行实际指向用户自己那张图。**取消封面 = 又把它选了一遍**，所以看起来点了没反应、
+封面没恢复。现在：
+
+1. `ensureScrapedPoster()` 拒绝任何本地文件 URL（`/api/media/<id>/…`、`/api/posters/<id>/…`），
+   只接受真正的抓取图；`/api/media/proxy?url=…` 是代理过的**抓取图**，仍然允许。
+2. `MetadataService` 改为显式传"抓取到的图"，不再回读 `poster_url`。
+3. 启动时自动修复历史脏数据（`Repaired N poster row(s) that were wrongly recorded as official artwork`），
+   与同图重复的行合并、其余改回 `media`，已有数据库无需手工处理。
+4. `clearSelection()` 再兜一层：挑"官方海报"时跳过本地文件行，即便数据库尚未迁移也不会出错。
+
+---
+
+## 需求 2：NAS 本地系统账户登录
+
+**对应脚本组**：第 13 组（本地登录认证）
+
+### 自动化
+
+```bash
+AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.sh 2>&1 | sed -n '/本地登录认证/,$p'
+```
+
+预期看到：
+
+```
+✓ 登录成功（用户 …）
+✓ 健康检查保持公开（无需登录，HTTP 200）
+✓ 未登录访问受保护接口被拒绝（HTTP 401）
+  当前用户 : …            账户来源 : system
+  provider : system（mode=system, 系统库可用=True）
+✓ 未在数据库中检出明文密码字段（本地账户使用 scrypt 哈希）
+```
+
+### 手工
+
+| 验证点 | 步骤 | 预期 |
+|---|---|---|
+| 必须登录 | 退出登录后刷新页面 | 回到登录页，看不到图库 |
+| 系统账户 | 用 NAS 用户名 + 密码登录 | 成功；右上角显示该用户名 |
+| 密码错误 | 故意输错密码 | 明确报错，不泄露账户是否存在 |
+| 账户过滤 | 试 `root`、`daemon`、锁定账户 | 一律拒绝；登录框下拉只列普通账户（uid ≥ 1000） |
+| 记住登录 | 勾选「记住登录状态」后登录，**浏览器完全关闭再开** | 仍是登录状态 |
+| 容器重启 | `sudo docker compose restart` 后刷新 | **仍是登录状态**（会话在数据卷里） |
+| 不产生明文 | 见下方命令 | 无任何明文密码 |
+| 不影响业务 | 登录后跑一次媒体扫描 + 手动匹配 | 均正常 |
+
+密码与泄漏核查（在 NAS 上执行）：
+
+```bash
+# 1) 确认数据库里没有明文密码
+sudo docker exec screenplay sh -c \
+  "strings /data/screenplay.db | grep -iE 'password|passwd' | head"
+
+# 2) 浏览器里 F12 → Network，检查 /api/auth/session 与 /api/games 响应
+#    响应体中不应出现密码或 $6$ 开头的哈希
+
+# 3) 确认 Cookie 为 HttpOnly
+#    Application → Cookies → screenplay_session 应标注 HttpOnly
+```
+
+账户库挂载核查：
+
+```bash
+# 宿主 shadow 组 GID（compose 里的 SHADOW_GID 要与此一致，Debian 默认 42）
+getent group shadow
+# 容器内应能读到账户库
+sudo docker exec screenplay sh -c 'wc -l /host-etc/passwd /host-etc/shadow'
+```
+
+> **被锁在门外怎么办**：在 `.env` 里设 `AUTH_DISABLED=1`，重启容器即可免登录进入；
+> 或用自动创建的本地 `admin` 账户登录（未设 `AUTH_ADMIN_PASSWORD` 时，
+> 随机密码会打印在容器日志：`sudo docker logs screenplay | grep -i admin`）。进去后记得改回来。
+
+---
+
+## 需求 3：界面语言切换
+
+**对应脚本组**：第 14 组（界面语言切换）
+
+### 自动化
+
+```bash
+bash scripts/verify-image-fix.sh 2>&1 | sed -n '/界面语言切换/,$p'
+```
+
+预期看到：
+
+```
+✓ 语言偏好接口可用：{"language":"zh-CN"}
+✓ 切换为 en 并持久化成功
+✓ 切换为 zh-CN 并持久化成功
+✓ 非法语言值被拒绝（HTTP 400）
+```
+
+接口层直测：
+
+```bash
+J=/tmp/sp.jar
+curl -c $J -X POST http://127.0.0.1:3001/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"你的用户名","password":"密码"}' >/dev/null
+
+curl -b $J http://127.0.0.1:3001/api/settings/preferences          # {"language":"zh-CN"}
+curl -b $J -X PUT http://127.0.0.1:3001/api/settings/preferences \
+  -H 'Content-Type: application/json' -d '{"language":"en"}'        # {"language":"en"}
+```
+
+### 手工
+
+1. **默认中文**：全新浏览器（或无痕窗口）打开，界面应是简体中文，无需任何设置。
+2. **设置页入口**：进入「设置」，顶部应有「界面语言」卡片，含「简体中文 / English」两个选项。
+3. **实时生效**：点「English」——**不刷新页面**，导航、按钮、对话框、提示、游戏信息标签应立即变英文。
+4. **全局覆盖**：切到 English 后逐页走一遍并打开各弹窗，确认无残留中文：
+   图库页 / 游戏详情（媒体、时间线、成就、评分四个标签）/ 设置页 / 编辑海报弹窗 /
+   编辑信息弹窗 / 平台设置弹窗 / 手动匹配弹窗 / 游戏卡片菜单。
+5. **可切回**：再点「简体中文」，全部恢复中文。
+6. **浏览器持久化**：切到 English 后**完全关闭浏览器再打开**，仍是 English。
+7. **容器持久化**：`sudo docker compose restart` 后刷新，仍是 English。
+8. **跨浏览器**：换一个浏览器打开，应跟随服务端保存的 English。
+9. **不影响数据**：切换前后游戏数量、海报、评分、媒体文件均无变化（只变文案）。
+
+### 为什么不需要刷新就有英文
+
+英文词典已编译进前端产物，验证方法：
+
+```bash
+sudo docker exec screenplay sh -c \
+  "grep -c 'Interface language' /app/public/assets/index-*.js"
+```
+
+返回 ≥ 1 说明镜像里带了英文词典；返回 0 说明还在跑旧镜像，**重新执行 `scripts/docker-build.sh` 即可**。
+
+---
+
+---
+
+## 需求 4：Steam 成就全量刮削
+
+### 先做这一步：确认「成就接口」本身是通的
+
+**这是最常见的问题根因。**成就走 `api.steampowered.com`，而封面/价格/简介走
+`store.steampowered.com`——**两个不同的域名**。大陆网络下后者常常能直连、前者被拦，
+结果就是"元数据刮削正常，但成就永远是空的"。
+
+```bash
+# 在「设置 → 数据源」填好 Steam API Key 并保存后点「测试成就接口」，
+# 或直接调接口（appid 620 = Portal 2，只读公开数据）：
+curl -s "http://127.0.0.1:3001/api/settings/test-steam-achievements?appid=620" | python3 -m json.tool
+```
+
+返回 `{"ok": true, ...}` 表示成就接口可用；否则 `message` 会给出可操作的原因：
+
+| 返回 | 含义与处理 |
+|---|---|
+| `未填写 Steam API Key` | 去 <https://steamcommunity.com/dev/apikey> 申请后填入保存 |
+| `HTTP 403/401：Steam 拒绝了该 API Key` | Key 无效或被截断（会一并给出实际长度，便于发现多余空格） |
+| `HTTP 429` | 触发限流，等几分钟再试 |
+| `无法连接 api.steampowered.com` | 该域名不可达 → 在「设置 → 数据源」配置代理后重试 |
+
+### 本机对 Steam 两个域名的实测（2026-09，APNIC 网段）
+
+| 端点 | 直连 | 经代理 |
+|---|---|---|
+| `store.steampowered.com/api/appdetails`（封面/价格） | ✗ TLS 被重置 | ✓ HTTP 200 |
+| `api.steampowered.com/.../GetSchemaForGame`（成就定义） | ✗ TLS 被重置 | ✓ 可达（无 Key 时返回 400/403） |
+| `api.steampowered.com/.../GetGlobalAchievementPercentagesForApp`（全球解锁率） | 时通时断 | ✗ TLS 被重置 |
+
+结论：**两个域名都基本必须走代理**；而「全球解锁率」这个端点即使走代理也常被重置。
+所以代码把它当作**可降级**的附加信息：它失败时成就的名称/描述/图标照常入库，
+只把 `globalPercent` 留空（界面显示为空），并在日志里 WARN，绝不因此让整次刮削失败。
+诊断接口会分别报告这两项，并在消息里说明影响范围。
+
+### 自动化（第 16 组）
+
+```bash
+AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.sh
+```
+
+第 16 组会检查：每个游戏的成就状态都必须是 `ok / empty / failed / unsupported / pending`
+之一且**带原因**（不允许"既无数据、也无说明"），分等级统计与行数一致，失败项都带可读原因。
+
+### 契约测试（无 Key 也能验证成功路径）
+
+开发机没有可用的 Steam API Key，真实接口只会返回 400/403。为了不把「成功路径」留成空白，
+本项目用**与官方响应同构的报文**驱动真实的 `SteamProvider`，验证解析、DLC 归属与降级：
+
+```bash
+cd <仓库根目录>
+bash backend/scripts/achievements/run.sh
+# == 1/3 Steam 成就契约测试 ==          25 通过 / 0 失败
+# == 2/3 奖杯多源降级测试（联网） ==     15 通过 / 0 失败
+# == 3/3 奖杯失败与重试测试（本地桩服）== 12 通过 / 0 失败
+```
+
+25 项全过，包括：本体 3 + DLC 2 共 5 条成就的五维度 100% 齐全、DLC appid 与名称正确、
+本体未被误标为 DLC、`sortOrder` 唯一、分别请求本体与 DLC 两个 schema、
+**全球解锁率接口失败时 5 条成就仍全部保留**、schema 403 时上报原因且不写半截数据、
+未配置 Key 时明确提示、落库三次不重复且能同步删除上游已移除的成就。
+
+### 手工
+
+1. 设置里填好 Steam Key → 点「测试成就接口」→ 看到 ✓。
+2. 首页点「立即刮削全部游戏」。
+3. 打开任意 Steam 游戏详情页 → 「成就」标签页 → 顶部应显示**总数**，下面按等级/本体与 DLC 分组列出
+   **名称 / 描述 / 解锁图标 / 全球解锁率**。
+4. 点「重新抓取成就 / 奖杯」→ 数字不变（增量更新，不会重复插入）。
+
+### 覆盖的维度
+
+| 要求 | 落点 |
+|---|---|
+| 立即刮削全部游戏触发成就 | `MetadataService.enrichGame()` 末尾统一调用成就同步 |
+| 单游戏刷新元数据含成就 | `MetadataService.refreshGame()` 末尾强制重新刮取 |
+| 名称/描述/图标/解锁条件/全球解锁率 | `steam.provider.ts` 的 Schema + GetGlobalAchievementPercentages |
+| 本地持久化 + 增量更新 | `achievement-store.ts` 事务 UPSERT + 只清理本来源的行 |
+| 详情页成就标签页 + 总数 | `AchievementsPanel` 顶部统计条 |
+| 本体 + DLC 成就 | `fetchAchievements()` 逐个抓取 `appdetails.dlc`（上限 12 个） |
+
+---
+
+## 需求 5：PlayStation 主机奖杯刮削
+
+### 数据源策略（无需绑定 PSN 账号）
+
+只使用**公开可访问**的中文奖杯站，按顺序尝试、失败自动降级到下一个，**不需要登录 PSN**：
+
+| 顺序 | 数据源 | 说明 |
+|---|---|---|
+| 1 | PSNINE（psnine.com） | 已实测可用；搜索 `GET /psngame?title=<关键词>`，奖杯表 `GET /psngame/<id>` |
+
+> **本机实测**（直连与经代理都一样）：`d7vg.com` / `www.d7vg.com` **DNS 无法解析**，
+> `jump.hk` DNS 无法解析，`psnprofiles.com` TLS 被阻断，只有 `psnine.com` 可用
+> （直连 HTTP 200，54KB 页面）。因此当前只启用了 psnine 这一个可用源——
+> 接入一个**抓不到数据的源**只会增加失败面，所以没有把不可达的站点写进去充数。
+> `TROPHY_SOURCES` 是数组，**降级链本身已完整实现并验证**（见下）；
+> 你若在别的网络下能访问二饼/Jump，只需实现 `TrophySource` 接口并加进
+> `trophies.module.ts` 的工厂数组即可，无需改动其它代码。
+> 可用 `TROPHY_PSNINE_DISABLED=1` 单独关闭 psnine。
+
+### 多源降级验证（15 项）
+
+```bash
+cd <仓库根目录>
+bash backend/scripts/achievements/run.sh   # 第 2 项即多源降级测试
+```
+
+注册「一个必定失败的假源（排最前）+ 真实联网的 psnine」，实测 **15/15**：
+
+- 第一个源不可达 → **自动降级**到 psnine，仍抓到 40 条奖杯（白金1/金7/银8/铜24）；
+- 成功过的源被记住（`trophy_source=psnine`），下次优先尝试；
+- **全部源都失败** → 状态 `failed`，原因汇总各源错误（`全部奖杯数据源均失败：…`）
+  并**落库**，重启后前端仍能看到原因；失败时不写入任何半截数据；
+- 非 PS 平台返回 `unsupported` 且**不越权写状态**（避免盖掉 Steam 的真实失败原因）；
+- 多来源互不干扰：重刮奖杯不会删除 steam 来源的行；
+- 15 天 TTL 内不重复抓取（0 次网络请求），点「重新抓取」才强制联网（实测发出 2 次请求）。
+
+### 自动化（第 16 组）
+
+第 16 组会挑一款 PlayStation 平台游戏，核对奖杯维度完整性：`name` / `tier` / `iconUrl` 必须
+**100% 齐全**，`description` / `rarity` 至少要有数据，并校验重复刮取不会重复插入。
+
+### 手工
+
+1. 给一款游戏设置平台为 `PlayStation 4` / `PlayStation 5`（或让它被自动识别）。
+2. 详情页 → 「重新抓取成就 / 奖杯」。
+3. 「成就」标签页应显示：**白金 X / 金 X / 银 X / 铜 X + 总数**，并按 白金 → 金 → 银 → 铜 分组，
+   每条含名称、描述、图标、稀有度（极为珍贵/非常珍贵/珍贵/一般）与全球达成率。
+4. `sudo docker compose restart` 后刷新页面，奖杯应仍在（持久化在 SQLite，不依赖容器）。
+
+### 刮不到时一定会有说明
+
+界面不会出现"空白面板"：
+
+| 状态 | 界面表现 |
+|---|---|
+| `ok` | 正常显示奖杯列表与统计 |
+| `empty` | 「该游戏没有成就/奖杯数据源可返回的条目」 |
+| `failed` | 显示**具体原因**（如 API Key 无效、目标站不可达） |
+| `unsupported` | 「该游戏尚未匹配到 Steam 条目，也不属于 PlayStation 平台……」 |
+| `pending` | 提示尚未刮取，可点按钮触发 |
+
+---
+
+## 需求 6：游戏卡片统一 16:9 横向比例
+
+### 自动化（`bash scripts/verify-round-d.sh`，第 5 步）
+在 jsdom 中渲染真实的 `GameCard`，断言落在**真实渲染出的 `<img>`** 上：
+
+- 封面容器为 `aspect-video`（16:9），卡片内已无 `aspect-[2/3]` 残留；
+- 封面图同时带 `object-cover` 与 `object-center` —— 居中裁切、不拉伸变形；
+- 封面图 `h-full w-full`，填满 16:9 容器；
+- 标题 / 平台 / 时长 / 张数四项信息都在卡片文本里；
+- 通过 DOM 顺序断言信息层在封面层**之后**（即位于海报下方，不与画面重叠）。
+
+本机实测 **9/9**。
+
+### 改了哪些位置
+| 位置 | 改动 |
+| --- | --- |
+| `web/src/components/GameCard.tsx` | 封面容器 `aspect-[2/3]` → `aspect-video`；信息块保持在海报下方 |
+| `web/src/pages/Home.tsx` | 图库骨架屏 `aspect-[2/3]` → `aspect-video` |
+| `web/src/pages/GameDetail.tsx` | 详情页主海报 `w-40 sm:w-44` → `w-full sm:w-64`，`aspect-[2/3]` → `aspect-video`；骨架屏同步 |
+| `web/src/components/PosterCarousel.tsx` | 补上显式 `object-center`（原本只有 `object-cover`） |
+
+### 兼容已有海报比例
+三种常见比例在 16:9 容器 + `object-fit: cover` 下的表现：
+
+- **竖版（2:3，绝大多数游戏海报）**：左右被裁掉，画面主体一般在中部，故用
+  `object-center` 居中裁切，不拉伸；
+- **横版（16:9、主视觉图）**：比例吻合，基本完整入画；
+- **方图 / 截图**：居中裁切，主体保留。
+
+信息区放在海报**下方**而不是叠加在图上，所以任何比例下都不会遮挡画面核心内容。
+
+> 例外：`web/src/components/PosterDialog.tsx` 里的封面选择器**保持 `aspect-[3/4]` 不变**。
+> 那是让用户挑选封面的地方，需要看到完整原图，裁成 16:9 反而会让人选错。
+
+### 网格与分页
+图库网格仍为 `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5`，`gap-4` 不变 ——
+卡片变矮后同一行能容纳的信息密度更合理，无需调整列数。
+图库本身**没有分页**（`Home.tsx` 直接渲染全部游戏），因此不涉及分页逻辑改动。
+
+---
+
+## 需求 7：成就「手动选择游戏」
+
+### 为什么需要它
+自动匹配只能依据**文件夹名**推断目标。文件夹叫 `007` 时，无法区分
+「007 First Light」与「GoldenEye 007」；缩写、多版本、重名都会选错。
+手动指定后，该选择会被持久化，后续刮削一律沿用。
+
+### 自动化（`verify-round-d.sh` 第 4 步，后端端到端 13 项）
+夹具：`Bloodborne`(PS4) / `007 First Light`(PS5) / `Portal 2`(PC)，真实联网抓取 psnine。
+
+| 检查项 | 结果 |
+| --- | --- |
+| 候选搜索跨源合并 | 「血源诅咒」→ psnine 1 条；「Portal」→ Steam 返回 `Portal 2(620)`、`Portal(400)`（见下方环境说明） |
+| 候选字段统一 | `source / sourceLabel / externalId / name` 齐备，另有 `detail`（如 `appid 220`）用于区分同名 |
+| 自动匹配抓不到的夹具 | 未手动指定前 `007 First Light` 无用数据（正是用户遇到的问题） |
+| 绑定后立即重抓 | 选定 psnine 5818 → **40 条奖杯**（白金1/金7/银8/铜24） |
+| 配置持久化 | `achievement_links` 落库 `psnine / 5818 / 血源诅咒` |
+| 全量刮削沿用 | `POST /api/games/refresh-all` 后绑定仍在、数据仍 40 条 |
+| 单游戏刷新沿用 | `POST /api/games/:id/refresh` 后绑定与数据均不变 |
+| 后端保留失败细节 | `error` 字段仍返回具体原因（供日志排查） |
+| 恢复自动匹配 | `DELETE /target` 后 `achievement_links` 行被清除 |
+
+> **环境说明**：本机到 `store.steampowered.com` 需要走代理，而该代理**会抖动**
+> （实测同一时刻 `google.com` 走代理失败、`storesearch` 走代理成功）。
+> 因此脚本对 Steam 候选做 3 次重试；仍不可达时给出 **`!` 提示**而不是判为失败，
+> 因为那是网络环境问题，不是代码缺陷。psnine 侧的断言始终是硬性的。
+
+### 自动化（`verify-round-d.sh` 第 5 步，前端真实 DOM 8 项）
+渲染真实的 `GameDetail` 并真实点击：
+
+- 「成就」标签页存在「手动选择游戏」入口；
+- 弹窗打开后搜索框提示为「输入游戏名称搜索，如 007 First Light」，并显示说明文案；
+- 输入「血源诅咒」后候选出现在 DOM 中，可点选；
+- 点「确认并重新抓取」后给出「已应用，成就数据已更新」；
+- 关闭弹窗后成就列表**已实时刷新为 40 条**，分等级统计同步更新（白金 1）。
+
+### 交互与视觉
+弹窗与既有的「手动匹配」弹窗同源同款：同样的遮罩
+`fixed inset-0 z-50 bg-black/80 backdrop-blur-sm`、同样的面板
+`max-h-[85vh] max-w-lg rounded-xl border border-zinc-800 bg-zinc-900`，
+暗色主题下与其余弹窗一致。
+
+### 为什么单独建表
+选择存在 `achievement_links`，**不是** `game_links`。`game_links` 会被自动匹配
+（`MetadataService.fetchProvider`）在每次刮削时重写，写进去会被静默覆盖。
+同时 `MetadataService.persist()` 在检测到手动目标时会**跳过**自动刮到的成就写入，
+两条路径一起保证选择不会被撤销。
+
+### 手工确认
+1. 打开一个自动匹配选错的游戏 → 「成就」标签页 → 点「手动选择游戏」；
+2. 输入关键词，从列表里挑正确的那一条 → 「确认并重新抓取」；
+3. 回到图库点「立即刮削全部游戏」，再回到该游戏 → 成就应仍是刚才选的那份；
+4. 想恢复自动匹配，重新打开弹窗点左下角「恢复自动匹配」。
+
+---
+
+## 需求 8：成就抓取失败的统一提示
+
+### 需求
+- 前端主标题固定为「加载成就失败」，说明固定为
+  「当前游戏成就数据暂不可用，请尝试手动选择游戏或稍后重试」；
+- **前端不再显示任何具体数据源站点名**；
+- 后端日志保留具体失败站点与原因。
+
+### 自动化（`verify-round-d.sh` 第 5 步）
+在真实失败态（PC 游戏 + 未配置 Steam API Key）下渲染「成就」标签页：
+
+- 主标题为「加载成就失败」✓；
+- 说明文案与要求逐字一致 ✓；
+- 全页文本**不含** `psnine` / `PSNINE` / `api.steampowered` / `Steam API Key` /
+  `GetSchemaForGame` 中任何一个 ✓；
+- 同一时刻后端接口的 `error` 字段仍返回具体原因 ✓（第 4 步第 7 项）。
+
+### 改动
+- `web/src/pages/GameDetail.tsx`：失败分支**不再渲染 `data.error`**，改用固定文案；
+  传输层失败与 `unsupported` / `empty` 分支同样只给统一文案。
+- `web/src/i18n/{zh,en}/detail.ts`：新增 `failedHint`；`unsupported` 与 `empty`
+  去掉了原先嵌在文案里的「Steam 需配置 Steam API Key」「通过 psnine 抓取」等站点名。
+- 弹窗内的候选副标题仍会标注来源（如 `PSNINE（PSN中文站）`）—— 那是**让用户区分候选**
+  的必要信息，与失败提示无关。
+
+> 后端 `error` 字段原样保留（`docs/API.md` 已注明它面向日志而非界面），
+> 排查问题时直接看 `docker logs screenplay` 或接口原始返回即可。
+
+---
+
+## 需求 9：PS 奖杯多源降级
+
+### 现状与实测
+「依次尝试多个备选数据源，单站失败自动切换，全部失败才报最终失败」的**机制**已经建好
+（`TrophiesService` 按注入顺序遍历 `TROPHY_SOURCES`，逐个记录失败原因），
+降级测试 **15/15** 通过（用会抛错的合成源验证切换与"全部失败"）。
+
+但**目前只有 psnine 一个站点是可达的**，实测（DoH + 直连 + 代理）：
+
+| 站点 | 结论 |
+| --- | --- |
+| `psnine.com` | ✓ **可达**，HTTP 200，奖杯页约 49 KB |
+| `d7vg.com`（二饼 / PSN 中文站） | ✗ 域名仍在但**没有 A 记录**（站点已下线）。且经查它与 psnine **本就是同一个站的不同域名**，"换一个源"其实是换域名，不是换数据源 |
+| `jump.hk` | ✗ DNS SERVFAIL，域名不存在 |
+| `psnprofiles.com` | DNS 正常（Cloudflare），但**直连与代理均被阻断** |
+| `gamegene.cn` | 站点可达，但**没有奖杯数据**（只有游戏资料页） |
+| `exophase.com` | ✗ HTTP 403（直连与代理均被 Cloudflare 拦） |
+| `playstationtrophies.org` | ✗ HTTP 403 |
+| `psntrophyleaders.com` | ✗ 301 后不可达 |
+| `psnleaderboard.com` / `trophyhunter.net` | ✗ DNS 不存在 / 连接失败 |
+| `gamer.com.tw`（巴哈姆特游戏库） | ✗ DNS / 连接失败 |
+| `vgtime.com`（游戏时光） | △ 站点可达（HTTP 200），但 `/game/` 已是**新闻页**，无奖杯数据、无搜索接口 |
+| `xiaoheihe.cn`（小黑盒） | △ 站点可达，`api.xiaoheihe.cn/game/get_game_detail/` 存在，但（a）需签名（实测返回"请求失败了"），（b）它的奖杯是**绑定 PSN 账号后看自己的进度**，不是"按游戏列全部奖杯"，形态不匹配 |
+| **PSN 官方** `web.np.playstation.com` `m.np.playstation.com` | ✗ 奖杯接口一律 **HTTP 403 Access Denied**（Akamai），需要登录态 Bearer Token |
+| psnine 的替代路径（`/api/`、`.json`、`/ajax/`、`api.`/`m.` 子域） | ✗ 全部 404 / 不可达，该站只有 HTML 一条路 |
+
+因此这里如实记录：**降级链路是真的，可插的备用站目前只有一个**。
+没有为了凑数而塞一个不做过验证的解析器 —— 那样只会在真出问题时给出错误答案。
+
+### 单站情况下的实际加固（可验证）
+既然暂时只有一个站，就把「这一个站失败」处理干净：
+
+| 加固点 | 说明 | 验证 |
+| --- | --- | --- |
+| **5xx 自动重试** | `TRANSIENT_STATUS` 含 408/425/429/500/502/503/**504**，指数退避（`CRAWLER_MAX_RETRIES` 默认 3）。psnine 的 504 是高发故障，这条最有用 | 本地桩服先返 504 两次再返正常页 → 第 3 次成功，抓到 3 条 ✓ |
+| **失败绝不静默** | 站点持续失败时抛 `TrophySourceError` 并带 HTTP 状态码，**不返回空列表** | 持续 503 → 错误含 `HTTP 503`，类型为 `TrophySourceError`（降级链据此换下一个源）✓ |
+| **空页面单独识别** | 200 但响应体为空 = 反爬/代理拦截页，给专门文案，避免被误判成"这游戏没有奖杯" | 桩服返空 → 文案为"服务器返回了空页面，可能被拦截或需要代理"，且不含"没有奖杯" ✓ |
+| **站点根地址可配置** | `TROPHY_PSNINE_BASE_URL`，默认 `https://psnine.com`。哪个站可达取决于容器所处的网络 —— 换个镜像/反代不用改代码 | 桩服作为根地址时，**搜索与取列表两条路径**都打到桩服并解析成功 ✓ |
+| **版面变化可检出** | 头部总数 vs 实际行数不一致时告警（不按告警丢弃数据，行数权威） | 头部正确累加（白金1/银1/铜1/共3），一致时不告警；人为改成"白5"后能被检出 ✓ |
+
+> 修掉的一个真 bug：`parsePsnineHeaderCounts()` **从不累加 `total`**（恒为 0），
+> 于是只要头部统计被解析出来，"版面变化"告警就会在每次抓取时误报，
+> 把真正的告警淹没。现已改为四档求和。
+
+### 新增站点的方式
+写一个实现 `TrophySource` 接口的类，加进 `trophies.module.ts` 的 `useFactory` 数组即可 ——
+顺序即优先级，其余代码无需改动。
+
+### 实际提升：同名变体重试
+`PsnineTrophySource.search()` 现在会依次尝试 **原始标题 → 共享的 CJK/拉丁变体**
+（复用 RAWG/Steam/Metacritic 同一个 `titleQueryVariants()`），最多 3 次。
+这正好覆盖「文件夹名与站点条目拼写不一致」这一类失败，也就是用户遇到的那类问题。
+
+### 新增站点的方式
+写一个实现 `TrophySource` 接口的类，加进 `trophies.module.ts` 的 `useFactory` 数组即可 ——
+顺序即优先级，其余代码无需改动。
+
+---
+
+## 需求 10：手动匹配更换游戏后的旧数据全量清理
+
+### 问题
+手动匹配换到另一个游戏后，只有名称、简介、开发商等字段更新，**旧游戏的
+背景轮播图、截图列表、成就数据**仍留在详情页里，出现「新游戏封面 + 旧游戏截图」。
+
+### 根因（实测）
+`GamesService.match()` 当时只清理了 `games` 行上的一部分字段和刮削海报。
+逐个对照后，**完全没被清理**的是：
+
+| 残留项 | 所在位置 |
+| --- | --- |
+| 旧游戏的奖杯/成就行 | `achievements` 表（`match()` 从未碰过它） |
+| 用户手动选定的成就目标 | `achievement_links` 表 |
+| 旧游戏的成就抓取结论 | `games.achievements_status / achievements_error / last_achievements_refresh / trophy_source` |
+
+另外 `PostersService.resetForRematch()` 会把**用户自己上传的海报也一并降级**
+（`is_selected = 0, is_user_choice = 0`），这与「保留用户主动配置」相冲突。
+
+### 修复
+
+| 步骤 | 位置 | 行为 |
+| --- | --- | --- |
+| 4b 新增 | `GamesService.match()` → `MetadataService.clearAchievements()` → `TrophiesService.clearForGame()` | 删除该游戏全部 `achievements` 行、清除 `achievement_links`、把四个成就状态列置空 |
+| 修订 | `PostersService.resetForRematch()` | 仍删除 `source='scraped'` 的海报，但**不再降级用户海报**；`poster_url` 改为从「仍处于选中态的海报」重新镜像，因此既不会指向已删除的旧刮削 URL，也不会丢掉用户的封面选择 |
+| 缓存 | `useMatchGame` 的 `onSuccess` | 补上 `["posters", id]` 失效（原先漏了这一个） |
+| 文案 | `dialogs.match.bound*` | 改为「旧数据已全部清除并写入新数据」的口径，不再出现「部分数据缺失」这种听起来像没替换成功的说法 |
+
+### 清理边界（刻意保留的东西）
+
+| 保留 | 原因 |
+| --- | --- |
+| `source IN ('upload','media')` 的海报及其选中态 | 用户自己的文件与封面选择，是用户配置不是刮削数据 |
+| `media` 表全部行 | 本地相册照片，删掉就是静默数据丢失 |
+| `games.duration_seconds` 等时长字段 | 来自本地扫描/游玩记录，不是刮削来的 |
+| `games.custom_platform` / `poster_mode` | 用户手动平台选择与封面模式 |
+
+### 验证（`bash scripts/verify-round-e.sh`）
+注入「旧刮削残留 + 用户配置」后换绑到 `metacritic:pokemon-violet`，再直接读库比对：
+
+```
+匹配前：刮削海报 2 / 用户海报 1（选中 1） / 相册 3 / 成就 3 行 / 手动成就目标 1 / 状态 ok
+✓ 旧游戏的成就行已全部删除
+✓ 旧游戏的手动成就目标已清除
+✓ 旧成就状态未残留（旧 status=ok/source=psnine → 新 status=unsupported/source=null）
+✓ 游戏名已更新为新条目：「Pokemon Violet」
+✓ 截图列表已替换（旧 2 张 → 新 4 张，无旧图残留）
+✓ 用户上传/相册海报被保留（1 张）
+✓ 用户自定义封面选择被保留（仍处于选中态）
+✓ 本地相册媒体被保留（3 个）
+✓ 手动平台选择标记被保留
+✓ 游玩时长（本地数据，非刮削）被保留
+```
+
+> 注意 `unsupported` 不是残留：换绑后的 Pokemon Violet 是 Switch 游戏，
+> 既没有 Steam 绑定也不是 PlayStation，这个**属于新条目自己的判定**是正确结果。
+> 判定残留的标准是「旧值 ok/psnine 是否原样留下」，实测没有留下。
+
+---
+
+## 需求 11：任天堂平台的匹配与刮削
+
+### 问题与根因（三条都实测复现）
+
+**1. 搜索结果极少** —— `MetadataService.search()` 对每个数据源只取
+`provider.search()` 的**单个最佳结果**（`if (m) out.push(...)`），
+所以再多的候选也只会显示 1 条，用户没有第二个选项。
+
+**2. metacritic 条目选中后必失败** —— 这是最硬的一条：
+
+```
+metacritic.search → {"id":"pokemon-violet","name":"Pokemon Violet"}
+metacritic.fetch  → canonicalName = null
+         完整 fragment = {"rating":{"metascore":71,"criticCount":125,...}}
+```
+
+`MetacriticProvider.fetch()` **只返回 `rating`，从来不设置 `canonicalName`**，
+而 `MetadataService.resolveMatchName()` 读的正是这个字段。
+于是它恒为 null，手动绑定到**任何** metacritic 条目都会报
+「无法在 metacritic 上找到该条目」——页面和评分其实都抓到了。
+（PC/PS 平台平时不出问题，是因为它们走的是自动匹配，不经过 `resolveMatchName`。）
+
+**3. RAWG 会挑错游戏** —— `宝可梦 紫` → `titleQueryVariants` 给出 `Pokemon Violet`，
+RAWG 返回的正确第一条是 `Pokémon Scarlet and Violet`，但旧代码写的是：
+
+```js
+const fuzzy = this.recognizer.fuzzyMatch(usedQuery, items, (i) => i.name);
+const best = fuzzy.item ?? items[0];
+```
+
+实测 `fuzzyMatch('Pokemon Violet', items)` 选出的是 **`Pokémon Colosseum`（score 0.517）**，
+把 API 自己的第一名直接丢掉了。而且 RAWG 的返回顺序**在两次请求之间并不稳定**：
+同一个查询一次以 `Pokémon Scarlet and Violet` 开头，下一次以 `Violet (itch)` 开头。
+
+### 修复
+
+| 修复 | 位置 |
+| --- | --- |
+| `searchAll()` 可选接口；每个数据源返回**最多 8~10 条**候选，弹窗直接展示（弹窗本来就是列表，无需改 UI） | `provider.interface.ts`、`metacritic/rawg.provider.ts`、`MetadataService.search()` |
+| metacritic `fetch()` 补 `canonicalName`（JSON-LD `name` → `h1.hero-title__text` → `<title>` 去掉 ` Reviews - Metacritic`），并拒绝把 `Page Not Found` 当标题 | `metacritic.provider.ts` |
+| metacritic 搜索结果**限定在结果卡片内**（`a.c-search-item[href*="/game/"]`），不再把导航/推荐位的 `/game/pc/all/` 当成候选 | `metacritic.provider.ts` |
+| RAWG 改为**按查询词覆盖率打分**排序，不再无条件相信 fuzzy 或 API 顺序 | `rawg.provider.ts` |
+| 中文/重音折叠（`Pokémon` → `pokemon`），否则 `pokemon` 这个词在 `Pokémon Scarlet and Violet` 里根本匹配不到 | `rawg.provider.ts` |
+| 绑定失败提示给出**原因 + 可试关键词** | `GamesService.match()` |
+
+RAWG 的评分规则（`rank()`）：完全相同 5 分；包含关系 4 分（**且要求短串至少占长串 60%**）；
+否则按「查询里有几个词出现在标题里」折算 0~3 分；同分再比 fuzzy 分、最后保 API 顺序。
+
+> 那个 60% 的比例护栏是必需的：`normalize()` 会把 `Violet (itch)` 化简成 `Violet`，
+> 其 key `violet` 确实「被包含在」`pokemonviolet` 里，于是它会拿到包含关系的 4 分
+> 并压过真正的 `Pokemon Scarlet and Violet`（3 分）。实测就是这个原因，
+> 加护栏后排序与输入顺序无关且稳定。
+
+### 验证
+
+```
+═══ 查询「宝可梦 紫」 ═══
+  metacritic.search → {"id":"pokemon-violet","name":"Pokemon Violet"}
+  metacritic.fetch  → canonicalName = "Pokemon Violet"      ← 修复前是 null
+  rawg.search       → {"id":747505,"name":"Pokémon Scarlet and Violet"}   ← 修复前是 Violet (itch)
+  mc.searchAll      → 8 条: Pokemon Violet | Pokemon Scarlet / Pokemon Violet Dual Pack …
+  rawg.searchAll    → 10 条: Pokémon Scarlet and Violet | Pokémon Colosseum | VIOLET: Space Mission…
+
+═══ 查询「血源诅咒」 ═══（回归：没有变坏）
+  metacritic.fetch → canonicalName = "Bloodborne"
+  rawg.search      → {"id":3387,"name":"Bloodborne"}
+═══ 查询「Hades」 ═══（回归）
+  rawg.search      → {"id":274755,"name":"Hades"}
+```
+
+端到端（`bash scripts/verify-round-e.sh`）：
+
+```
+✓ 「宝可梦 紫」返回 18 条候选（原先每个源只有 1 条）
+   按来源分布：{"rawg":10,"metacritic":8}
+✓ metacritic 条目绑定成功（原先必失败）：pokemon-violet → 「Pokemon Violet」
+✓ 任天堂游戏拿到评分：Metascore 71（125 家媒体）
+✓ 提示说明了失败原因 / ✓ 提示给出了可尝试的搜索关键词方向
+```
+
+### 多源互补
+`rawg` 与 `metacritic` 现在同时给出候选：选 metacritic 的 `Pokemon Violet` 拿到**精确条目 + Metascore**，
+选 rawg 的 `Pokémon Scarlet and Violet` 拿到**封面/简介/截图/开发商**。
+两者都写入同一条 `games` 行，展示逻辑与 PC/PS 完全一致（代码里没有按平台分支的渲染路径）。
+
+---
+
+## 需求 12：成就弹窗搜索提示改为通用文案
+
+| 位置 | 修改前 | 修改后 |
+| --- | --- | --- |
+| `detail.achievements.pick.placeholder`（zh） | 输入游戏名称搜索，如 007 First Light | **输入游戏名称搜索** |
+| 同上（en） | Search a game name, e.g. 007 First Light | **Search by game name** |
+
+弹窗其余文案、交互、数据流均未改动。真实 DOM 验证（渲染真实 `AchievementPickDialog`）：
+
+```
+实际 placeholder："输入游戏名称搜索"
+✓ 提示为通用的「输入游戏名称搜索」
+✓ 已移除具体游戏示例（无 007 / e.g. / 如 等字样）
+✓ 整个弹窗文本中都不含 007 First Light 示例
+✓ 底部「确认并重新抓取」按钮保持不变
+✓ 弹窗标题保持原样：为「Bloodborne」选择成就目标
+```
+
+---
+
+## 需求 13：手动匹配 / 刷新元数据后 Metacritic 评分偶发丢失
+
+### 两条根因（都已实测确认）
+
+**根因一：抓到的「无媒体评分」对象会覆盖掉已有的有效评分。**
+
+Metacritic 对「有用户评分但媒体评测还不足」的页面会解析出：
+
+```
+parseRating("<仅有 userScore 的页面>")
+  → {"source":"metacritic","metascore":null,"criticCount":3,"userScore":8.4,...}
+```
+
+而 `persist()` 原来是**整个数组替换**：
+
+```sql
+ratings = COALESCE(?, ratings)   -- ? = fragment.rating ? JSON.stringify([fragment.rating]) : null
+```
+
+只要 `fragment.rating` 不是 null 就会覆盖。上面这个对象**不是 null**，
+于是先前的 93 分被写成了 `metascore: null`，而列表/详情的取分函数
+`firstRating()` 只认 `metascore != null` 的条目 —— 评分标识与分数就此消失。
+这解释了「仅部分游戏出现」：取决于这一次抓到的页面有没有媒体均分。
+
+**根因二：手动匹配会先把 `ratings` 清成 `'[]'` 再刷新。**
+
+`GamesService.match()` 里唯一一处 `ratings = '[]'`。若随后的刷新没能取到评分
+（Metacritic 需走代理且偶发不可达），清空的结果就永久留下了。
+
+### 修复
+
+| 修复 | 位置 |
+| --- | --- |
+| 评分改为**按来源合并**，任何字段只有在本次确实有值时才覆盖，否则沿用已存的值 | `metadata-merge.ts` 的 `mergeRatings()`，由 `persist()` 调用 |
+| 合并时读取**库里当前的值**而不是刷新开始前的快照：各 provider 是并行写入的，用快照会让后写的 provider 抹掉先写的 | `MetadataService.persist()` |
+| 每次更新前后做**评分完整性校验**：快照 → 更新 → 若更新后没有 Metascore 而之前有，则恢复并记录 WARN | `snapshotRatings()` / `restoreRatingsIfLost()`，接在 `refreshGame()` 与 `match()` 上 |
+| 已丢失评分的游戏可由「刷新元数据」补回：当游戏当前没有 Metascore 时，不再盲目复用旧绑定，而是重新搜索一次 | `MetadataService.fetchProvider()` |
+
+> `match()` 里的快照必须取在**清空之前**：`refreshGame()` 自己也会取一次快照，
+> 但那时 `ratings` 已经被清空了，取到的快照是空的，就无从恢复。
+
+### 验证
+
+单元测试（`merge.cjs`，纯函数、无网络）：
+
+```
+【1】无媒体评分的抓取不得抹掉已有评分
+  ✓ 已有 93 分被保留（旧实现会变成 null，标识消失）
+  ✓ 同时吸收了本次抓到的用户评分与评测数（不是简单丢弃）
+【2】真正的更新仍然会覆盖为最新值    ✓ 新抓到的 88 分会替换旧的 93 分
+【3】空/无值数据不得破坏已存评分      ✓ 完全空对象 / undefined / null 均保持 93
+【5】多个来源互不干扰                ✓ 其它来源条目未被触碰
+【6】hasMetascore 判定               ✓ 只有用户评分 → false（正是丢失场景的特征）
+```
+
+端到端（`bash scripts/verify-round-f.sh`）：
+
+```
+【1】刷新元数据不会清空已有评分（问题1）
+  ✓ 刷新前已有有效评分：93
+  ✓ 连续两次「刷新元数据」后评分依然存在
+  ✓ 库中仍有带分数的条目：93
+```
+
+---
+
+## 需求 14：Metacritic 评分手动选择
+
+### 背景
+
+同一款游戏在不同平台的 Metacritic 条目与分数**是分开的**（PC / PS5 / Xbox /
+Switch 各自一个页面）。自动匹配只能挑一个，挑错平台时用户看到的分数与自己的
+游玩平台不符。
+
+### 实现
+
+| 部分 | 说明 |
+| --- | --- |
+| `rating_targets` 表 | 独立的表（不是 `games` 的列）。`games` 每次刮削都会被重写，做成列就有被覆盖的风险；独立成表是「全量刮削与单游戏刷新都不重置」能成立的原因 |
+| `RatingTargetService` | `get` / `has` / `set` / `clear` |
+| 读时优先 | `GamesService.toSummary()` 先看有没有手动选择，有就用它，否则用刮削结果 |
+| 候选来源 | 复用 Metacritic 的 `searchAll()`。列表页的每张卡片本身就带 `title="Metascore 93 out of 100"`、平台与发售日期，因此**不需要为每个候选再抓一次详情页** |
+| 接口 | `GET /api/games/:id/rating-candidates?q=`、`PUT /api/games/:id/rating-target`、`DELETE /api/games/:id/rating-target` |
+| 界面 | 详情页评分标识旁的「手动选择评分」胶囊按钮；已手动选择时变为高亮的「手动选择 · 平台」 |
+
+保存时会校验条目**确实带分数**，否则返回 400 并说明原因 —— 存一个没有分数的
+覆盖值只会让评分标识再次消失。
+
+### 验证
+
+```
+【2】评分手动选择：候选包含平台 / 评分 / 发布时间
+  ✓ 返回 8 条候选
+  ✓ 其中 2 条带评分：Hades=93 | Hades II=95
+  ✓ 候选带平台信息：PC / Nintendo Switch 2 / PC
+  ✓ 候选带发布时间：Sep 17, 2020 / Sep 25, 2025 / Feb 12, 2026
+【3】选定后卡片与详情页同步、可恢复自动匹配、跨刷新保持
+  ✓ 已选定「Hades」PC = 93 分
+  ✓ 详情页显示该分数 / ✓ 图库卡片同步显示该分数
+  ✓ 刷新元数据后仍沿用用户选择（未被自动匹配重置）
+  ✓ 已持久化到 rating_targets（external_id=hades）
+  ✓ 「恢复自动匹配」生效，回到系统刮削结果
+```
+
+真实 DOM 检查（渲染真实 `RatingPickDialog`，共 10 项全通过），含
+「未选择条目时确认按钮为禁用」「尚未手动选择时不显示恢复自动匹配」
+「外壳使用与其它弹窗一致的深色主题类」。
+
+容器重启不丢失另测：设置后 kill 进程再启动，`metacriticManual` 仍为 `true`、
+分数与平台不变（数据在 SQLite 中）。
+
+---
+
+## 需求 15：「平均通关时长」与时长多源兜底
+
+### 根因：HLTB 已经整个不可用了
+
+HowLongToBeat 是唯一时长来源，而它的搜索接口**对所有请求返回 403**：
+
+```
+[Nest] WARN [HltbProvider] HLTB search failed for "Hades": Request failed with status code 403
+```
+
+带上浏览器 User-Agent 也是 403 —— 不是 UA 的问题。查看站点自己的前端代码后
+发现它换了协议：先用 `GET /api/search/site/init?t=<当前毫秒>` 取一个 token，
+再带 `x-auth-token` 头 POST 到 `/api/search/site`，并且 403 时会重新取 token 重试。
+（原来调的 `/api/search` 已经废弃。）
+
+`t` 必须是**当前时间戳**，写死或过期都会被拒。
+
+### 修复
+
+| 修复 | 说明 |
+| --- | --- |
+| HLTB 走 token 流程 | `getToken()` + `x-auth-token` + 403 时丢弃 token 重取并重试；token 缓存 10 分钟 |
+| 新增 `HttpService.postOnce()` | 需要自己管理重试（403 要换新 token，通用退避给不了）且要能读状态码的请求 |
+| 网络错误不外泄 | 代理偶发 TLS 断连时只记 WARN 并重试，绝不让异常中断整个元数据刷新 |
+| 多源兜底与来源优先级 | `mergeDuration()`：HLTB（真实主线通关时长）优先；RAWG 的 `playtime`（全体玩家平均时长）只在其缺失时补齐 |
+| 记录来源 | 新增 `games.duration_source` 列，并透出到 DTO |
+| 文案 | `detail.playtime`：中文「通关时长」→「**平均通关时长**」，英文 `Playtime` → `Average playtime`；三维度（主线 / 主线+支线 / 完美通关）原本就会一起展示 |
+
+时长优先级是必需的：各 provider 并行写入，原先的 `COALESCE` 等于「谁先返回谁赢」。
+实测第 1 次刷新拿到的就是 RAWG 的 10 小时，随后才被 HLTB 的 23.6 小时覆盖 ——
+修复后最终稳定为 HLTB 的值。
+
+> 本机代理对 HLTB 的连通率约 4/10（TLS 偶发断连），因此代码里重试 3 次，
+> 且失败会退到 RAWG 而不是留空。这是网络环境问题，不是代码问题；
+> 部署到能直连的机器上会稳定得多。
+
+### 验证
+
+```
+【4】平均通关时长：多源兜底与来源标记
+  ✓ 平均通关时长已填充：主线 23.6h / 主线+支线 48.6h / 完美通关 95.2h
+  ✓ 时长来源已记录：hltb
+  ✓ 三个维度齐全且来自 HLTB（主线优先，兼容全收集维度）
+  ✓ 刷新请求被接受（时长更新随刷新触发）
+单元测试：
+  【7】先写入弱源（rawg 平均游玩时长）→ 强源（hltb 主线时长）随后覆盖，与顺序无关
+  【8】rawg 不能覆盖 hltb 的主线时长 / 但强源缺失的维度由弱源补齐（兜底生效）
+  【9】无时长字段 / 显式 null → 时长保持不变
+```
+
+---
+
+## 需求 16：提升平均通关时长数据覆盖率
+
+### 定位：三个叠加的原因
+
+排查时先做了对照测量 —— 同一批中文游戏名，分别用「原名」和「英文别名」去搜 HLTB：
+
+| 游戏（目录名） | 直接用中文名搜 | 用英文别名搜 |
+| --- | --- | --- |
+| 刺客信条 奥德赛 | ✗ | ✓ 45.7h |
+| 血源诅咒 | ✗ | ✓ 32.2h |
+| 艾尔登法环 | ✗ | ✓ 60.1h |
+| 赛博朋克2077 | ✗ | ✓ 26.1h |
+| 荒野大镖客2 | ✗ | ✓ 50.7h |
+
+**5 个全部**只能靠英文名拿到数据。而 HLTB provider **从未接过别名解析** ——
+`titleQueryVariants()` 只接在了 RAWG / Steam / Metacritic 上。这一条就解释了绝大部分空值。
+
+**原因二：标点形态。** 别名表里的条目抄自商店页面，带的是弯引号：
+
+```
+"Assassin’s Creed Odyssey"   ← 别名表里的形态（U+2019）
+"Assassin's Creed Odyssey"   ← HLTB 真正索引的形态
+```
+
+HLTB 的搜索是字面匹配，弯引号形态一条都搜不到。
+
+**原因三：每次重扫都会把名称改回中文目录名。**
+
+`library.service.ts` 在每次扫描时执行
+`UPDATE games SET name = <规范化后的目录名> WHERE id = ?`（除非 `manual_override`），
+所以刮削辛苦拿到的拉丁名，**一重启就被覆盖**。于是即使某个游戏第一次刷新成功过，
+下次也还是从中文名重新开始 —— 这正是「只有极少数游戏有时长」的直接原因。
+
+### 修复
+
+| 修复 | 位置 |
+| --- | --- |
+| HLTB 接入共享的别名解析：先试英文别名，再试原名，命中即停 | `hltb.provider.ts` 的 `queryVariants()` |
+| 查询前把弯引号/弯破折号/省略号等统一成 ASCII | `straightenPunctuation()` |
+| 规范化名称确定后**再补一次时长**：别名表没收录的标题（如「死亡岛2」）也能靠刮削得到的拉丁名补上 | `MetadataService.backfillDuration()` |
+| 该源负责的数据仍缺失时**不再复用旧绑定，改为重新搜索** | `fetchProvider()` 的 `reSearchForDuration` |
+| 多源兜底按固定顺序依次尝试，第一个有结果即采用 | `DURATION_SOURCE_ORDER`（由优先级表派生，避免两处漂移） |
+
+`backfillDuration()` 是通用的安全网，不依赖别名表是否收录某个标题：只要 RAWG 或
+Metacritic 能认出这款游戏，回来就用它的拉丁名再问一次时长库。
+
+### 验证
+
+实测日志（真实运行，非构造）：
+
+```
+[MetaService] Completion time for "Assassin's Creed® Odyssey" recovered from hltb
+              after renaming (was "刺客信条 奥德赛"): 45.7h.
+```
+
+```
+【1】时长覆盖率：多源兜底后绝大多数游戏都有平均通关时长
+  ✓ 覆盖率 5/6（83%）
+  ✓ 时长来源已记录：hltb×4 / rawg×1
+  ✓ 中文目录名「刺客信条 奥德赛」已取到时长：45.7h（来源 hltb）
+  ✓ 多维度齐全：主线 45.7h / 主线+支线 85.6h / 完美 145.4h
+  ✓ 无时长游戏「死亡岛2」三个维度均为空 → 界面显示「未知」
+【2】已有时长不得被清空
+  ✓ 刷新后时长保持 45.7h 未被清空
+```
+
+**验证方法**：`bash scripts/verify-round-g.sh` 的夹具**故意全部使用中文目录名** ——
+用英文名做夹具会把上面第一个原因完全掩盖掉。
+
+> 关于「补充国内游戏数据站点」：实测了 vgtime、二柄、游民星空、3DM、篝火、gcores、IGN 中国。
+> vgtime 的游戏页是 `0g3HCAy0VufOnBx6K/09Fw==` 这类不透明 ID 且找不到搜索接口；
+> 二柄连接失败；游民星空 / 3DM / gcores / 篝火 / IGN 中国的页面里**都没有结构化的通关时长字段**。
+> 因此没有接入 —— 硬接一个拿不到数据的源只会让兜底链变慢，不会提升覆盖率。
+> HLTB 与 RAWG 本身已覆盖 PC / PlayStation / Xbox / Switch 全平台。
+> 兜底链是数据驱动的（见 `DURATION_SOURCE_ORDER`），以后找到可用的站点加一行即可。
+
+---
+
+## 需求 17：游戏卡片拖拽自定义排序
+
+### 位置怎么存
+
+`games.custom_order`（INTEGER，可为空），相邻位置间隔 1024，落在中间时取中点。
+
+- **为空表示「用户没手工摆过」**，排在已摆放的之后、按名称排序 —— 这样新扫描进来的
+  游戏会稳定出现在末尾，不会插到用户已经排好的顺序前面。
+- 中点被反复插入用尽时，`renumberCustomOrder()` 会把整个生效顺序重新编号。
+  它导出的顺序**与界面所见完全一致**，所以重新编号不会造成任何可见变化。
+
+### 拖拽怎么表达
+
+客户端只上报「被拖动的 id + 它落点上下相邻的两张卡」：
+
+```json
+{ "gameId": "…", "beforeId": "落在它下面的那张", "afterId": "落在它上面的那张" }
+```
+
+用邻居而不是「第 N 位」，正是它在**筛选与分页下依然正确**的原因：序号会随过滤结果
+变化，而邻居是一对 id。位置是**一套全局序列**，所以在第 2 页拖动，相对第 1 页的顺序
+依然是对的。
+
+> 邻居里只要有**一张还没被摆放**（`custom_order` 为空），就无法取中点。这时先
+> 把整个生效顺序物化一次再重算 —— 这是实现过程中实测发现的一个真实缺陷：
+> 拖动「尚无位置的中间两张卡之间」会被错误地丢到列表末尾。
+
+### 界面
+
+- 顶部排序下拉新增「**自定义排序**」；**只有切到该模式卡片才可拖动**，其他排序模式
+  仍按原规则生效。
+- 拖拽中：卡片淡出 + 虚线边框形成**占位符**。
+- 落点：卡片描边高亮 + 一条紫色**插入指示条**（按光标在卡片左右半区决定画在左侧还是右侧）。
+- 自定义模式下横幅显示操作提示与「**恢复默认顺序**」按钮。
+- 拖动结束后抑制一次链接点击，避免松手就跳进详情页。
+
+### 验证
+
+```
+【3】拖拽自定义排序：位置持久化与邻居定位
+  ✓ 尚未拖拽时顺序等于默认（按名称），不会出现随机顺序
+  ✓ 拖到最前成功，分配位置 0
+  ✓ 「死亡编码-Death Code」已排到首位
+  ✓ 「Red Dead Redemption 2」正好落在「Assassin's Creed Odyssey」与「Bloodborne」之间
+  ✓ 「按名称」模式仍按原规则生效，未被自定义顺序影响
+  ✓ 平台过滤下自定义排序仍生效（PC：4 个）
+  ✓ 分页拼接结果与完整顺序一致（跨页排序统一）
+  ✓ 库中已有 6 个自定义位置（持久化于 SQLite）
+【4】一键重置自定义排序
+  ✓ 重置成功，清除了 6 个自定义位置
+  ✓ 重置后恢复为系统默认顺序
+真实 DOM（12 项全通过）：
+  ✓ 非自定义排序模式下卡片不可拖拽 / ✓ 自定义模式下可拖拽并显示抓取光标
+  ✓ 拖拽中的卡片淡出形成占位符 / ✓ 占位符使用虚线边框
+  ✓ 落点指示条与高亮描边（before / after 两个方向）
+  重启验证：✓ 重启后自定义顺序完全一致（存于 SQLite，不依赖内存）
+```
+
+---
+
+## 需求 18：详情页默认从页面顶部开始浏览
+
+### 原因
+
+页面用的是**客户端路由**，浏览器的滚动位置在跳转时被保留：从图库中部点开一张卡片，
+详情页就落在同样的滚动高度。代码里此前没有任何一处 `scrollTo`。
+
+### 修复
+
+详情页挂一个以 `id` 为依赖的副作用，进入即把窗口滚到顶部：
+
+```ts
+useEffect(() => {
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+}, [id]);
+```
+
+- 依赖 `id` 而不是空数组：用「上一个 / 下一个」切换游戏时也要重新置顶。
+- 用 `behavior: "auto"` 而不是 `"smooth"`：切换游戏时用户要的是立刻看到标题，
+  不是看一段滚动动画。
+- 滚动的是 `window` 而不是某个容器 —— 布局层（`App.tsx` 的 `<main>`）没有
+  自己的滚动容器，整个页面就是滚动主体。
+- 页内标签切换与锚点跳转不在这个副作用的作用范围内，因此不受影响。
+
+### 验证
+
+真实 DOM（渲染真实 `GameDetail`，`window.scrollTo` 用桩记录调用）：
+
+```
+✓ 进入详情页时调用了 window.scrollTo 置顶
+✓ 点击切换后再次置顶（切换游戏也从顶部开始）
+```
+
+---
+
+## 需求 19：详情页「上一个 / 下一个」游戏导航
+
+### 顺序必须与图库一致
+
+图库的筛选与排序状态是 `Home` 的局部 state，跳转后就丢了。所以：
+
+1. `Home` 把当前筛选（搜索词、平台、最低评分、排序字段、升降序）同步到
+   `galleryState`（内存 + `sessionStorage`，按标签页隔离，刷新详情页也不丢）；
+2. 详情页读回这份状态，交给后端算邻居。
+
+### 为什么邻居在后端算
+
+`GET /api/games/:id/neighbors` 复用图库的「筛选 + 排序」管线，取完整结果集后定位
+当前游戏。放在前端算是不行的：图库列表接口**分页且每次最多 100 条**，前端只看得到
+当前页，一到页边界就断了，而且会把被筛选隐藏的游戏也算进来。后端算则与库大小无关。
+
+首尾**环绕**，所以两个按钮在任何位置都不会变成死键。
+
+### 验证
+
+```
+【2】上一个 / 下一个：顺序与筛选
+  ✓ 按名称升序：7 个游戏的上下邻居与图库顺序逐一吻合（首尾环绕）
+  ✓ 切换为降序后，邻居顺序同步反转（严格遵循排序规则）
+  ✓ 平台过滤「Nintendo Switch」下只在 2 个结果内循环（total=2）
+  ✓ 搜索「Apol」下结果集为 1 个，导航只在其内
+  ✓ 「自定义排序」模式下导航同样遵循拖拽后的顺序
+  ✓ 空结果集下不会产生越界邻居（前端按钮自动禁用）
+真实 DOM：
+  ✓ 存在「上一个」/「下一个」按钮，提示带真实邻居名
+  ✓ 显示了在当前排序中的位置（第 5 / 12 个）
+  ✓ 导航按钮位于游戏标题之前，不遮挡标题
+  ✓ 导航按钮沿用深色主题样式
+```
+
+---
+
+## 需求 20：大幅提升平均通关时长覆盖率
+
+### 根因：一次瞬时失败会被**缓存**，游戏就长期停在「未知」
+
+时长查找是整条刮削链里最不稳的一环（上游限流 + 代理偶发 TLS 断连，实测单次成功率
+约五成）。而 `fetchProvider()` 里，provider 返回的片段是**无条件写进缓存**的：
+
+```ts
+fragment = await provider.fetch(match);
+this.cache.set(fetchKey, provider.name, fragment, provider.cacheTtlSeconds);   // 旧行为
+```
+
+HLTB 的 `fetch()` 内部会重新查一次自己的搜索接口，这次查询是尽力而为的 ——
+失败时时间字段就是空的。这样一个**空片段被缓存后**，接下来整个 TTL 内的所有
+非强制刷新（例行扫描、打开详情页触发的 `enrichGame`）都持续读到这个被污染的条目，
+**一次网络抖动就能让一款游戏几小时内一直显示「未知」**，而重试本来会成功。
+
+其余两点：全量刮削原先没有任何重试轮次；RAWG 的平均游玩时长一旦先填上，就不会再被
+更权威的 HLTB 主线时长替换。
+
+### 修复
+
+| 修复 | 说明 |
+| --- | --- |
+| **不给「没带应有数据」的片段写缓存** | 新增 `isCacheableFragment()`：空片段、以及时长来源返回的**无 `mainStoryHours`** 片段一律不入缓存，下次仍会真正重试 |
+| **多轮重试** | 批量任务的重试轮次提到 3 轮（原来 1 轮），且某轮一无所获就提前结束。按单次成功率约 50% 计算，3 轮把覆盖率从约 50% 提到约 87% |
+| **全量刮削带尾巴重试** | `refreshAll()` 结束后只对**仍无时长**的游戏重跑时长来源，而不是重刮全部 |
+| **弱源可被升级** | 新增 `IMPROVABLE_DURATION_SQL`：时长来自非最高优先级来源的游戏也纳入补全范围 |
+| **一键补全** | `POST /api/games/backfill-durations`，等价于评分补全的那个入口 |
+
+### 实测（需求里点名的游戏，全部命中）
+
+```
+【1】平均通关时长覆盖率
+  ✓ 覆盖率 7/7（100%）
+  ✓ 时长来源：hltb×7
+  ✓《Astro Bot》主线 11.1h（来源 hltb）
+  ✓《Astro's Playroom》主线 3h（来源 hltb）
+  ✓《Cyberpunk 2077》主线 26.1h（来源 hltb）
+  ✓《Bloodborne》主线 32.2h（来源 hltb）
+  ✓《First Light》主线 16.1h（来源 hltb）
+  ✓ 刷新后时长保留：16.1h（原 16.1h）
+弱源升级实测：
+  Hades          10h(rawg)  → 23.6h(hltb)
+  逆转裁判456      36h(rawg)  → 91.4h(hltb)
+```
+
+> 关于「进一步扩充时长数据源」：本轮又把主机侧的候选源实测了一遍 ——
+> psnprofiles、trueachievements、playstationtrophies、gamefaqs、speedrun.com
+> 全部连接失败，mobygames 403。IGDB 可访问但需要用户自备 Twitch 凭据。
+> 因此没有接入：拿不到数据的源只会拖慢兜底链。HLTB 单源已经覆盖 PC / PlayStation /
+> Xbox / Switch，包括主机独占 —— 上面 Astro Bot（PS5 独占）11.1h、Astro's Playroom
+> 3h 就是证据。兜底链是数据驱动的（`DURATION_SOURCE_ORDER`），以后找到可用站点加一行即可。
+
+---
+
+## 需求 21：自动刮取的全部海报纳入轮播队列
+
+### 根因
+
+`ensureScrapedPoster(gameId, url)` 只接收**一个** URL，调用方传的是
+`fragment.poster ?? games.poster_url` —— 也就是**封面那一张**。provider 同时返回的
+其余截图存在 `games.screenshots` 里，**从来没有被注册成海报记录**，所以在「编辑海报」
+弹窗里根本不存在，自然无法设封面、无法加入轮播。
+
+### 修复
+
+改为 `ensureScrapedPosters(gameId, urls[])`，调用方传入
+`[封面, ...fragment.screenshots]`：
+
+- **封面排第一**，只有它可以在用户没选过封面时占据封面位；其余作为可选项注册。
+- **只有封面默认加入轮播**。把每张截图都自动塞进轮播会悄悄改变用户看到的东西；
+  需求要的是「**可以**加入」，不是「自动加入」。
+- **已存在的行完全不碰** —— 这正是「重新刮削不丢失轮播选择与封面设置」成立的原因。
+- 弹窗本来就按 `source` 分组（官方 / 上传 / 相册），所以全部官方海报会自动归到
+  「官方刮取」一组，无需前端改动。
+
+### 实测中修掉的一个自己引入的缺陷
+
+最初的实现在「provider 这次没返回截图」时，会把不再出现在列表里的行当过期数据删掉。
+结果一次普通刷新就把已经注册的 7 张官方海报删到只剩 1 张，用户勾好的轮播选择一起没了：
+
+```
+✗ 库中只有 1 条官方海报记录          ← 修复前
+✓ 有 4 个游戏注册了多张官方海报：Astro's Playroom×5 / Bloodborne×7 / Cyberpunk 2077×7 / …
+✓ 重新刮削后轮播选择保留（1 → 1 张）  ← 修复后
+```
+
+现在只有**封面本身变了**（说明换了游戏身份，例如手动重新匹配）才清理旧行。
+截图查询是一次独立请求，本来就可能失败，不能据此判定海报已过时。
+
+### 验证
+
+```
+【3】全部刮取海报纳入管理列表
+  ✓ 「Bloodborne」的全部 7 张官方海报都带完整操作字段（可设封面 / 轮播）
+  ✓ 官方刮取海报可以设为封面
+  ✓ 官方刮取海报可以加入轮播队列
+  ✓ 库中该游戏有 7 条官方海报记录（持久化于 SQLite）
+  ✓ 重新刮削后轮播选择保留 / ✓ 重新刮削后封面设置保留
+重启验证：✓ 重启后官方海报仍全部保留（Astro's Playroom:5,Bloodborne:7,Cyberpunk 2077:7,…）
+```
+
+---
+
+## 回归验证（确认没破坏原有功能）
+
+自动化跑一遍另外几组即可覆盖主要风险面：
+
+| 组 | 覆盖的既有功能 |
+|### 本轮（需求 6/7/8/9）回归结果
+在自建隔离实例上重跑既有 16 组：**44 项通过 / 4 项提示 / 0 项失败**（4 项提示为环境性跳过）。
+离线套件同步重跑：Steam 成就契约 **25/25**、奖杯多源降级 **15/15**。
+后端与前端 `tsc --noEmit` 均 **0 错误**；`npm run build` 两端通过；
+i18n **319 键 × 2 语言**无缺键 / 多余键。
+
+---|---|
+| 第 4、5 组 | 图片抓取、代理接口（自动刮削的取图链路） |
+| 第 6 组 | JXR 转码（库中有 `.jxr` 素材时才执行） |
+| 第 7 组 | Metacritic 评分覆盖 |
+| 第 10 组 | 手动匹配：中文名解析与失败提示 |
+| 第 11 组 | 相册缩略图 / 懒加载 / 缓存 |
+| 第 12 组 | 入站访问与局域网可达性 |
+| 第 16 组 | 成就/奖杯（并反证元数据刮削未被破坏：状态完备率） |
+
+登录后再跑一次媒体扫描，确认认证没影响扫描：
+
+```bash
+J=/tmp/sp.jar   # 见上文登录命令
+curl -b $J -X POST http://127.0.0.1:3001/api/library/scan     # {"started":true}
+sleep 20
+curl -b $J http://127.0.0.1:3001/api/library/status
+```
+
+---
+
+## 本机已完成的第五轮验证记录
+
+```bash
+bash scripts/verify-round-k.sh      # 本轮四项优化，退出码 0
+```
+
+- **需求 18 ~ 21（`bash scripts/verify-round-k.sh`）**：**11 组通过 / 0 组失败**。
+  其中后端端到端 **23 通过 / 0 提示 / 0 失败**、详情页真实 DOM **10/10**、
+  时长合并单元测试 **23/23**。
+- **回归**：`verify-round-g.sh` **11 组 / 0 失败**、`verify-round-f.sh` **11 组 / 0 失败**、
+  `verify-round-e.sh` **6 组 / 0 失败**、离线套件 **25/25 + 15/15 + 12/12**。
+- 前后端 `tsc` 均 **0 错误**；i18n **346 键 × 2 语言，无缺口**。
+
+> 时长相关的断言在**时长库不可达时会降级为「提示」而不是「失败」**，因为那是网络
+> 环境问题而非代码问题。单独复核时如果看到提示变多，重跑一次补全即可：
+
+```bash
+curl -X POST http://<主机>:3001/api/games/backfill-durations
+```
+
+---
+
+## Docker 部署与验证（宿主机不需要 node / npm）
+
+上面几轮的验证脚本都依赖宿主机有 node（`node scripts/…`）。**部署与验证本身不应该
+有这个前提** —— 前后端编译在镜像构建过程里完成，宿主机只需要 docker 命令。
+
+### 一条命令完成构建 + 部署 + 校验
+
+```bash
+bash scripts/docker-deploy.sh
+```
+
+| 脚本 | 作用 |
+| --- | --- |
+| `scripts/docker-deploy.sh` | 构建 → 指纹校验 → `compose up -d --no-build` → 等健康检查 → 确认启动期数据修复已执行 |
+| `scripts/docker-verify.sh` | 部署后自检：容器内跑离线解析器测试 + 检查前端产物 + 验证运行中接口 |
+| `scripts/verify-build-artifacts.sh` | **构建阶段**调用：缺符号就让构建失败 |
+| `scripts/expected-source-hash.sh` | **构建阶段**调用：打印源码指纹并与 `.source-hash` 比对 |
+| `scripts/gen-source-hash.mjs` | 生成 `.source-hash`（开发期用，宿主有 node 时） |
+
+### 为什么要在构建阶段加「产物自查」
+
+「镜像里还是旧代码」是这类项目最难排查的问题：容器起得来、健康检查也过、页面也打
+得开，**只是少一个标签页**。成因通常是构建缓存命中了旧的 `COPY` 层，或某个
+workspace 的 build 静默失败。
+
+`verify-build-artifacts.sh` 在 build 阶段末尾直接检查编译产物（`backend/dist`、
+`web/dist`）里有没有本轮功能必须存在的符号：路由名、表名、前端 `data-testid`、
+中文文案，共 17 项。缺一个就让**构建失败**，而不是留到部署后才发现。
+
+这道检查当场抓到过一次真实问题：`maintenance.service.js` 不存在（新增的
+`MaintenanceService` 还没重新编译），正是它该拦下的那类情况。
+
+### 源码指纹
+
+镜像在构建时把源码内容哈希写进 `/app/build-info.json`：
+
+```bash
+docker run --rm --entrypoint sh screenplay:latest -c 'cat /app/build-info.json'
+```
+
+`scripts/gen-source-hash.mjs` 必须复刻 Dockerfile 里的算法（`LC_ALL=C` 字节序
+排序 + 文件内容直接拼接），否则 `.source-hash` 永远对不上、那个提示就废了。
+`node scripts/gen-source-hash.mjs --check` 可用于提交前检查。
+
+### 修正：docker-compose 构建路径下 npm 兜底源失效
+
+排查时发现 `docker-compose.yml` 往 `build.args` 里传了 `NPM_MIRROR_REGISTRY` 与
+`SCREENPLAY_BUILD_PROXY`，但 Dockerfile 只在**第一个 `FROM` 之后**声明了它们。
+Docker 的规则是：只有 `FROM` 之前声明的 `ARG` 才能由 `--build-arg` / `build.args`
+赋值；在 `FROM` 之后才声明的，传进来的值会被当成「未使用的构建参数」丢掉。
+
+结果就是：`scripts/docker-build.sh` 那条路径（显式 `--build-arg`）是好的，而
+`docker compose build` 那条路径下 **npm 国内源兜底与显式构建代理静默失效** ——
+国内网络下会表现为 compose 构建超时，且看不出原因。
+
+已把两个 `ARG` 提到 `FROM` 之前，并把 compose 里已经声明但没被 Dockerfile 使用的
+超时参数补齐，现在两条路径的构建参数**完全对齐**（已加脚本核对双向差集）。
+
+### 启动期数据修复（存量数据回填）
+
+修复 provider 不会自动修复已有的库：`last_meta_refresh` 已经写上的游戏不会再被扫描
+重刮。因此容器启动后会自动做两件事（`backend/src/maintenance/maintenance.service.ts`）：
+
+| 修复 | 时机 | 内容 |
+| --- | --- | --- |
+| 海报轮播下限 | 每次启动，等首轮扫描结束 | 轮播帧数低于 `2 + 相册图数`（上限 8）的游戏，用本地相册截图补足 |
+| 通关时长补全 | 首次启动一次（`settings` 表里记标记） | 对仍无时长的游戏重新问数据源（联网、串行限速） |
+
+轮播下限每次启动都检查（纯数据库、只增不删、幂等）；时长补全要联网且数据源限速，
+所以只跑一次，之后新加的游戏走设置页的「一键批量补全」。
+
+**本机实测**（真实产物 + 20 个夹具游戏，无代理、指向本地媒体目录）：
+
+| 检查 | 结果 |
+| --- | --- |
+| 首次启动日志 | `Boot maintenance finished in 13.8s — poster rotation topped up for 20 game(s) (+60 frame(s)); completion-time backfill started for 20 game(s).` |
+| 轮播下限达标 | 20/20 游戏全部 ≥ 下限（修复前低于下限的会全部补上） |
+| 时长覆盖 | 15/20 拿到时长（`hltb` 14 + `rawg` 1），无代理环境下属预期 |
+| 第二次启动 | `nothing to repair`，轮播帧总数 190 → 190（幂等） |
+| 关闭开关 | `MAINTENANCE_ON_BOOT=0` 时不执行，日志明确说明 |
+
+#### 这里也修掉了一个「静默失效」的排序问题
+
+第一版实测时日志是：
+
+```
+[MaintenanceService] Boot maintenance finished in 0.2s — nothing to repair.
+[LibraryService] Scanning media root: … / Scan complete: 20 games, 60 media files   ← 8 秒之后
+```
+
+根因：`onApplicationBootstrap` 在 `main.ts` 的 `await app.listen(...)` 期间就会执行，
+而首轮扫描原先是在 `listen()` **之后**才 `startScan()`。于是「修复」跑的时候扫描
+还没开始，`isScanning()` 为 `false` 被当成「扫描已完成」，它看到一个空库，合理地
+得出「没什么可修的」，0.2 秒退出 —— 整个功能在每次启动时都静默地什么也不做。
+
+两处修正：
+
+1. `main.ts` 把 `startScan()` 提到 `listen()` 之前；
+2. 停止条件从 `!isScanning()` 改成 `!isScanning() && hasScanned()` ——
+   只看 `isScanning()` 无法区分「扫描还没开始」和「扫描已结束」，为此给
+   `LibraryService` 加了 `hasScanned()`。
+
+### 测试套件必须关掉它
+
+启动期修复会在扫描后自动补全时长、并把相册截图补进轮播，而套件要断言的正是
+「补全前」的状态（例如「待补全 N 个」）。所以所有自建隔离实例的 harness 都显式带上
+`MAINTENANCE_ON_BOOT=0`（`verify-round-{d,e,f,g,k,l}.sh`、
+`media-reviews-e2e.mjs`、`verify-media-reviews-ui.mjs`）。
+只有 `verify-image-fix.sh` 不注入 —— 它打的是**已部署的实例**，不该替用户改行为。
+
+## 本机已完成的第六轮验证记录（媒体评价）
+
+```bash
+# 1) 解析器离线单元测试（不需要网络，也不需要服务）
+cd backend && npm run build && node scripts/verify/metacritic-reviews-test.mjs
+
+# 2) 端到端：桩服 → 抓取 → 解析 → 落库 → 接口（全程不访问真实站点）
+node backend/scripts/verify/media-reviews-e2e.mjs
+
+# 3) 真实浏览器：详情页「媒体评价」标签页 + 设置页补全卡片
+node scripts/verify-media-reviews-ui.mjs
+```
+
+### 结果
+
+| 检查 | 结果 |
+| --- | --- |
+| 解析器单元测试 `metacritic-reviews-test.mjs` | **49 通过 / 0 失败** |
+| 端到端 `media-reviews-e2e.mjs` | **55 通过 / 0 失败** |
+| 真实浏览器 `verify-media-reviews-ui.mjs` | **22 通过 / 0 失败** |
+| 前后端 `tsc` | **0 错误** |
+| i18n 双语键数 | zh / en 均为 **399 键**，双向无缺口、无重复 |
+
+### ⚠️ 全部验证都不访问真实媒体评价站点
+
+真实站点有速率限制，且从数据中心 IP 往往直接不可达（需要代理），所以「选择器对不对」
+「失败时会不会清空已有评价」这类问题**没法靠联网测出来**。为此：
+
+- 解析器测试只读 `backend/scripts/verify/fixtures/metacritic/*.html` 里的**合成夹具**；
+- 端到端与浏览器测试把后端指向本地桩服（`METACRITIC_BASE_URL=http://127.0.0.1:<port>`，
+  桩服在 `backend/scripts/verify/metacritic-stub.mjs`）。这个环境变量和 `HLTB_BASE_URL`
+  是同一个模式：应用本身从不设置它，默认永远是真实站点。
+
+`metacritic-stub.mjs` 可以在运行中热切换失败模式，这是复现那几条关键行为的前提：
+
+| 模式 | 用途 |
+| --- | --- |
+| `ok` | 正常返回带评价的页面 |
+| `empty` | 返回 200，但页面**没有任何评价**（真实的「这个游戏没有评价」） |
+| `block` / `limit` / `error` / `notfound` | 403 / 429 / 500 / 404 |
+
+```bash
+# 单独起桩服观察（可选）
+node backend/scripts/verify/metacritic-stub.mjs 4600 ok
+curl -s 'http://127.0.0.1:4600/__mode?set=block'
+curl -s http://127.0.0.1:4600/__stats
+```
+
+### 端到端覆盖的七个场景
+
+| 场景 | 断言的是 |
+| --- | --- |
+| A 正常抓取 | 接口返回条数正确 → **直接读数据库**确认真的落盘（媒体名、分数、原文、排序） |
+| B 详情与面板接口 | `mediaReviews` / `mediaReviewsSummary` 出现在详情里；面板接口按分数排序；不存在的游戏 404 |
+| C 空页面 | `status='empty'` 且**已有评价一条不少** |
+| D 抓取失败 | 403 / 500 / 404 三种都记为 `failed` + 写入原因，且**已有评价一条不少**；下次 `missing` 批次会重试它 |
+| E 不重复抓取 | 已完成的游戏不再发请求（桩服请求计数前后不变） |
+| F 覆盖率 + 全量重抓 | 覆盖率数字与实际一致；`scope=all` 幂等，不产生重复行 |
+| G 重新绑定 | 换识别对象后旧评价被清空，并按新条目重新抓取 |
+
+场景 A、C、D 是这一轮最要紧的三条：A 证明「解析出来」真的变成了「存进库里」，
+C 和 D 证明**代价最高的那条数据不会被一次限流或一次改版抹掉**。
+
+场景 D 里另有一段容易被漏掉、但对用户体感最要紧的检查：**无对应条目的游戏**。
+它按了好几次「一键批量补全媒体评价」，卡片上的「待补全」数字却一直不掉——
+因为游戏没绑定条目，抓取永远不可能成功，而它又一直被算作「尚未完成」。
+现在它会被记为 `unsupported`（与成就/奖杯同一口径），计入待补全，但重试时
+**不发任何页面请求**（断言里直接对比了桩服的请求计数），按一次按钮数字就归零。
+
+`remaining` 与覆盖率卡片的 `awaiting` 用的是**逐字相同的表达式**，这一点有专门
+断言（两处一改歪，用户就会看到「还有 3 款」但按按钮什么也不发生）。
+
+### 浏览器验证覆盖的四条需求
+
+```
+== 需求 1 · 详情页标签文字是「媒体评价」
+   ✓ 存在文字为「媒体评价」的标签
+   ✓ 旧的「评价」标签已被替换（没有留下重复入口）
+== 需求 2 · 标签页展示 媒体名称 / 媒体打分 / 媒体评价原文
+   媒体名称：IGN / GameSpot / Polygon
+   媒体打分：90 / 80 / 70
+   评价原文首条：《血源》把魂系战斗推向更快、更凶的节奏，玩家必须在进攻中求生。…
+== 需求 3 · 抓取失败时给出原因，且不清空已有评价
+== 需求 3b · 没有评价时显示「暂无媒体评价」
+== 需求 4 · 「重新抓取媒体评价」按钮可用（桩服请求 7 → 8）
+== 设置页 · 批量补全媒体评价
+```
+
+截图在 `.tmp-mrui/shots/`：`01-tabs.png`（标签）、`02-reviews-with-data.png`（有数据）、
+`03-fetch-failed.png`（失败提示）、`04-empty-state.png`（「暂无媒体评价」）、
+`05-after-refresh.png`（重新抓取后）、`06-settings.png`（设置页卡片）。
+
+### 回归验证（改动不能碰坏前面几轮）
+
+本轮改动了 `games.service.ts` 的匹配路径（换绑时清评价）、`toDetail`、
+`app.controller.ts` 的 features 列表，所以把前几轮的套件全部重跑了一遍：
+
+| 套件 | 结果 |
+| --- | --- |
+| `scripts/verify-round-d.sh` | 9 组通过 / 0 组失败 |
+| `scripts/verify-round-e.sh` | 6 组通过 / 0 组失败 |
+| `scripts/verify-round-f.sh` | 11 组通过 / 0 组失败 |
+| `scripts/verify-round-g.sh` | 11 组通过 / 0 组失败 |
+| `scripts/verify-round-k.sh` | 11 组通过 / 0 组失败 |
+| `scripts/verify-round-l.sh` | 16 组通过 / 0 组失败（含浏览器 47/47、海报配置 8/8、时长桩服 13/13） |
+
+`verify-round-l.sh` 第一次跑出来是 2 项失败（`backend/dist/main.js` 找不到）。
+原因是它和 `verify-round-k.sh` **同时**在跑，两个 `npm run build` 争抢
+`backend/dist`（`tsc` 会先清空输出目录）。单独重跑即 16/16。**这两套不能并行跑。**
+
+`verify-round-e.sh` 里另有一条断言必须先解释清楚，否则看起来像是本轮改坏了：
+`用户海报数量变化：1 → 4`。它断言的是「换绑后用户海报数量不变」，但第四轮给
+轮播加的 `ensureRotationFloor()` 会在轮播帧数不足时把**本地相册截图**补成
+`source='media'` 的行（保证 CDN 不通时也能翻页），于是数量合法地从 1 变成 4。
+
+把评价相关的改动临时撤掉重跑，结果完全一样 —— 这条失败与本轮无关，是第四轮
+遗留下来的**过严断言**。已改成断言真正要防的事：**原有的用户海报一张都没丢**
+（按 id 比对），补进来的相册截图单独说明。顺带修掉了同一文件里两个把排查引偏的
+问题：读库探针用 `node:sqlite` 的 `.all()` 实测返回空数组（会让这条断言变成永远
+成立的空断言，已改为 SQL 侧 `GROUP_CONCAT`），以及结尾用 `process.exit()`
+在 stdout 落盘前终止进程、把真正的异常信息吞掉（已改为 `process.exitCode`）。
+
+### 独立爬虫脚本的离线自检
+
+爬虫脚本**只交付源码，不在 Agent 内执行任何在线请求**。但它的解析与输出逻辑可以
+完全离线验证：
+
+```bash
+# 用本地夹具跑一遍，不联网、不写库
+node backend/scripts/crawlers/metacritic-media-reviews.mjs \
+     --html backend/scripts/verify/fixtures/metacritic/dom.html --dry-run
+# → 解析出 3 条媒体评价（IGN 90 / GameSpot 95 / Eurogamer 无分数）
+
+node backend/scripts/crawlers/metacritic-media-reviews.mjs --help   # 参数说明
+```
+
+---
+
+## 本机已完成的第四轮验证记录
+
+```bash
+bash scripts/verify-round-g.sh      # 本轮两项优化，退出码 0
+```
+
+- **需求 16 / 17（`bash scripts/verify-round-g.sh`）**：**11 组通过 / 0 组失败**。
+  其中后端端到端 **19 通过 / 1 提示 / 0 失败**、拖拽视觉反馈真实 DOM **12/12**、
+  时长合并单元测试 **23/23**。
+- **回归**：`verify-round-f.sh` **11 组 / 0 失败**、`verify-round-e.sh` **6 组 / 0 失败**、
+  `verify-round-d.sh` **9 组 / 0 失败**、`verify-image-fix.sh` **45 项通过 / 3 项提示 / 0 项失败**、
+  离线套件 **25/25 + 15/15 + 12/12**。
+- 前后端 `tsc` 均 **0 错误**；i18n **341 键 × 2 语言，无缺口**。
+
+---
+
+## 本机已完成的第三轮验证记录
+
+```bash
+bash scripts/verify-round-f.sh      # 本轮三项需求，退出码 0
+```
+
+- **需求 13 / 14 / 15（`bash scripts/verify-round-f.sh`）**：**11 组通过 / 0 组失败**。
+  其中纯函数单元测试 **23/23**、后端端到端 **17/17**、评分弹窗真实 DOM **10/10**。
+- **回归**：`verify-round-e.sh` **6 组 / 0 失败**、`verify-round-d.sh` **9 组 / 0 失败**、
+  `verify-image-fix.sh` **43 项通过 / 3 项提示 / 0 项失败**（提示数与时长/评分覆盖有关，
+  不影响结论）、离线套件 **25/25 + 15/15 + 12/12**。
+- 前后端 `tsc` 均 **0 错误**；i18n **338 键 × 2 语言，无缺口**。
+
+> `merge.cjs` 由 `verify-round-f.sh` 现场用 esbuild 从 `metadata-merge.ts` 打包，
+> 所以单元测试跑的一定是最新源码。这两个合并函数被刻意放在 `MetadataService`
+> 之外，就是为了能在没有数据库、没有网络的情况下直接验证。
+
+---
+
+## 本机已完成的第二轮验证记录
+
+```bash
+bash scripts/verify-round-e.sh      # 本轮三项需求，退出码 0
+```
+
+- **需求 10 / 11 / 12（`bash scripts/verify-round-e.sh`）**：**6 组通过 / 0 组失败**，
+  其中后端端到端 **18/18**、前端真实 DOM **5/5**。
+- **上一轮回归（`bash scripts/verify-round-d.sh`）**：**9 组通过 / 0 组失败**
+  （后端 13/13、真实 DOM 20/20）—— 本轮改动共享的 `search()` 与匹配文案后仍然通过。
+- **16 组整体回归（`bash scripts/verify-image-fix.sh`）**：**36 项通过 / 4 项提示 / 0 项失败**，
+  夹具 2 个游戏均拿到 Metascore，说明刮削主链路未受影响。
+- **离线套件（`bash backend/scripts/achievements/run.sh`）**：Steam 成就契约 **25/25**、
+  奖杯多源降级 **15/15**、奖杯失败与重试 **12/12**。
+- 前后端 `tsc` 均 **0 错误**；i18n **319 键 × 2 语言，无缺口**。
+
+> `scripts/verify-round-e.sh` 的读库断言会**连同 `-wal` / `-shm` 一起复制**数据库快照。
+> 只复制主库文件会读到不含最新写入的旧快照（换绑结果就在 WAL 里），
+> 而且应用创建的数据库文件是 `000` 权限，副本需要显式 `chmod` 才能打开。
+
+---
+
+## 本机已完成的验证记录
+
+以下为开发阶段在测试实例（非生产容器）上的实测结论：
+
+- **`crypt(3)` 实现**：与 libc 的 `crypt()` 对照 **147/147 全部一致**，覆盖空密码、130 字符长密码、
+  `rounds=10000` 自定义轮数、2/16 长度盐、中文密码、`$1$` 旧格式。
+- **登录链路**：未登录 → 401；`nasuser` 登录成功；错误密码 / `root` → 401；
+  Cookie 为 `HttpOnly`；重启后端后同一 token 仍有效；退出后立即 401。
+- **无泄漏**：对 `/api/auth/session`、`/api/settings`、`/api/games` 响应及数据库**全表扫描**，
+  0 处明文密码、0 处 `$6$` 哈希；系统账户会话**不存任何密码材料**。
+- **需求 1（真实 DOM + 真实后端端到端）**：用 jsdom 渲染真实的 `PosterDialog` 组件并真实点击按钮，
+  三种来源全部通过：
+  - 有官方海报 + 相册来源：15/15（含"两轮操作后可反复设置/取消"）；
+  - **无官方海报** + 相册来源：12/12（回退为第一张可用图片）；
+  - 本地上传来源：11/11（取消后上传文件仍在）。
+- **根因回归**：把相册图设为封面后触发 `POST /api/games/:id/refresh`（当初制造假官方行的路径），
+  确认**不再产生**任何指向本地文件的 `scraped` 行，且用户的选择不被覆盖；随后取消能正确回退。
+- **语言渲染**：8 项渲染断言全通过（同一组件在两种语言下分别渲染出对应文案）。
+- **词典一致性**：319 键 × 2 语言完全对齐，无缺键 / 多余键 / 占位符不一致 / 空译文；
+  源码引用的键全部存在。
+- **离线套件（`bash backend/scripts/achievements/run.sh`）**：Steam 成就契约 **25/25**、
+  奖杯多源降级 **15/15**、奖杯失败与重试 **12/12**。
+- **需求 9 加固实测**：本地桩服先返 504 两次再正常 → 自动重试后成功（共请求 3 次）；
+  持续 503 → 抛 `TrophySourceError` 且带 `HTTP 503`（绝不返空列表）；
+  200 空响应体 → 专门文案、不被误判成"没有奖杯"；
+  `TROPHY_PSNINE_BASE_URL` 指向桩服时搜索与取列表两条路径均生效。
+  真实 psnine 复测《血源诅咒》仍为 **40 条**（白金1/金7/银8/铜24）且无虚假版面告警。
+- **需求 6 / 7 / 8 / 9（`bash scripts/verify-round-d.sh`）**：**9 组通过 / 0 组失败**，
+  其中后端端到端 **13/13**、前端真实 DOM **20/20**。关键实测：
+  - 卡片封面容器为 `aspect-video`，真实渲染出的 `<img>` 带
+    `object-cover object-center`，信息层位于封面层之后（不遮挡画面）；
+  - 手动绑定 psnine 5818 后立即抓到 **40 条**奖杯；`refresh-all` 与单游戏
+    `refresh` 之后绑定与数据均保持不变（未被自动匹配重置）；
+  - 真实失败态下界面只显示「加载成就失败」+ 统一说明，且全页**不含**任何站点名或接口细节，
+    同一时刻后端 `error` 字段仍保留具体原因；
+  - 弹窗内完成「搜索 → 选定 → 确认并重新抓取」后，成就列表实时刷新为 40 条，
+    分等级统计同步更新。
+- **成就 / 奖杯（真实联网 + 真实 DOM）**：
+  - 后端端到端 **16/16**：psnine 真实抓取《血源诅咒》40 条（白金1/金7/银8/铜24）、
+    《羊蹄山之魂》85 条（1/3/12/69），字段与 psnine 页面逐项一致；重复刮取 3 次行数不变；
+    重刮不会误删其它来源的行；图标经 `/api/media/proxy` 本地代理。
+  - 前端真实渲染 **16/16**：在 jsdom 中渲染真实 `GameDetail` 并点击「成就」标签页，
+    顶部统计（白金1/金7/银8/铜24/共40）、分组顺序、描述、稀有度、`全球达成率 6.9%`、
+    42 张代理图标全部出现在 DOM 中；点「重新抓取成就 / 奖杯」后数据仍在。
+  - **失败不再静默**：实测无效 Key 时 `api.steampowered.com` 返回 **HTTP 403**，
+    旧实现用 `.catch(() => null)` 把它吞掉，界面上就是"没有成就"；
+    现在接口与界面都会给出「Steam 拒绝访问成就接口（HTTP 403，appid 620）：API Key 无效……」。
+
+> 说明：开发机没有可用的 Steam API Key，因此 Steam 成就的**成功**路径未在本机实测；
+> 失败路径（无 Key / 无效 Key）与诊断接口已实测。请在你的环境点「测试成就接口」确认。
+- **重启持久化**：语言偏好与会话在重启后均保持。
+---
+
+# 验收报告 · 第四轮补丁（大图区海报轮播·全量游戏覆盖）
+
+> 本轮只做一件事：把「只有 007 First Light 和宝可梦能翻页，其它游戏都只有一张封面」
+> 修到**库里每一个游戏都能翻**。
+> 本轮**不涉及任何 Metacritic / 媒体评价相关代码**，也不访问 M 站网页或接口。
+
+## 0. 结论速览
+
+| 需求 | 状态 | 页面验证方式 |
+| --- | --- | --- |
+| 1 根因定位（官方海报只登记封面） | ✅ 已定位并复现 | 临时埋点在冷刮削时打出 `call 1 in=7 wanted=7` → `call 2 in=1 wanted=1`，6 张官方截图被删 |
+| 2 全部官方海报统一进轮播 + 保留用户配置 | ✅ | 20/20 个游戏登记多张；取消勾选/换封面后重新刮削，配置不变 |
+| 3 前端轮播读取完整列表 | ✅ | 页面 `<img>` 数量 = 后端 `in_slideshow` 集合；真实点击箭头计数 `1/N → 2/N → 1/N` |
+| 4 全量遍历验收（**不许只测个别游戏**） | ✅ | 遍历库里全部 20 个游戏，逐个打开详情页实测：**60 项通过 / 0 项失败** |
+
+**一键复现（推荐先跑这条）：**
+
+```bash
+bash scripts/verify-round-l.sh
+```
+
+它自己起隔离实例、跑真实构建产物、开真实 Chromium，全绿时自动清理现场。
+最后一次运行结果：**16 项通过 / 0 项失败**，其中浏览器验收 **47 项通过 / 0 项失败**、
+全量遍历 **60 项通过 / 0 项失败**（20 个游戏全部通过）、用户配置保护 **8 项通过 / 0 项失败**。
+
+单独跑全量遍历（对着任意一个已启动的实例）：
+
+```bash
+CHROME_PATH=/path/to/chrome node scripts/verify-all-games.mjs http://127.0.0.1:3001 ./shots
+```
+
+---
+
+## 1. 根因：`ensureScrapedPosters` 的剪枝把刚登记的官方截图删了
+
+### 现象
+
+007 First Light 与宝可梦能翻页，刺客信条、轮回之兽、血源诅咒等其余游戏都只有一张封面。
+
+### 排查过程
+
+怀疑方向是「多 provider 刮削时后一个分片覆盖了前一个」，于是在
+`ensureScrapedPosters` 入口/出口临时打印入参与结果（`POSTER_DEBUG`，验证后已移除），
+对 20 个游戏做**冷启动刮削**，拿到三条关键轨迹：
+
+```
+赛博朋克2077  call 1 in=7 wanted=7 [RAWG 封面 + 6 张截图]
+              call 2 in=1 wanted=1 [Steam header]         ← 6 张截图在此消失
+艾尔登法环    call 1 in=7 wanted=7
+              call 2 in=1 wanted=1                          ← 同样消失
+对马岛之魂    call 1 in=1 wanted=1
+              call 2 in=6 wanted=6                          ← 同样签名
+```
+
+一次刮削会写入多个 provider 分片，而带封面的分片**彼此不一致**（RAWG 封面 vs Steam
+header）。当时的剪枝判据是「封面这个**原始字符串**是否还在本次入参里」，于是第二个分片
+一进来，第一个分片刚登记的全部官方截图就被判定为「过时」整批删除。
+
+数据库侧的印证：修复前 **20/20 个游戏的 `in_slideshow` 计数恰好都是 1**；其中 13 个游戏
+其实登记了多行，只是全部没进轮播。
+
+### 修法
+
+1. **删掉剪枝**。`ensureScrapedPosters` 现在**从不删除任何行** —— 身份变更（用户手动换绑）
+   由 `resetForRematch()` 统一负责，那才是唯一该清理的场景；
+2. **登记即入轮播**：插入时 `in_slideshow = 1`，不再只把封面放进去；
+3. **旧库回填**：对已存在、且用户从未手动动过的行，扫描时回填 `in_slideshow = 1`，
+   升级后不需要重新刮削就能恢复轮播。
+
+> 曾尝试「用规范化后的封面比较、只删真正不匹配的」，实测仍有 7 个游戏是单张、
+> 且对马岛之魂从 6 张退化到 1 张 —— 说明任何以「封面字符串是否出现」为依据的剪枝都不成立。
+
+### 顺带修掉的两个次级缺陷
+
+- **前端无条件追加所有海报**：为了绕过上面的症状，`heroPosters()` 曾经不做
+  `in_slideshow` 过滤，把 `posterList` 全塞进去。修好后这就变成了新缺陷 ——
+  「编辑海报」里取消勾选的那张仍出现在大图区（实测页面 12 张 vs 配置 11 张），
+  等于取消按钮无效。现在前端只认 `in_slideshow`（+ 当前封面）；
+- **官方图只有一张时无兜底**：`ensureRotationFloor` 在官方图不足时从游戏自己的相册截图
+  补齐轮播，目标 `min(2 + 相册图数, 8)`。相册图是本地文件、一定加载得出来，所以即使
+  外部 CDN 抖动，大图区也有可翻的帧（实测「宝可梦 朱」曾因 5 张官方图只下到 1 张而
+  出现「箭头点了没反应」，加兜底后 20/20 稳定通过）。
+
+---
+
+## 2. 用户配置保护（重新刮削不覆盖用户选择）
+
+由两个**语义不同**的列承担，混用会互相打架：
+
+| 列 | 含义 | 谁写 |
+| --- | --- | --- |
+| `is_user_choice` | 用户把这张**设为封面** | `POST /api/games/:id/posters/select` |
+| `slideshow_user_set` | 用户**亲自决定过**这张的轮播归属 | `PATCH /api/games/:id/posters/:posterId` |
+
+自动化：`scripts/verify-poster-config.mjs` 真实调用接口（取消轮播 + 换封面）后触发完整
+重新刮削，逐项断言，并回到页面确认被取消的那张**没有出现**在大图区。**8 项通过 / 0 项失败**。
+
+```bash
+node scripts/verify-poster-config.mjs http://127.0.0.1:3001
+```
+
+---
+
+## 3. 全量遍历验收（需求 4）
+
+`scripts/verify-all-games.mjs` 会：
+
+1. 取 `GET /api/games?pageSize=100` 拿到**库里每一个游戏**；
+2. 对每个游戏读 `GET /api/games/:id/posters`，确认登记数与 `in_slideshow` 数都 > 1；
+3. 打开该游戏详情页，读大图区计数与 `<img>` 数量；
+4. **真实点击**右箭头，断言计数与当前帧 `src` 都变了；再点回左箭头，断言索引回到 1；
+5. 断言左右箭头都在 DOM 里、可见、未禁用；
+6. 断言「上一个游戏：X / 下一个游戏：Y」存在，且 HLTB 时长字段渲染（有值的游戏必须
+   不是「未知」）；
+7. 存一张该游戏详情页截图，最后打印逐项表格与失败明细。
+
+**判定标准只包含产品可控的部分**：后端登记、页面渲染、箭头可用、点击能推进并返回。
+刻意**不把「解码张数」写进通过条件** —— 图片来自 `media.rawg.io` / `steamstatic`，本沙箱
+对该 CDN 的连接会成批抖动（同一 URL 前一秒 `000`、后一秒 `200`；逐个 `curl` 复查这些
+URL 全部返回 200）。故只要求至少 1 张真实解码以证明链路通，其余未下载成功的会单独
+提示、不计失败（组件本身会跳过坏图，不渲染空白帧）。
+
+最近一次运行（20 个游戏）：
+
+```
+游戏总数：20   全部通过：20   存在失败：0
+结果：60 项通过 / 0 项失败
+JS 异常：0 条
+```
+
+### 逐项结果
+
+「页面计数变化」列 = 真实点击右箭头前后的读数；「后端登记/轮播」= `GET /api/games/:id/posters`
+的总行数与 `in_slideshow` 数。计数与登记数**不一致是正常的**：分母是「当前真正能显示的
+张数」，本轮未下载成功的外部图会被组件剔除。
+
+| # | 游戏（刮削后名称） | 后端登记/轮播 | 页面计数变化 | 切换 | 时长 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Goblin Creed: Origins（哥布林信条：起源） | 8/8 | 1/7 → 2/7 | ✓ | 未知 |
+| 2 | 轮回之境 | 10/10 | 1/5 → 2/4 | ✓ | 未知 |
+| 3 | 星空骑士 | 8/8 | 1/6 → 2/6 | ✓ | 未知 |
+| 4 | 战神觉醒-战神传奇 | 8/8 | 1/7 → 2/6 | ✓ | 未知 |
+| 5 | The last four（最后四人） | 10/10 | 1/8 → 2/8 | ✓ | 未知 |
+| 6 | Bloodborne（血源诅咒） | 7/7 | 1/7 → 2/7 | ✓ | 32.2h |
+| 7 | Cyberpunk 2077（赛博朋克2077） | 11/11 | 1/11 → 2/11 | ✓ | 26.1h |
+| 8 | Death Stranding（死亡搁浅） | 11/11 | 1/8 → 2/8 | ✓ | 40.5h |
+| 9 | Elden Ring（艾尔登法环） | 11/11 | 1/10 → 2/10 | ✓ | 60.1h |
+| 10 | First Light（007 First Light） | 8/8 | 1/8 → 2/7 | ✓ | 16.1h |
+| 11 | Ghost of Tsushima（对马岛之魂） | 10/10 | 1/6 → 2/6 | ✓ | 25.1h |
+| 12 | God of War: Ragnarok（战神：诸神黄昏） | 11/11 | 1/7 → 2/7 | ✓ | 13h |
+| 13 | Hades | 11/11 | 1/7 → 2/7 | ✓ | 10h |
+| 14 | Horizon Forbidden West（地平线：西之绝境） | 11/11 | 1/11 → 2/11 | ✓ | 28.7h |
+| 15 | Pokemon Scarlet（宝可梦 朱） | 5/5 | 1/5 → 2/2 | ✓ | 32h |
+| 16 | Red Dead Redemption 2（荒野大镖客2） | 11/11 | 1/8 → 2/8 | ✓ | 50.7h |
+| 17 | Sekiro: Shadows Die Twice（只狼） | 11/11 | 1/11 → 2/11 | ✓ | 16h |
+| 18 | Super Mario Odyssey（超级马力欧 奥德赛） | 10/10 | 1/10 → 2/10 | ✓ | 12.5h |
+| 19 | The Legend of Zelda: Tears of the Kingdom（塞尔达传说：王国之泪） | 10/10 | 1/10 → 2/10 | ✓ | 59.3h |
+| 20 | The Witcher 3: Wild Hunt（巫师3：狂猎） | 7/7 | 1/7 → 2/7 | ✓ | 51.7h |
+
+> 需求 1 与需求 3 的回归在同一轮里完成：第 4 步点击「下一个游戏」并校验落地 id 与接口
+> 邻居一致（`verify-browser.mjs`，47 项通过 / 0 项失败）；每一行的「时长」列即 HLTB
+> 通关时长的页面渲染结果，未知的 6 个游戏是数据源本身没有收录（详情页显示「未知」，
+> 这是设计行为，见需求 3 的说明）。
+
+---
+
+## 4. 手工确认（脚本测不到的）
+
+```bash
+# 1. 起一个本地实例（或用已部署的 3001）
+cd <仓库根目录> && bash scripts/verify-round-l.sh   # 会自动起实例并保留现场
+# 2. 浏览器打开 http://127.0.0.1:4401 ，进入任意游戏详情页
+```
+
+逐项确认：
+
+- [ ] 大图区右侧有圆形「下一张海报」箭头，**不需要 hover** 就能看见；
+- [ ] 右下角计数显示 `1/N`，N > 1；
+- [ ] 点右箭头：图片切换、计数变 `2/N`；连点到底会**循环**回第 1 张（不会卡住）；
+- [ ] 点左箭头能回到上一张；
+- [ ] 打开「编辑海报」→ 取消勾选一张 → 保存 → 刷新详情页，那张**不再出现**；
+- [ ] 再点「重新刮削」，回到详情页确认取消的那张**依然不在**、封面仍是自己选的；
+- [ ] 标题上方的「第 N / M 个（按当前排序）」与「上一个游戏：X」正常；
+- [ ] 「平均通关时长」区域显示「主线 X 小时 · …」而非「未知」（对有时长的游戏）。
+
+---
+
+# 验收报告 · 第三轮补丁（上一个/下一个 · 大图区海报轮播 · HLTB 时长补全）
+
+> 本轮聚焦三件事：把已经写过、但**部署后页面上看不见**的功能修成「肉眼可见 + 可交互」。
+> 本轮**不涉及任何 Metacritic / 媒体评价相关代码**，也不访问 M 站网页或接口。
+
+## 0. 结论速览
+
+| 需求 | 状态 | 页面验证方式 |
+| --- | --- | --- |
+| 1 详情页 上一个 / 下一个 切换 | ✅ 页面可见可点 | 真实 Chromium 点击 + DOM 尺寸/位置断言 + 截图 |
+| 2 详情页官方海报轮播（大图区左右箭头） | ✅ 页面可见可点 | 真实点击箭头，计数 `1/7 → 2/7 → 1/7`，7 张图全部解码成功 |
+| 3 HLTB 人均通关时长 + 一键批量补全 | ✅ 页面可见 | 详情页渲染「主线 32.2 小时 · …」；设置页按钮真实点击后覆盖 3/5 → 5/5 |
+| 4 保护手动修改的游戏名称 | ✅ | 改名 → 重新刮削 → 重新扫描，名称不变 |
+
+**一键复现（推荐先跑这条）：**
+
+```bash
+bash scripts/verify-round-l.sh
+```
+
+它自己起隔离实例、跑真实构建产物、开真实 Chromium，全绿时自动清理现场。
+最后一次运行结果：**14 项通过 / 0 项失败**，其中浏览器验收 **47 项通过 / 0 项失败**。
+
+---
+
+## 1. 为什么上一轮的「已实现」在页面上看不见
+
+不是构建没生效，而是**实现位置错了**——这是本轮最关键的发现，逐条列清楚：
+
+### 需求 1：按钮被挤在卡片右上角的按钮堆里
+
+上一轮把「上一个/下一个」放在标题上方的同一行，样式是
+`border-zinc-800 bg-zinc-900/60 px-2 py-1 text-xs`——深色背景上几乎与卡片融为一体，
+在 1440 宽下只有约 60×22 px，而且和「编辑 / 匹配数据源 / 平台设置 / 编辑海报」挤在一起。
+用户第一眼看过去就是「没有这个功能」。
+
+本轮的修法：独立成一行、提到标题正上方、放大到 `px-3 py-1.5 text-sm`、
+`border-zinc-700 bg-zinc-800/80` 并加 hover 高亮，并加了位置说明「第 N / M 个（按当前排序）」。
+
+### 需求 2：箭头画在了「小封面」上，大图区用的是截图轮播
+
+- 小封面（左侧 2:3 小图）用的是 `PosterCarousel`，**箭头确实存在**；
+- 但大图区（详情页最显眼的那块 `aspect-video`）用的是 `ScreenshotCarousel`：
+  - 它的箭头在**第一张 / 最后一张会 `disabled`**，点两下就再也翻不动；
+  - 它的图片列表是前端现拼的 `posterUrl + screenshots`，**与用户在海报管理里
+    配置的集合无关**。
+
+结果就是：一个刮取到 7 张官方海报的游戏，大图区看起来「只有一张图、箭头点了没用」。
+
+本轮的修法：新增 `HeroPosterCarousel` 放到大图区——循环、永不禁用、箭头与 `x/y`
+计数常驻可见、坏图自动跳过；图片集合改为 `GameDetail.heroPosters()`，直接吃后端
+`posterList`，并**刻意不做 `in_slideshow` 过滤**（这正是「7 张变 1 张」的原因）。
+
+### 需求 3：接口有、按钮没有；且缓存里有空值
+
+- `POST /api/games/backfill-durations` 上一轮已经有了，但**设置页没有任何入口**，
+  用户不可能知道要手动 curl；
+- 穿透排查时发现「一次网络抖动 → 该游戏长期显示未知」的机制确实存在：
+  空片段若被写进 `metadata_cache`，整个 TTL 内所有非强制刷新都会读到它。
+
+本轮的修法：设置页新增「平均通关时长补全」卡片（覆盖率 + 缺失数 + 一键补全按钮 +
+进度条）；缓存侧补上「写入侧拒绝空片段 / 读取侧复检 / 403 换 token 重试」三重保险。
+
+---
+
+## 2. 页面验证操作与结果（血源诅咒）
+
+隔离实例：`DATA_DIR=/…/.tmp-round-l/data`，`MEDIA_DIRS=/…/.tmp-round-l/media`，
+夹具目录名**故意用中文**「血源诅咒」（需求点名的游戏），端口 4401，
+跑的是 `backend/dist/main.js` + `web/dist`（与 Docker 镜像内同一份产物）。
+浏览器：Playwright + Chromium 1134，视口 1440×1000，locale `zh-CN`。
+
+### 2.1 需求 1 · 上一个 / 下一个
+
+| 操作 | 结果 |
+| --- | --- |
+| 打开 `/game/<血源诅咒 id>` | 标题「Bloodborne」（首屏刮削把中文目录名规范化，见 §4） |
+| 检查按钮存在 | 「上一个」「下一个」各 1 个 ✅ |
+| 检查可见性 | `visible=true`；尺寸 **90×34**，位置 `(495,143)` —— **首屏内，无需滚动** ✅ |
+| 检查位置指示 | 「第 1 / 5 个（按当前排序）」 ✅ |
+| 检查 title | 「下一个游戏：Hades」＝ 接口 `neighbors.next.name` ✅ |
+| 页面滚到 `scrollY=756` 后点「下一个」 | 跳到 `/game/<Hades id>`，标题变「Hades」，**`scrollY=0`（自动置顶）** ✅ |
+| 点新页面的「上一个」 | 回到 `/game/<血源诅咒 id>`（按 id 判定） ✅ |
+| 从第 1 项点「上一个」（首尾循环） | 绕到队尾「Cyberpunk 2077」 ✅ |
+| 再点「下一个」 | 回到起点 ✅ |
+| 图库排序设为 `order=desc` 后进详情页 | 「下一个」变成「艾尔登法环」——**跟随图库排序状态** ✅ |
+
+截图：`1-detail-nav.png`
+
+### 2.2 需求 2 · 官方海报轮播
+
+| 操作 | 结果 |
+| --- | --- |
+| 后端海报记录 | 7 条，`source=scraped`（1 张封面 + 6 张官方截图） ✅ |
+| 大图区容器 | `[data-testid="hero-carousel"]` 存在 ✅ |
+| 左右箭头 | 各 1 个，`visible=true`，**40×40**，`opacity=1`（不依赖 hover） ✅ |
+| 箭头 `disabled` | `prev=false next=false` —— **不会被禁用** ✅ |
+| 计数 | `1/7` ✅ |
+| 点右箭头 | 计数 `1/7 → 2/7`，当前 `<img src>` 实际改变 ✅ |
+| 点左箭头 | 计数回到 `1/7` ✅ |
+| 连点右箭头 | 能绕回起始张（循环） ✅ |
+| 图片真实解码 | 轮播内 7 个 `<img>`，**7 个 `naturalWidth > 0`**（示例 1920×1080） ✅ |
+
+结构化视觉证据（同一页实测）：
+
+```
+hero-carousel      1232 × 693 @ y=651      ← 大图区，确实是页面主视觉
+hero-carousel 箭头   40 × 40   @ y=977
+hero-counter         39 × 24   @ y=664
+nav-prev / nav-next  90 × 34   @ y=143      ← 首屏
+平均通关时长值        383 × 20  → "主线 32.2 小时 · 主线+支线 43.4 小时 · 完美通关 75.1 小时"
+字体测量：中文字符串宽度 96px（16px 字号 × 6 字）→ 中文真实渲染，非缺字方块
+```
+
+截图：`2-hero-carousel.png`、`visual-hero.png`、`visual-full.png`
+
+**用户配置保护（需求禁止项）实测**：
+
+| 操作 | 结果 |
+| --- | --- |
+| 把第 2 张海报 `inSlideshow=true` | HTTP 200 ✅ |
+| 触发一次完整重新刮削 `POST /games/:id/refresh` | HTTP 201 |
+| 重新刮削后 | 海报数仍 7；被勾选那张**仍在且 `inSlideshow=true`** ✅ |
+
+### 2.3 需求 3 · HLTB 人均通关时长
+
+| 操作 | 结果 |
+| --- | --- |
+| `GET /api/games/:id` | `mainStoryHours=32.2`、`durationSource=hltb` ✅ |
+| 详情页「平均通关时长」 | 渲染为 `主线 32.2 小时 · 主线+支线 43.4 小时 · 完美通关 75.1 小时` ✅ |
+| 是否显示「未知」 | 否（局部与全页文本双重断言） ✅ |
+| 刷新页面后 | 仍稳定显示，未变回未知 ✅ |
+| `POST /api/games/backfill-durations` | HTTP 201，响应 `{"started":true,"total":3}` ✅ |
+| 进度接口 `label` | `"Completion-time backfill"`（与 `Refresh all` 可区分） ✅ |
+
+**设置页真实点击（一键批量补全）**：
+
+| 操作 | 结果 |
+| --- | --- |
+| 设置页存在按钮 | `[data-testid="backfill-durations"]`，可见，文案「一键批量补全通关时长」 ✅ |
+| 点击前 | 「缺少通关时长 2 款」（`withDuration=3/5`） |
+| 点击 → 等任务结束 | 「缺少通关时长 **0** 款」（`withDuration=**5/5**`）→ **补齐 2 款** ✅ |
+| 已有时长是否丢失 | 无 ✅ |
+| 刷新设置页 | 计数保持 0 ✅ |
+
+截图：`3-hltb-duration.png`、`4-settings-before.png`、`5-settings-after.png`、
+`duration-cache.png`
+
+### 2.4 需求 4 · 手动修改名称保护
+
+| 操作 | 结果 |
+| --- | --- |
+| `PATCH /games/:id {"name":"血源诅咒（我的命名）"}` | HTTP 200，名称生效 ✅ |
+| 重新刮削 `POST /games/:id/refresh` | 名称仍为「血源诅咒（我的命名）」 ✅ |
+| 重新扫描 `POST /library/scan` | 名称仍为「血源诅咒（我的命名）」 ✅ |
+| 验证结束还原 | 名称回到「Bloodborne」 ✅ |
+
+---
+
+## 3. 时长缓存缺陷：离线可复现的证明
+
+`backend/scripts/verify/duration-cache-e2e.mjs` 用**本地桩服**（`hltb-stub.mjs`）
+让时长源按需返回「200 空结果 / 500 / 403」，并**直接读 SQLite** 校验缓存内容——
+单元测试只能证明 `isCacheableFragment()` 返回 false，这里证明的是形成该判断的
+整条链路真的把空值挡在外面。运行结果 **13 项通过 / 0 项失败**：
+
+| 场景 | 断言 | 结果 |
+| --- | --- | --- |
+| A 源返回 200 但 `data:[]` | `metadata_cache` 中 `hltb` 记录 **0 条**，无 `mainStoryHours` 为空的 fetch 记录 | ✅ 空值未入缓存 |
+| B 源恢复正常 + 补全 | `withDuration 0/1 → 1/1`，详情接口 `32.2h`，缓存中出现**有值**记录 | ✅ 重试/补全生效 |
+| C 源再次变空 + 补全 | `mainStoryHours` 仍为 32.2，缓存里保留的仍是有值记录 | ✅ 已有时长不被清空 |
+| D 源返回 403（token 失效） | token 端点被重新调用、搜索端点被重试；期间时长保持 32.2 | ✅ 换 token 重试 |
+| E 真实浏览器渲染 | 页面文本含「主线 32.2 小时」 | ✅ |
+
+> 为了让这套断言可复现，`HltbProvider` 的 base URL 支持 `HLTB_BASE_URL` 覆盖
+> （默认仍是 `https://howlongtobeat.com`，与 `STEAM_IMAGE_HOSTS` 同一套做法）。
+
+---
+
+## 4. 一个需要你知道的既有行为（不是本轮引入的缺陷）
+
+**首次**打开某款游戏的详情页会触发一次元数据刮削，而刮削可能把中文目录名规范化成
+官方标题：夹具里的「血源诅咒」在首次刮削后显示为 **Bloodborne**；若刮削结果来自
+中文别名（PSNINE 奖杯源），也可能继续显示「血源诅咒」。两种都是正确行为。
+
+由此带来一个**时序特征**：邻居是按请求时刻的库内名称排序算出来的，所以刮削进行中
+渲染的页面可能短暂显示上一轮排名。实测中脚本记录到一次「页面 next=赛博朋克2077 /
+接口 next=Hades」，刷新一次即一致。这**不影响功能**，验证脚本
+（`scripts/verify-browser.mjs` 的 `syncNav()`）会先做一次「页面 ↔ 接口」对齐再断言，
+并在输出里明确打印对齐尝试次数。
+
+---
+
+## 5. 回归：既有能力未被破坏
+
+`bash scripts/verify-round-k.sh`（上一轮的完整套件，含 jsdom DOM 检查）：
+**11 组通过 / 0 组失败**。
+
+本轮对它的两处必要更新：
+
+1. `backend/scripts/achievements/ui/round-k-ui.js`：导航按钮的深色主题断言仍要求
+   「与主题一致」，但配色由 `bg-zinc-900` 改为 `bg-zinc-800 + border-zinc-700`
+   （即本轮的可见性修复），断言随之更新，**并未放宽**；
+2. `backend/scripts/verify/round-k-backend.mjs`：新增对本轮新入口
+   `POST /games/backfill-durations` 的调用与断言；单个游戏在本轮取不到时长时
+   由硬失败改为提示（覆盖率整体阈值仍把关），原因是这属于上游瞬时不可达，
+   而非产品缺陷——真正的缺陷由 §3 的桩服套件断言。
+
+`npm run build`（后端 tsc + 前端 tsc && vite build）与 i18n 双语对齐（365 键）
+均在套件内通过。
+
+---
+
+## 6. 部署命令
+
+改动同时落在后端 `dist/`（Nest）与前端 `public/`（即 `web/dist`，Vite）两侧，
+**必须重新构建镜像**；只 `docker compose restart` 不会带上任何前端改动。
+
+```bash
+cd <仓库根目录>
+
+# 构建（脚本自动探测代理 → 注入构建期代理 → 必要时切换 apk/npm 源）
+./scripts/docker-build.sh
+
+# 重启部署
+docker compose up -d
+
+# 确认跑的是新镜像：features 列表跟着镜像走
+curl -s http://127.0.0.1:3001/api/health | python3 -m json.tool \
+  | grep -E 'buildTime|hero-poster-carousel|duration-coverage-api|duration-backfill-ui'
+
+# 容器健康状态
+docker compose ps
+docker inspect -f '{{.State.Health.Status}}' screenplay
+```
+
+期望在 `features` 中看到：
+
+```
+"hero-poster-carousel", "duration-coverage-api", "duration-backfill-ui"
+```
+
+看不到就是旧镜像（前端产物在 `public/`、后端产物在 `dist/`，两者都可能被旧镜像覆盖）。
+不用脚本时等价命令：`docker compose build && docker compose up -d`。

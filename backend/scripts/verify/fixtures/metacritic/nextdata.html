@@ -1,0 +1,83 @@
+<!doctype html>
+<!--
+  合成夹具：模拟「__NEXT_DATA__ 里带评价数组」的页面结构。
+  不是真实页面副本 —— 手写以覆盖字段形态与脏数据，供离线解析测试使用。
+-->
+<html lang="en">
+  <head>
+    <title>Bloodborne Reviews - Metacritic</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "VideoGame",
+        "name": "Bloodborne",
+        "aggregateRating": {
+          "@type": "AggregateRating",
+          "ratingValue": 92,
+          "reviewCount": 78,
+          "bestRating": 100
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1 class="hero-title__text">Bloodborne</h1>
+
+    <!-- Metascore 区块：真实页面上一定有。作用不只是分数 —— 后端会用它判断
+         「这条绑定是不是真的带评分」，缺了它就会弃用绑定去重新搜索。 -->
+    <div class="c-site-review-score">
+      <span data-testid="metascore">92</span>
+      <span class="c-site-review-score__count">78 Critic Reviews</span>
+      <script type="application/json">{"metaScore":{"score":92,"reviewCount":78}}</script>
+    </div>
+    <div class="c-site-review__score">92</div>
+
+    <script id="__NEXT_DATA__" type="application/json">
+      {
+        "props": {
+          "pageProps": {
+            "criticReviews": [
+              {
+                "publicationName": "IGN",
+                "score": 90,
+                "quote": "《血源》把魂系战斗推向更快、更凶的节奏，玩家必须在进攻中求生。",
+                "url": "https://www.metacritic.com/game/bloodborne/critic-reviews/",
+                "author": "Brandon Rhea",
+                "platform": "PlayStation 4",
+                "datePublished": "2015-03-24"
+              },
+              {
+                "publicationName": "GameSpot",
+                "score": 80,
+                "reviewBody": "A demanding game that rewards patience and punishes carelessness in equal measure.",
+                "url": "https://www.metacritic.com/game/bloodborne/",
+                "platform": "PlayStation 4"
+              },
+              {
+                "publicationName": "Polygon",
+                "reviewScore": 70,
+                "quote": "Beautiful and brutal, though its difficulty curve will lose some players.",
+                "verdict": "generally mixed",
+                "date": "Mar 24, 2015"
+              },
+              {
+                "publicationName": "All Platforms",
+                "score": 92
+              },
+              {
+                "headline": "这是没有媒体名的脏数据",
+                "score": 88
+              },
+              {
+                "publicationName": "Score Index Artifact",
+                "score": 3056
+              }
+            ],
+            "scoreBreakdown": { "positive": 60, "mixed": 15, "negative": 3 }
+          }
+        },
+        "__N_SSG": true
+      }
+    </script>
+  </body>
+</html>

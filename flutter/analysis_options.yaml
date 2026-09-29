@@ -1,0 +1,6 @@
+# ScreenPlay Flutter 客户端静态分析配置：基于 flutter_lints 推荐规则集。
+#
+# 注意：本脚手架目标为 Flutter 3.x / Dart 3，为避免不同 Flutter 小版本间
+# (如 Color.withValues / DropdownButtonFormField.initialValue 等) 产生差异，
+# 这里不额外启用过高版本的严格规则，保持与 flutter_lints 一致即可。
+include: package:flutter_lints/flutter.yaml

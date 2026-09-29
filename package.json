@@ -1,0 +1,25 @@
+{
+  "name": "screenplay",
+  "version": "0.6.0-beta.1",
+  "private": true,
+  "description": "ScreenPlay — personal game media album manager (backend + web frontend + flutter client)",
+  "workspaces": [
+    "backend",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build -w backend && npm run build -w web",
+    "build:backend": "npm run build -w backend",
+    "build:web": "npm run build -w web",
+    "dev:backend": "npm run start:dev -w backend",
+    "dev:web": "npm run dev -w web",
+    "start": "npm run start:prod -w backend"
+  },
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "playwright-core": "^1.47.0"
+  }
+}
