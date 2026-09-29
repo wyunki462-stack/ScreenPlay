@@ -89,6 +89,35 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # ── 失败诊断：把 run build 的完整输出打到 CI 日志里 ────────────────────
+      # 为什么需要它：build-push-action 在构建失败时只打印 BuildKit 的错误摘要
+      # （「process "..." did not complete successfully: exit code: 1」），
+      # 真正的原因（npm 的报错、TS 的报错）全部被吞掉，导致排查只能靠猜。
+      #
+      # 这里复用构建阶段已经产出的中间镜像，把同一条构建命令重跑一遍，
+      # 完整输出就直接出现在日志里了。只在上面那步失败时才执行，成功时零开销。
+      #
+      # 注：这一步本身也允许失败（continue-on-error），否则它会把
+      # 「Report build fingerprint」等后续步骤挡住。
+      - name: Diagnose build failure (verbose)
+        if: failure()
+        continue-on-error: true
+        run: |
+          echo "::group::构建阶段完整输出（run build）"
+          docker build --target build --progress=plain \
+            --build-arg NPM_MIRROR_REGISTRY='${{ inputs.npm_registry || 'https://registry.npmjs.org/' }}' \
+            -t screenplay:diag . 2>&1 | tail -80
+          echo "::endgroup::"
+          echo "::group::容器内直接排查（若中间镜像已产出）"
+          docker run --rm --entrypoint sh screenplay:diag -c '
+            echo "--- workdir ---"; pwd; ls -la /app;
+            echo "--- backend/dist ---"; ls -la /app/backend/dist 2>&1 | head -10;
+            echo "--- web/dist ---"; ls -la /app/web/dist 2>&1 | head -10;
+            echo "--- 重跑编译，留住真实报错 ---";
+            cd /app && npm run build 2>&1 | tail -40;
+          ' || true
+          echo "::endgroup::"
+
       # 构建完把镜像里的源码指纹打出来 —— 这个哈希和仓库里的 .source-hash
       # 必须一致，CI 日志里一眼就能确认「镜像和源码是同一份」。
       - name: Report build fingerprint
