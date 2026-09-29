@@ -96,6 +96,12 @@ WORKDIR /app
 
 # Layer 1: manifests only (cache-friendly).
 COPY package.json ./
+# package-lock.json 必须一起 COPY —— 以前漏了它，后果是每次构建都按
+# package.json 的 semver 范围**重新解析**依赖，而不是用仓库里锁定的版本。
+# 本机因为构建缓存命中，装上的是很久以前解析出来的那套，所以一直没暴露；
+# 换到全新环境（CI、或 --no-cache）就会装到不同版本，编译随即失败，
+# 而报错完全指向不了根因。锁定版本是「同一份源码构建出同一个结果」的前提。
+COPY package-lock.json ./
 COPY backend/package.json backend/package.json
 COPY web/package.json web/package.json
 COPY backend/nest-cli.json backend/nest-cli.json
