@@ -506,7 +506,35 @@ docker compose -f docker-compose.deploy.yml logs screenplay | grep -i admin
 > 不存在，Docker 会默默创建空目录挂进去 —— 容器照常启动、健康检查也过，只是
 > 游戏库永远是空的，排查毫无线索。
 
-**给另一台设备传镜像（不依赖任何镜像仓库）**：在本机构建好，导出成 tar 传过去。
+**方式一：先从 GitHub 拉源码，再在目标设备上构建**（要求目标设备能访问 GitHub）
+
+Compose 的 `build.context` 只能指向本地路径，**没法在 build 时自动 git clone**，
+所以「从 GitHub 拉」这件事必须由一个前置步骤来完成：
+
+```bash
+# 把 fetch-and-build.sh 与 screenplay.yml 拷到目标设备
+cp .env.deploy.example .env      # 然后改 MEDIA_HOST_DIR
+bash fetch-and-build.sh          # 从 GitHub clone 源码 + 构建镜像
+docker compose -f screenplay.yml up -d --no-build
+```
+
+`fetch-and-build.sh` 做两件事：`git clone --depth 1` 到 `./screenplay-src`，然后
+用**这个 clone 出来的仓库**当构建上下文执行 `docker build`（Dockerfile、
+package-lock.json、backend/、web/、scripts/ 都在仓库里，不需要再同步任何文件）。
+再次运行它会 `fetch` 并更新到最新提交 —— 以后升级只需重跑这个脚本。
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `SRC_DIR` | `./screenplay-src` | 源码目录 |
+| `GIT_REPO` | 官方仓库 | 仓库地址 |
+| `GIT_BRANCH` | `main` | 分支 |
+| `IMAGE_TAG` | `screenplay:latest` | 镜像名（须与 `screenplay.yml` 一致） |
+
+> 变量名是 `SRC_DIR` 而**不是** `GIT_DIR`：后者是 git 自己保留的环境变量，
+> git 会把它的值当作 `.git` 元数据目录本身，于是所有 git 命令都去找
+> `$GIT_DIR/HEAD`，报出毫无指向性的 `fatal: not a git repository`。
+
+**方式二：给另一台设备传镜像（不依赖 GitHub，也不依赖任何镜像仓库）**：在本机构建好，导出成 tar 传过去。
 
 ```bash
 # ── 在构建机（本 NAS）上 ─────────────────────────────────────────────

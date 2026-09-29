@@ -1,0 +1,130 @@
+# =============================================================================
+# ScreenPlay — 从 GitHub 拉取源码构建后的运行配置
+#
+# 这条 yaml **不负责拉代码**：Compose 的 build.context 只能指向本地路径，
+# 没法在 build 时自动 git clone。所以分工是：
+#
+#   bash fetch-and-build.sh          ← 从 GitHub clone 源码并构建镜像
+#   docker compose -f screenplay.yml up -d --no-build   ← 本文件只管运行
+#
+# 为什么文件名叫 screenplay.yml 而不是 docker-compose.yml：
+#   Compose 会自动读取名为 docker-compose.yml / compose.yaml 的文件。用别的
+#   名字，`docker compose up -d` 就不会误用这一份，必须显式 -f 指定 —— 避免
+#   和你已有的其它 compose 文件混淆。
+#
+# 完整流程（在目标设备上）：
+#   1) cp .env.deploy.example .env      # 然后改 MEDIA_HOST_DIR（必填）
+#   2) bash fetch-and-build.sh          # clone + 构建镜像
+#   3) docker compose -f screenplay.yml up -d --no-build
+#   4) docker compose -f screenplay.yml logs screenplay | grep -i admin
+# =============================================================================
+
+services:
+  screenplay:
+    # 镜像由 fetch-and-build.sh 构建好（默认 screenplay:latest）。
+    # 本文件不写 build: 段 —— 源码不在这里，构建已由脚本完成。
+    image: "${IMAGE_TAG:-screenplay:latest}"
+    container_name: screenplay
+    restart: unless-stopped
+
+    # 让容器内可用 host.docker.internal 指向宿主机 —— 代理地址写成它，
+    # 换网络/重建容器后网关 IP 变了也不受影响。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    ports:
+      # 左边是宿主机端口，冲突了就改（例如 3002:3000）
+      - "${PORT:-3001}:3000"
+
+    environment:
+      PORT: 3000
+      DATA_DIR: /data
+      MEDIA_DIRS: /media
+      WEB_DIST: /app/public
+      CORS_ORIGINS: "${CORS_ORIGINS:-*}"
+
+      # --- 登录认证 ---
+      # 默认用应用内账户（AUTH_MODE=local）：首次启动创建 admin，密码随机生成
+      # 并打印在日志里，也可用 AUTH_ADMIN_PASSWORD 指定。
+      # 想改用本机 Linux 系统账户，设为 system 并挂载 /etc/{passwd,shadow,group}
+      # （见文件末尾注释）。
+      AUTH_MODE: "${AUTH_MODE:-local}"
+      AUTH_SESSION_DAYS: "${AUTH_SESSION_DAYS:-30}"
+      AUTH_ALLOWED_USERS: "${AUTH_ALLOWED_USERS:-}"
+      AUTH_ADMIN_PASSWORD: "${AUTH_ADMIN_PASSWORD:-}"
+      AUTH_DISABLED: "${AUTH_DISABLED:-}"
+
+      # --- 元数据源凭据（不填也能跑，只是部分刮削功能不可用）---
+      RAWG_API_KEY: "${RAWG_API_KEY:-}"
+      IGDB_CLIENT_ID: "${IGDB_CLIENT_ID:-}"
+      IGDB_CLIENT_SECRET: "${IGDB_CLIENT_SECRET:-}"
+      STEAM_API_KEY: "${STEAM_API_KEY:-}"
+      STEAMDB_KEY: "${STEAMDB_KEY:-}"
+
+      # --- 运行时代理（与构建期代理完全独立）---
+      # 推荐填 http://host.docker.internal:7890（已由 extra_hosts 指向宿主机）。
+      # ⚠️ 不要填 127.0.0.1 —— 在容器里那指容器自己。
+      RAWG_PROXY: "${RAWG_PROXY:-}"
+      HTTP_PROXY: "${RUNTIME_HTTP_PROXY:-}"
+      HTTPS_PROXY: "${RUNTIME_HTTPS_PROXY:-}"
+      NO_PROXY: "${RUNTIME_NO_PROXY:-localhost,127.0.0.1,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local,host.docker.internal}"
+      # 图片抓取顺序：proxy,direct | direct,proxy | direct
+      IMAGE_FETCH_ORDER: "${IMAGE_FETCH_ORDER:-}"
+      STEAM_IMAGE_HOSTS: "${STEAM_IMAGE_HOSTS:-}"
+
+      # --- 抓取行为 / 缩略图 ---
+      CRAWLER_MIN_INTERVAL_MS: "${CRAWLER_MIN_INTERVAL_MS:-1200}"
+      THUMBNAIL_WIDTH: "${THUMBNAIL_WIDTH:-480}"
+      THUMBNAIL_QUALITY: "${THUMBNAIL_QUALITY:-80}"
+
+      # --- 启动期存量数据修复（等首轮扫描结束后自动执行；设 0 关闭）---
+      MAINTENANCE_ON_BOOT: "${MAINTENANCE_ON_BOOT:-}"
+
+    volumes:
+      # ① 媒体目录（只读）。在 .env 里把 MEDIA_HOST_DIR 指向本机真实的游戏
+      #    截图根目录。
+      #
+      #    这里刻意用 `:?` 让它在**没设置时直接报错退出**，而不是悄悄用默认值：
+      #    若给个 ./media 之类的默认值、而该目录又不存在，Docker 会默默创建
+      #    一个空目录挂进去 —— 容器照常启动、健康检查也过，只是游戏库永远是
+      #    空的，排查起来毫无线索。宁可在这里停下并说清原因。
+      - "${MEDIA_HOST_DIR:?请在 .env 里设置 MEDIA_HOST_DIR，指向本机真实的游戏截图目录}:/media:ro"
+      # ② 数据库 + 缩略图缓存（命名卷，容器重建不丢）
+      - screenplay-data:/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --tries=1 --timeout=4 http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  screenplay-data:
+
+# =============================================================================
+# 镜像从哪来？三选一
+#
+# ① 【本文件默认】换设备构建：在目标设备上跑 fetch-and-build.sh
+#       bash fetch-and-build.sh
+#       docker compose -f screenplay.yml up -d --no-build
+#
+# ② 已有构建好的镜像（比如从构建机导出的 tar）：
+#       gunzip -c screenplay-image.tar.gz | docker load
+#       docker compose -f screenplay.yml up -d --no-build
+#
+# ③ 想自己指定镜像名：在 .env 里设 IMAGE_TAG=xxx:yyy
+#
+# 注意：本仓库**不启用** CI 自动构建，所以没有现成的远程镜像可以直接 pull。
+# =============================================================================
+# 想改用本机 Linux 系统账户登录（AUTH_MODE=system）时，额外加上：
+#
+#     group_add:
+#       - "${SHADOW_GID:-42}"
+#     volumes:
+#       - "/etc/passwd:/host-etc/passwd:ro"
+#       - "/etc/shadow:/host-etc/shadow:ro"
+#       - "/etc/group:/host-etc/group:ro"
+#
+#    （不需要这个功能就别挂 —— 不挂时会自动回退到本地账户。）
+# =============================================================================
