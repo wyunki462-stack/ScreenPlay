@@ -40,11 +40,35 @@ expect_in_file() {
     bad "$(basename "$_file") 不存在（$_why）"
     return
   fi
-  if grep -qF -- "$_needle" "$_file"; then
+  if grep -Fq -e "$_needle" "$_file" 2>/dev/null; then
     ok "$(basename "$_file") 含 $_why"
   else
     bad "$(basename "$_file") 缺少 $_why —— 产物像是旧的（构建缓存命中？）"
   fi
+}
+
+# ─── 搜索 *.js 时**不能**用 grep --include ───────────────────────────────────
+# 本脚本在镜像**构建阶段**运行，那时镜像是 Alpine，grep 来自 busybox
+# （Dockerfile 只装了 python3/make/g++/git/ffmpeg，没有装 grep 包）。
+# 而 busybox 的 grep **不支持 --include**：
+#
+#     grep: unrecognized option '--include=*.js'
+#
+# 它随即以非 0 退出，于是下面每一条断言都被判成「缺失」。原先那句
+# 2>/dev/null 又把这唯一的线索吞掉了 —— 症状就变成「前端产物全缺，
+# 可产物明明好端端的」，而打印出来的提示还指向「前端没有重新构建」，
+# 把人往完全错误的方向带。
+#
+# 这个坑以前一直没暴露，是因为脚本也在 NAS 上手工跑过 —— 那是 GNU grep，
+# 支持 --include。同一个脚本在两种 grep 下行为不同，只在容器里才现形。
+#
+# 改用 find + xargs（POSIX 与 BusyBox 通吃）：
+#   · -e "$2"    避免符号以 - 开头时被当成选项
+#   · 不用 -q      busybox 在「找到即停」时退出码不可靠；跑完全部文件再
+#                  用 >/dev/null 丢弃输出，行为确定
+search_js() {
+  find "$1" -type f -name '*.js' -print0 2>/dev/null \
+    | xargs -0 grep -Fl -e "$2" 2>/dev/null >/dev/null
 }
 
 # 在一棵目录里（含所有 .js，压缩产物在内）找固定字符串。
@@ -54,7 +78,7 @@ expect_in_tree() {
     bad "$_dir 不存在（$_why）"
     return
   fi
-  if grep -rqF --include='*.js' -- "$_needle" "$_dir" 2>/dev/null; then
+  if search_js "$_dir" "$_needle"; then
     ok "web 产物含 $_why"
   else
     bad "web 产物缺少 $_why —— 前端没有重新构建"
