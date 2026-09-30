@@ -145,6 +145,17 @@ if [ -f .source-hash ] && [ -n "$IMAGE_HASH" ]; then
   fi
 fi
 
+  # 先确认 docker run 本身可用。
+  #
+  # 没有这一步时，任何让 `docker run` 失败的原因（daemon 无响应、权限、镜像正在被
+  # 并发写入）都会让下面每一条检查返回非零，最终报成「镜像里缺少产物」—— 一个与
+  # 真因毫不相关的结论。实测踩过：镜像内容经核对是完整的，检查却报缺失。
+  if ! docker run --rm --entrypoint sh "$IMAGE_TAG" -c 'exit 0'; then
+    err "无法运行镜像做产物检查（docker run 失败，原因见上）"
+    err "这不是「产物缺失」。请先确认 Docker daemon 正常，再重试。"
+    exit 1
+  fi
+
   # 镜像里是否有本轮功能的关键产物 —— 和 build 阶段那道自查互相印证，
   # 用来兜住「宿主机上用了别的途径构建」的情形。
   #
@@ -169,8 +180,10 @@ fi
     err "镜像不是本轮版本。请用 scripts/docker-build.sh --no-cache 重建后重试。"
     exit 1
   fi
+  # 注意用 -d 而不是 -f：`assets` 是**目录**，`test -f` 对目录恒为假，
+  # 于是这一项无论镜像多完整都会报「缺少」。（这里原来写的就是 -f。）
   if ! docker run --rm --entrypoint sh "$IMAGE_TAG" -c \
-       'test -f /app/public/assets'; then
+       'test -d /app/public/assets'; then
     err "镜像里缺少前端产物目录（/app/public/assets）"
     err "请用 scripts/docker-build.sh --no-cache 重建后重试。"
     exit 1
