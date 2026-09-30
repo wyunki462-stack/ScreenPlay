@@ -24,7 +24,7 @@ GH_USER="${GH_USER:-wyunki462-stack}"
 IMAGE="${IMAGE:-screenplay:latest}"
 REGISTRY_IMG="ghcr.io/${GH_USER}/screenplay"
 TAG_LATEST="${REGISTRY_IMG}:latest"
-TAG_VERSION="${REGISTRY_IMG}:$(cd "$(dirname "$0")" && python3 -c "import json;print(json.load(open('package.json'))['version'])" 2>/dev/null || echo '0.6.0-beta.1')"
+TAG_VERSION="${REGISTRY_IMG}:$(cd "$(dirname "$0")" && python3 -c "import json;print(json.load(open('package.json'))['version'])" 2>/dev/null || echo '0.6.1')"
 
 LOGIN_TRIES="${LOGIN_TRIES:-15}"
 PUSH_TRIES="${PUSH_TRIES:-40}"

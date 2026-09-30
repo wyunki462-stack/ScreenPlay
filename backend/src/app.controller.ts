@@ -52,7 +52,7 @@ export class AppController {
       // 版本号由镜像构建期通过 BUILD_VERSION 注入（Dockerfile 从根 package.json
       // 读取），而不是依赖 npm_package_version —— 容器里跑的是
       // `node dist/main.js`，npm 环境变量并不存在，那样只会永远回退到常量。
-      version: process.env.BUILD_VERSION ?? process.env.npm_package_version ?? '0.6.0-beta.1',
+      version: process.env.BUILD_VERSION ?? process.env.npm_package_version ?? '0.6.1',
       // Build stamp. `npm_package_version` is only set when npm runs the process,
       // which is NOT the case in the container (`node dist/main.js`), so it always
       // fell back to a constant and could not distinguish builds. These two can:
