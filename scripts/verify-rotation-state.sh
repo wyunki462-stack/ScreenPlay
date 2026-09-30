@@ -23,6 +23,14 @@ printf '\n\033[1m== 1. 启动期修复日志 ==\033[0m\n'
 LOGS="$(docker compose logs "$CONTAINER" 2>/dev/null | grep -E 'MaintenanceService' | tail -4)"
 if [ -n "$LOGS" ]; then
   printf '%s\n' "$LOGS" | sed 's/^/  /'
+  if printf '%s' "$LOGS" | grep -q "auto-added album frames removed"; then
+    printf '  \033[32mOK\033[0m 日志里带清理数量\n'
+  else
+    printf '  \033[33m!\033[0m 日志里没有清理数量。\n'
+    printf '    如果库里「相册截图在轮播里但用户从没决定过」已经是 0，说明清理其实执行过，\n'
+    printf '    只是日志条件漏了 purged（已在源码修复，需重建镜像后才会体现）。\n'
+    printf '    否则说明清理没跑，需要排查 MAINTENANCE_ON_BOOT 与启动期标记。\n'
+  fi
 else
   printf '  \033[33m!\033[0m 没抓到 MaintenanceService 日志（MAINTENANCE_ON_BOOT=0？或日志被轮转）\n'
 fi

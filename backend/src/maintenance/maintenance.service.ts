@@ -80,7 +80,15 @@ export class MaintenanceService implements OnApplicationBootstrap {
       const durations = await this.repairDurations();
 
       const seconds = ((Date.now() - t0) / 1000).toFixed(1);
-      if (posters.games > 0 || durations.started) {
+      // `purged` MUST be part of this condition.
+      //
+      // It was missing, and that hid the very evidence this round is judged by: a boot
+      // whose only work was the purge (no cover to add, no duration to backfill) skipped
+      // the detailed line and logged 「nothing to repair.」— while having in fact just
+      // taken 268 album frames out of the rotation. Measured on the live library: the
+      // data proved the purge ran (268 → 0), but the log said nothing happened, which
+      // sent the investigation looking for a nonexistent second cause.
+      if (posters.games > 0 || purged > 0 || durations.started) {
         this.logger.log(
           `Boot maintenance finished in ${seconds}s — ` +
             // 「cover rotation」而不是旧的「poster rotation topped up」：现在只会
