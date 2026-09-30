@@ -226,12 +226,18 @@ ScreenPlay 镜像包 —— ${VERSION}（提交 ${SHORT_SHA}）
      docker login ghcr.io -u ${GH_USER}
      （提示 Password 时粘贴 PAT）
 
-   然后打标签并推送：
+   然后打标签并推送。**两个标签都要打** —— 只打 latest 的话，仓库里就只留得下
+   一个"当前是什么"的指针，既无法判断拉到的是哪个版本，也没法回退到指定版本
+   （实测踩过：推完之后仓库里只有 latest，看不出对应哪次构建）：
+
+     docker tag ${IMAGE} ${GH_IMG}:${VERSION}
+     docker push ${GH_IMG}:${VERSION}
 
      docker tag ${IMAGE} ${GH_IMG}:latest
-     docker tag ${IMAGE} ${GH_IMG}:${VERSION}
      docker push ${GH_IMG}:latest
-     docker push ${GH_IMG}:${VERSION}
+
+   先推带版本号的，成功后再推 latest —— 这样 latest 永远指向一个已经确认推上去的
+   版本，而不是"latest 推成功了但版本标签没推上"。
 
    推送完成后到 https://github.com/users/${GH_USER}/packages 确认。
    注意：新推的 package 默认是 private，要公开的话在包设置里改成 public。
@@ -248,10 +254,14 @@ ScreenPlay 镜像包 —— ${VERSION}（提交 ${SHORT_SHA}）
    然后：
 
      docker login -u <你的DockerHub用户名>
-     docker tag ${IMAGE} ${DH_IMG}:latest
+
      docker tag ${IMAGE} ${DH_IMG}:${VERSION}
-     docker push ${DH_IMG}:latest
      docker push ${DH_IMG}:${VERSION}
+
+     docker tag ${IMAGE} ${DH_IMG}:latest
+     docker push ${DH_IMG}:latest
+
+   同样先推版本标签再推 latest。
 
    Docker Hub 免费账号的镜像默认公开。仓库要在网页上先建好
    （名字填 screenplay），否则首次推送会报 denied。
