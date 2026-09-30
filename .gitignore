@@ -60,3 +60,7 @@ shots/
 
 # Playwright / Chromium 本地下载
 .pw/
+
+# 镜像导出文件（几百 MB，绝不入库）
+screenplay-image*.tar.gz
+*.tar.gz
