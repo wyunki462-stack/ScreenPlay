@@ -13,7 +13,7 @@
 #   1) 自动探测「容器可达」的宿主机代理地址，并以 --build-arg 注入
 #      HTTP_PROXY / HTTPS_PROXY / NO_PROXY（可用环境变量覆盖；可显式关闭）。
 #   2) Alpine 软件源在**构建容器内部**做真实可用校验并自动切换（由
-#      scripts/apk-setup.sh 在容器内执行），不再依赖宿主机预检结果。
+#      scripts/build/apk-setup.sh 在容器内执行），不再依赖宿主机预检结果。
 #   3) 默认启用 BuildKit；检测到旧版 Docker 时自动降级为经典构建器。
 #   4) 代理仅在构建期生效（Dockerfile 只用 ARG + 行内环境变量），
 #      不写进运行镜像，最终容器的入站访问不受影响。
@@ -50,7 +50,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DOCKERFILE="${DOCKERFILE:-$PROJECT_DIR/Dockerfile}"
 IMAGE_TAG="${IMAGE_TAG:-screenplay:latest}"
-APK_SETUP_SCRIPT="$SCRIPT_DIR/apk-setup.sh"
+APK_SETUP_SCRIPT="$SCRIPT_DIR/build/apk-setup.sh"   # 构建期脚本统一在 scripts/build/
 
 BASE_IMAGE="node:22-alpine"   # 基础镜像（官方命名空间）
 BASE_NAMESPACE="library"      # Docker Hub 官方镜像的命名空间
@@ -437,7 +437,7 @@ main() {
   echo
   info "【第三步】Alpine 软件源：容器内真实校验 + 自动故障切换"
   info "  候选源（按优先级）：${ALPINE_MIRRORS[*]}"
-  info "  由 scripts/apk-setup.sh 在构建容器内用 apk 真实下载 APKINDEX 并试装，"
+  info "  由 scripts/build/apk-setup.sh 在构建容器内用 apk 真实下载 APKINDEX 并试装，"
   info "  宿主机预检结果不作为可用依据，避免「宿主 200 / 容器超时」的假阳性。"
 
   # 宿主机侧仅作参考展示（不影响构建结果）
@@ -510,6 +510,24 @@ main() {
   fi
   # npm 国内镜像源：所有代理方案失败时兜底直连安装（仅构建期生效）
   build_args+=(--build-arg "NPM_MIRROR_REGISTRY=${NPM_MIRROR_REGISTRY:-https://registry.npmmirror.com/}")
+
+  # apk-setup.sh 的内容要参与 Docker 层缓存键。
+  #
+  # 原因：Docker 对 `COPY <单个文件>` 的缓存键只含文件名（文件名已编码在指令里），
+  # 内容变了也照样命中旧层 —— 于是脚本改了却从未生效。实测踩过：给 apk-setup.sh
+  # 加了实时进度输出，构建日志里仍是旧行为（「索引OK →」后面什么都没有），排查了
+  # 一轮才发现是缓存语义，不是脚本写错。
+  #
+  # 这里按脚本内容算一个哈希传进去（Dockerfile 里有一条 RUN 引用它），哈希一变
+  # 缓存即失效。算不出来时退化为原行为（把 apk-setup.sh 的 COPY 行也一起改动即可
+  # 强制失效），不会让构建失败。
+  local apk_setup_hash=""
+  if [ -f "$PROJECT_DIR/scripts/build/apk-setup.sh" ]; then
+    apk_setup_hash="$(sha256sum "$PROJECT_DIR/scripts/build/apk-setup.sh" 2>/dev/null | cut -c1-16 || true)"
+  fi
+  if [ -n "$apk_setup_hash" ]; then
+    build_args+=(--build-arg "APK_SETUP_VERSION=$apk_setup_hash")
+  fi
   ok "  npm 兜底源    : ${NPM_MIRROR_REGISTRY:-https://registry.npmmirror.com/}"
 
   # 版本号：从根 package.json 读，避免版本在多个地方各写一遍。

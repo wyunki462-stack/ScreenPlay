@@ -19,7 +19,7 @@
 #     · 不会写进任何镜像层 → 运行镜像里没有代理变量；
 #     · 最终容器的入站访问（LAN IP + 端口、公网域名）完全不受影响。
 #
-#   apk 换源采用「构建容器内真实可用校验 + 自动故障切换」（scripts/apk-setup.sh）：
+#   apk 换源采用「构建容器内真实可用校验 + 自动故障切换」（scripts/build/apk-setup.sh）：
 #   在容器内用 apk 真实下载 APKINDEX 并试装，宿主机预检的 200 不再被当作可用
 #   依据，消除「宿主机预检正常、容器内超时」的假阳性；单源失败自动切下一个源。
 #   脚本同时清洗 NO_PROXY，确保公网镜像站不会因被列为直连而绕开代理（本机
@@ -48,7 +48,9 @@ ARG HTTP_PROXY_FALLBACK=""
 ARG APK_MIRROR=""
 ARG APK_MIRRORS=""
 ARG APK_PROBE_TIMEOUT=45
-ARG APK_INSTALL_TIMEOUT=900
+# 900s 太长了：一个源 15 分钟装不完 make/g++/git 就该切下一个，而不是让用户干等。
+# 240s 足够一个可用源装完（实测可用源都在 1-3 分钟内完成），装不完的源本来也该跳过。
+ARG APK_INSTALL_TIMEOUT=240
 # 这两个也必须声明在**第一个 FROM 之前**。
 # 只在 FROM 之后声明时，docker-compose 里传进来的值会被当成「未使用的构建参数」
 # 丢掉（BuildKit 打印 "unused build-arg" 但不报错），于是 npm 国内源兜底与
@@ -71,13 +73,38 @@ ARG APK_MIRROR
 ARG APK_MIRRORS
 ARG APK_PROBE_TIMEOUT
 ARG APK_INSTALL_TIMEOUT
+# ── APK_SETUP_VERSION：一道显式的缓存破冰 ───────────────────────────────────
+#
+# 这是一道**冗余保险**，主机制是上面那条目录 COPY。
+#
+# 实测观察到的现象：给 apk-setup.sh 加了实时进度输出后，构建日志里仍是旧行为
+# （「索引OK →」后面什么都没有），容器里跑的确实是旧脚本。至于为什么内容变了却
+# 没失效，我没有查到确证 —— 所以这里不再给出机制解释，只留可观察的事实。
+#
+# 目录 COPY 已经覆盖了正常路径（目录校验和含全部文件内容，仓库既有实践可证）。
+# 这个 ARG 覆盖另外两种情况：
+#   · 用 `docker build` 直接构建、绕过 scripts/docker-build.sh；
+#   · 将来有人把 COPY 改回逐文件形式。
+# scripts/docker-build.sh 会按脚本内容哈希传入它（内容一变，值就变）。
+#
+# 不传时保持 "dev"，即不影响缓存 —— 不会因为 ARG 默认值而每次都重建。
+ARG APK_SETUP_VERSION=dev
 ARG SCREENPLAY_BUILD_PROXY
 ARG NPM_MIRROR_REGISTRY
 ARG BUILD_VERSION="0.0.0-dev"
 
-COPY scripts/apk-setup.sh /tmp/apk-setup.sh
-COPY scripts/npm-run.sh /tmp/npm-run.sh
-COPY scripts/proxy-probe.js /tmp/proxy-probe.js
+# 构建期脚本用**目录 COPY**，不用逐文件 COPY。
+#
+# 原因：逐文件 `COPY scripts/xxx.sh /tmp/` 时，这一层的缓存**是否随文件内容变化**
+# 在实践中不可靠 —— 实测给 apk-setup.sh 加了实时进度输出后，构建日志里仍是旧行为
+# （「索引OK →」后面什么都没有），排查一轮才发现容器里跑的是旧脚本，而不是脚本写错。
+# 目录 COPY 的校验和覆盖目录内**全部文件内容**，这点由仓库既有实践确认
+# （`COPY backend backend` / `COPY web web` 一直是这么用的，改源码必然触发重建）。
+#
+# 目录里只放构建期脚本（见 scripts/build/README.md），所以 scripts/ 下其它脚本
+# 的变化不会连带打穿 apk 与 npm install 这两层昂贵缓存。
+COPY scripts/build/ /tmp/
+RUN echo "[build] apk-setup.sh version=$APK_SETUP_VERSION"
 
 # --- build 阶段：容器内真实校验 + 自动换源，再装原生模块编译工具链 ---
 # 关键：用「行内环境变量前缀」把参数交给脚本，而不是 ENV，避免代理写进镜像。
@@ -156,10 +183,10 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
 # 打得开，只是少一个标签页。常见成因是构建缓存命中了旧的 COPY 层，或某个
 # workspace 的 build 静默失败。这里直接检查 backend/dist 与 web/dist 里有没有
 # 本轮功能必须存在的符号，缺一个就让构建在这里失败。
-#   COPY 放在**使用点之前**，而不是前面和 apk-setup.sh 一起。
+#   COPY 放在**使用点之前**，而不是和构建期脚本（scripts/build/）一起。
 #
 #   这个脚本是「每轮都改」的文件：每加一条本轮功能的产物检查（比如 17 项 → 23 项）
-#   它就变一次。放在 apk-setup.sh 旁边时，它一变就打穿下面这几层的缓存：
+#   它就变一次。曾经放在 apk-setup.sh 旁边，于是它一变就打穿下面这几层的缓存：
 #
 #     COPY scripts/verify-build-artifacts.sh   ← 改这里
 #       ↓
@@ -167,9 +194,11 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
 #       ↓
 #     RUN npm run build                                ← 跟着重跑
 #
-#   实测过一次：一次小改动导致每次构建都要经代理重装 make/g++，在 NAS 上表现为
-#   「卡在第 6/26 步」且长时间没有任何输出（apk add 的日志被重定向到文件里）。
-#   放到这里之后，改这个脚本最多只影响最后这一步，apk 与 npm install 层照旧命中。
+#   实测过一次：一次小改动导致构建要经代理重装 make/g++，在 NAS 上表现为
+#   「卡在 apk 那一步」且长时间没有任何输出。
+#
+#   现在它**不在** scripts/build/ 里，所以它怎么改都不会碰到前面任何一层缓存；
+#   改成使用点之前只是让「影响面最小」这件事在文件里可读。
 #
 #   位置正确性：脚本只在下面这一条 RUN 里用，紧接着就被 rm 掉（见构建指纹那一步），
 #   所以放在这里除了「更贴近使用点」之外没有副作用。
@@ -213,8 +242,25 @@ ARG APK_MIRROR
 ARG APK_MIRRORS
 ARG APK_PROBE_TIMEOUT
 ARG APK_INSTALL_TIMEOUT
+# ── APK_SETUP_VERSION：一道显式的缓存破冰 ───────────────────────────────────
+#
+# 这是一道**冗余保险**，主机制是上面那条目录 COPY。
+#
+# 实测观察到的现象：给 apk-setup.sh 加了实时进度输出后，构建日志里仍是旧行为
+# （「索引OK →」后面什么都没有），容器里跑的确实是旧脚本。至于为什么内容变了却
+# 没失效，我没有查到确证 —— 所以这里不再给出机制解释，只留可观察的事实。
+#
+# 目录 COPY 已经覆盖了正常路径（目录校验和含全部文件内容，仓库既有实践可证）。
+# 这个 ARG 覆盖另外两种情况：
+#   · 用 `docker build` 直接构建、绕过 scripts/docker-build.sh；
+#   · 将来有人把 COPY 改回逐文件形式。
+# scripts/docker-build.sh 会按脚本内容哈希传入它（内容一变，值就变）。
+#
+# 不传时保持 "dev"，即不影响缓存 —— 不会因为 ARG 默认值而每次都重建。
+ARG APK_SETUP_VERSION=dev
 
-COPY scripts/apk-setup.sh /tmp/apk-setup.sh
+COPY scripts/build/ /tmp/
+RUN echo "[run] apk-setup.sh version=$APK_SETUP_VERSION"
 
 # --- run 阶段：同样用「容器内真实校验」装 ffmpeg 并建用户 ---
 # 同样只用行内环境变量前缀，运行镜像里不残留任何代理变量。
@@ -229,7 +275,7 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
     sh /tmp/apk-setup.sh ffmpeg \
  && addgroup -S screenplay \
  && adduser -S screenplay -G screenplay \
- && rm -f /tmp/apk-setup.sh /tmp/screenplay-proxy-env /tmp/apk-probe.log /tmp/apk-add.log
+ && rm -f /tmp/apk-setup.sh /tmp/npm-run.sh /tmp/proxy-probe.js /tmp/README.md /tmp/screenplay-proxy-env /tmp/apk-probe.log /tmp/apk-add.log
 
 WORKDIR /app/backend
 

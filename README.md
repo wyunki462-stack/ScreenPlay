@@ -111,17 +111,17 @@ docker compose up -d                   # 使用刚构建好的镜像启动
 2. **诊断 daemon 配置**：启动时读取 `docker.service.d/*.conf` 与 `daemon.json`，
    若发现代理被写成回环地址、或 `NO_PROXY` 把公网镜像站列为直连，直接打印根因
    与修法（这两条正是「宿主 200 / 容器超时」的典型成因）。
-3. **源在构建容器内真实校验 + 自动切换**：换源由 `scripts/apk-setup.sh` 在容器内
+3. **源在构建容器内真实校验 + 自动切换**：换源由 `scripts/build/apk-setup.sh` 在容器内
    用 `apk` 真实下载 APKINDEX 并试装，失败自动切下一个「源 × 代理」组合。
    宿主机预检结果**不再作为可用依据**，彻底消除假阳性。候选源：
    - Alpine 软件源：`mirrors.aliyun.com` → `mirrors.tuna.tsinghua.edu.cn` →
      `mirrors.ustc.edu.cn` → `mirrors.huaweicloud.com`（`mirrors.163.com` 已停止
      提供 `/alpine` 路径，故移除）
    - Docker 镜像：`docker.fnnas.com` → `hub-mirror.daocloud.io` → `docker.1ms.run`
-4. **npm 依赖安装：代理前置校验 + 国内源兜底**：由 `scripts/npm-run.sh` 执行，
+4. **npm 依赖安装：代理前置校验 + 国内源兜底**：由 `scripts/build/npm-run.sh` 执行，
    代理**只通过环境变量注入**（绝不作为 npm 命令行参数，避免出现
    `Unknown command: "http://..."`）。四个阶段依次尝试，任一成功即通过：
-   - 阶段1：容器内真实探测代理连通性（`scripts/proxy-probe.js` 做一次真实 HTTPS
+   - 阶段1：容器内真实探测代理连通性（`scripts/build/proxy-probe.js` 做一次真实 HTTPS
      请求），**探不通的直接跳过，不做无效重试**；可用则经代理走官方源
    - 阶段2：经代理走国内镜像源 `registry.npmmirror.com`
    - 阶段3：**国内镜像源直连兜底**（不依赖代理，默认启用）
