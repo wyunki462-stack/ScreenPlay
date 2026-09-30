@@ -2211,9 +2211,13 @@ node backend/scripts/verify/requirements-ui.mjs          # 真实浏览器：需
 | --- | --- | --- |
 | `backend/scripts/verify/metacritic-reviews-test.mjs` | 分页解析（离线夹具） | 63 项通过 / 0 失败 |
 | `backend/scripts/verify/media-reviews-e2e.mjs` | 问题 1 端到端（含新增场景 H） | 63 项通过 / 0 失败 |
-| `backend/scripts/verify/poster-rotation-e2e.mjs` | 问题 2 / 3 后端行为 | 15 项通过 / 0 失败 |
-| `backend/scripts/verify/poster-ui-ssr.mjs` | 问题 2 / 3 前端 DOM | 8 项通过 / 0 失败 |
+| `backend/scripts/verify/poster-rotation-e2e.mjs` | 问题 2 / 3 后端行为 | 16 项通过 / 0 失败 |
+| `backend/scripts/verify/poster-ui-ssr.mjs` | 问题 2 / 3 前端 DOM | 10 项通过 / 0 失败 |
 | `scripts/verify-build-artifacts.sh` | 产物含本轮代码 | 17 项命中 / 0 缺失 |
+
+> 上表数字随后续版本变动：`poster-ui-ssr.mjs` 在 `0.6.2` 由 8 → 10 项（原先「单张图时
+> 按钮数 = 0」只是 `info()` 打印、没有断言），`poster-rotation-e2e.mjs` 由 15 → 16 项，
+> `verify-build-artifacts.sh` 由 17 → 26 项。当前值见下方第六轮补丁报告的「回归」小节。
 
 跑法：
 
