@@ -612,7 +612,8 @@ curl http://127.0.0.1:3001/api/games/<id>/media-reviews
 ```
 ```json
 {
-  "reviews": [ { "outlet": "IGN", "score": 90, "text": "…", "url": "…" } ],
+  "reviews": [ { "outlet": "IGN", "score": 90, "platform": "PS5",
+                 "text": "…", "url": "…" } ],
   "summary": { "status": "ok", "error": null, "fetchedAt": 1790675941755,
                "sourceUrl": "https://www.metacritic.com/game/bloodborne/", "count": 43 }
 }
@@ -620,6 +621,15 @@ curl http://127.0.0.1:3001/api/games/<id>/media-reviews
 
 排序：有分数的在前（分高优先），没分数的在后，同分按媒体名称。游戏不存在返回
 404（而不是一个空数组——空数组会被误读成「这个游戏没有评价」）。
+
+`platform` 是抓取时由 `normalisePlatform()` 归一化后的短名（`PS5` / `PS4` /
+`Xbox Series X|S` / `Switch` / `PC` …），可能为 `null`（站点没标注该评价属于哪个
+平台）。
+
+**界面上的「按平台查看」是在前端对这个字段做筛选的**，接口本身不接受平台参数：
+抓取侧的条数上限发生在去重之后，若改成后端按平台查询就得再叠一层 `LIMIT`，会让
+「明明有却查不到」。因此本接口的返回体与 `summary.count`（全局总数）都不受界面
+筛选影响。
 
 ### POST /api/games/:id/media-reviews/refresh
 

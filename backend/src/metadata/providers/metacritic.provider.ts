@@ -478,15 +478,19 @@ export class MetacriticProvider implements MetadataProvider {
   /**
    * Collect **all** critic reviews for a game, following the pager.
    *
-   * The landing page shows a handful of reviews (the site's own first page).
-   * A game with 65 publications therefore looked like it had 1: the crawl read
-   * the game page once and stopped, and the paginated listing — reachable at
-   * `/game/<slug>/critic-reviews/?page=N` and linked from the page's own pager —
-   * was never visited. This walks the pager until no forward link remains.
+   * The landing page shows only the first slice of a game's critic reviews; the
+   * rest hang off the dedicated listing at `/game/<slug>/critic-reviews/?page=N`.
+   * A game with 65 publications therefore looked like it had 1.
+   *
+   * Two independent defects produced that symptom, and both had to be fixed:
+   *   1. the crawl never followed a pager at all — it read the game page once;
+   *   2. after (1) was fixed, the walk still only ran when the **landing** page
+   *      exposed a pager. Where it did not, the crawl returned the first slice and
+   *      called it complete. See the comment at that branch for the detail.
    *
    * Cost control, because Metacritic rate-limits and this runs during a refresh:
-   *   - the landing page's own reviews are parsed first, so a pager failure still
-   *     leaves the user with what the first page showed;
+   *   - the landing page's own reviews are parsed first, so a failure later in the
+   *     walk still leaves the user with what the first page showed;
    *   - the walk is bounded by `MAX_REVIEW_PAGES`;
    *   - visited URLs are remembered, so a pager that links back to itself cannot
    *     loop;
@@ -499,42 +503,97 @@ export class MetacriticProvider implements MetadataProvider {
     const collected: ParsedMediaReview[] = parseMediaReviews(html);
 
     // Where the listing lives. The landing page's own pager is preferred (that is
-    // the site telling us the real URL); otherwise derive it from the slug.
+    // the site telling us the real URL); otherwise the listing is derived from the
+    // slug.
     const slug = externalId.replace(/^[a-z0-9-]+\//i, ''); // drop a legacy "pc/" prefix
     const gameUrl = `${GAME}${slug}/`;
-
-    let links = parseReviewsPagination(html);
-    // No pager anywhere → the landing page is the whole set.
-    if (!links.next && links.last <= 1) return dedupeReviews(collected).slice(0, MAX_REVIEWS);
+    const listingUrl = `${GAME}${slug}/critic-reviews/`;
 
     const visited = new Set<string>([gameUrl]);
+    let links = parseReviewsPagination(html);
     let currentUrl = gameUrl;
-    let page = 0;
+    // The highest page number already fetched. The landing page counts as page 1:
+    // it is the site's first slice of the listing, so a pager link pointing at
+    // `?page=1` must be recognised as "already have this" rather than followed.
+    //
+    // Getting this wrong is subtle and was caught by
+    // `backend/scripts/verify/metacritic-crawl-test.mjs`: with a separate "steps
+    // taken" counter starting at 0, a listing whose pager lists its own page 1
+    // satisfied `1 > 0`, so page 1 was re-fetched and then every later page was
+    // refused (since `2 > 0` also held but `next` was recomputed from the page we
+    // had just re-read). The crawl stopped with only the landing page's reviews.
+    let page = 1;
+
+    // The landing page carrying no pager does NOT mean it is the whole set.
+    //
+    // This was the actual cause of 「65 家媒体却只抓到 1 条」surviving the first fix.
+    // That fix taught the crawl to follow the pager, but only if the *landing* page
+    // exposed one — and it bailed out here when it did not. The landing page prints
+    // a handful of reviews in a block that frequently carries no pager at all (the
+    // pager lives on the listing), so the crawl returned the first slice and
+    // reported it as complete. The offline fixtures could not catch this because
+    // they were written with a pager on the landing page, which is exactly the case
+    // that already worked.
+    //
+    // So when the landing page offers no pager, look at the dedicated listing before
+    // concluding. `visited` already holds `gameUrl`, so a landing pager that points
+    // back at the game page cannot cause a repeat fetch.
+    if (!links.next && links.last <= 1) {
+      const listingHtml = await this.fetchHtml(listingUrl);
+      if (listingHtml) {
+        visited.add(listingUrl);
+        const listingLinks = parseReviewsPagination(listingHtml);
+        if (listingLinks.next || listingLinks.last > 1) {
+          // The listing paginates, so crawling it is worth the requests. Page 1 of
+          // the listing has just been read, so the walk starts by looking for a
+          // link forward from page 1.
+          links = listingLinks;
+          currentUrl = listingUrl;
+          collected.push(...parseMediaReviews(listingHtml));
+        } else {
+          // Neither the landing page nor the listing paginates: the landing page
+          // really is the whole set. Keep its reviews and stop.
+          return dedupeReviews(collected).slice(0, MAX_REVIEWS);
+        }
+      } else {
+        // The listing could not be fetched — keep what the landing page gave us
+        // rather than losing it to a network failure.
+        return dedupeReviews(collected).slice(0, MAX_REVIEWS);
+      }
+    }
 
     while (page < MAX_REVIEW_PAGES) {
       // Resolve against THIS provider's origin, so a stubbed base URL stays
       // fully isolated instead of leaking requests to the live site.
       const nextUrl = nextReviewsPageUrl(links, currentUrl, page, MC_ORIGIN);
       if (!nextUrl || visited.has(nextUrl)) break;
+
+      // Require real forward progress.
+      //
+      // `nextReviewsPageUrl` already rejects a numbered link at or behind the
+      // current page, and the structure of this loop guarantees the counter grows —
+      // but an un-numbered "next" anchor plus a pager that keeps re-offering it
+      // could otherwise re-request forever. `visited` bounds that in practice; this
+      // makes it explicit, so a future refactor cannot quietly reintroduce a spin.
+      const target = pageOfUrlIn(nextUrl);
+      if (target != null && target <= page) break;
+
       visited.add(nextUrl);
 
       const nextHtml = await this.fetchHtml(nextUrl);
       if (!nextHtml) break; // network gave up — keep what we already have
 
-      const before = collected.length;
       collected.push(...parseMediaReviews(nextHtml));
       currentUrl = nextUrl;
-      page = pageOfUrlIn(nextUrl) ?? page + 1;
       links = parseReviewsPagination(nextHtml);
+      page = target ?? page + 1;
 
-      // A page that contributes nothing new means we have run past the end.
-      if (collected.length === before && !links.next) break;
       if (page < MAX_REVIEW_PAGES) await sleep(REVIEW_PAGE_DELAY_MS);
     }
 
     const merged = dedupeReviews(collected).slice(0, MAX_REVIEWS);
     this.logger.log(
-      `Metacritic 媒体评价：「${slug}」抓取 ${page} 页，合并后 ${merged.length} 条`,
+      `Metacritic 媒体评价：「${slug}」抓取至第 ${page} 页，合并后 ${merged.length} 条`,
     );
     return merged;
   }

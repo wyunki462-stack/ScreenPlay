@@ -51,13 +51,15 @@ try {
   });
 } catch (err) {
   console.error("esbuild 打包失败：", err.message);
+
   rmSync(tmp, { recursive: true, force: true });
   process.exit(1);
 }
 
-const { PAGE_SIZE, FIRST_PAGE_COLLAPSED, paginateReviews, slicePage } = await import(
-  `file://${outfile}`
-);
+const {
+  PAGE_SIZE, FIRST_PAGE_COLLAPSED, paginateReviews, slicePage,
+  ALL_PLATFORMS, platformOptions, filterByPlatform,
+} = await import(`file://${outfile}`);
 
 console.log("\n\x1b[1m媒体评价分页 · 离线测试\x1b[0m\n");
 
@@ -194,6 +196,55 @@ console.log("\n  \x1b[1m[展开态与翻页的组合]\x1b[0m");
   eq("第 2 页 expanded=true 时可见条数", p.visibleCount, 10);
   eq("第 2 页 expanded=true 时无展开按钮", p.canExpand, false);
 }
+
+
+  // ---- 平台筛选（本轮需求 2）--------------------------------------------------
+  console.log("\n  \x1b[1m[平台筛选]\x1b[0m");
+  {
+    const mk = (outlet, platform) => ({ outlet, platform });
+    const list = [
+      mk("IGN", "PS5"), mk("GameSpot", "PS5"), mk("PC Gamer", "PC"),
+      mk("Nintendo Life", "Switch"), mk("Mystery Blog", null),
+    ];
+
+    eq("「全部」的哨兵值不与真实平台名冲突", ALL_PLATFORMS.startsWith("__"), true);
+    eq("「全部」返回原列表（同一引用即可）", filterByPlatform(list, ALL_PLATFORMS).length, 5);
+    eq("空值等同于「全部」", filterByPlatform(list, null).length, 5);
+    eq("undefined 等同于「全部」", filterByPlatform(list, undefined).length, 5);
+
+    eq("筛 PS5", filterByPlatform(list, "PS5").length, 2);
+    eq("筛 PC", filterByPlatform(list, "PC").length, 1);
+    eq("筛 Switch", filterByPlatform(list, "Switch").length, 1);
+    eq("筛不存在的平台 → 空", filterByPlatform(list, "Xbox").length, 0);
+    eq("无平台评价不被任何平台筛中", filterByPlatform(list, "PS5").some((r) => r.platform === null), false);
+
+    // 大小写与空白：历史数据里可能存着归一化前的写法，不该因此筛出空结果
+    eq("大小写不敏感", filterByPlatform([mk("A", "ps5")], "PS5").length, 1);
+    eq("首尾空白不敏感", filterByPlatform([mk("A", " PS5 ")], "PS5").length, 1);
+
+    // 选项归纳
+    const opts = platformOptions(list);
+    eq("选项数 = 1（全部）+ 3 个真实平台", opts.length, 4);
+    eq("首项是「全部」", opts[0].value, ALL_PLATFORMS);
+    eq("「全部」计数含无平台评价", opts[0].count, 5);
+    eq("PS5 计数", opts.find((o) => o.value === "PS5").count, 2);
+    eq("不把无平台评价单列成一项", opts.some((o) => !o.value || o.value === "null"), false);
+
+    // 排序：条数多的在前，同数量按名称，保证渲染顺序稳定
+    const many = [mk("a", "A"), mk("b", "B"), mk("c", "B"), mk("d", "C"), mk("e", "C")];
+    const o2 = platformOptions(many).slice(1).map((o) => o.value);
+    eq("条数多的平台排在前", o2[0], "B");
+    eq("同数量按名称排序（A 条数少，B/C 同数量时按名称）", o2.join(""), "BCA");
+
+    // 空列表
+    eq("空列表只有「全部」一项", platformOptions([]).length, 1);
+    eq("空列表的「全部」计数为 0", platformOptions([])[0].count, 0);
+
+    // 全都没有平台时不应凭空造出平台选项
+    const noneHasPlatform = [mk("x", null), mk("y", null)];
+    eq("全无平台时只有「全部」", platformOptions(noneHasPlatform).length, 1);
+    eq("全无平台时「全部」仍有计数", platformOptions(noneHasPlatform)[0].count, 2);
+  }
 
 rmSync(tmp, { recursive: true, force: true });
 

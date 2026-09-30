@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Astro Bot Reviews - Metacritic</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "VideoGame",
+        "name": "Astro Bot",
+        "aggregateRating": {
+          "@type": "AggregateRating",
+          "ratingValue": 94,
+          "reviewCount": 65
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1 class="hero-title__text">Astro Bot</h1>
+
+    <!--
+      真实站点的游戏着陆页形态：只印出前两条媒体评价，**页面里没有分页器**。
+      分页器在专属列表页 `/game/<slug>/critic-reviews/` 上。
+
+      这份 fixture 存在的意义：`paginated-p1.html` 是带着 `rel="next"` 分页器写的，
+      所以它只能证明「着陆页有分页器时能走通」—— 而那条路径本来就是好的。
+      真实站点上着陆页没有分页器，抓取就停在这里只拿到 2 条。这份 fixture 就是
+      用来复现那个形态的。
+    -->
+    <div class="c-site-review">
+      <div class="c-site-review__critic"><a href="/critic/ign/">IGN</a></div>
+      <div class="c-site-review__score">94</div>
+      <div class="c-site-review__review-quote">A joyful, inventive platformer that understands exactly what makes the genre sing.</div>
+      <div class="c-site-review__platform">PlayStation 5</div>
+      <time datetime="2024-09-05">Sep 5, 2024</time>
+    </div>
+
+    <div class="c-site-review">
+      <div class="c-site-review__critic"><a href="/critic/gamespot/">GameSpot</a></div>
+      <div class="c-site-review__score">90</div>
+      <div class="c-site-review__review-quote">Endlessly charming, and one of the most polished platformers in years.</div>
+      <div class="c-site-review__platform">PlayStation 5</div>
+    </div>
+
+    <!-- 没有 <nav class="c-pagination">，也没有任何 href 带 ?page= -->
+  </body>
+</html>

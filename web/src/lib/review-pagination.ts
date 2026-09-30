@@ -61,3 +61,68 @@ export function slicePage<T>(items: T[], page: number, pageSize = PAGE_SIZE): T[
   const start = (Math.max(1, page) - 1) * pageSize;
   return items.slice(start, start + pageSize);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 平台筛选（媒体评价按平台查看）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 「全部平台」这个选项的内部值。
+ *
+ * 用一个不可能与真实平台名相同的前缀，而不是空串 —— 空串会让「未指定平台」与
+ * 「全选」在比较时难以区分，而两者必须分开：前者是**没选**筛选器，后者是**选了**
+ * 一个会匹配到 `platform === null` 那些评价的取值。
+ */
+export const ALL_PLATFORMS = '__all__';
+
+export interface PlatformOption {
+  /** 平台名，或 `ALL_PLATFORMS`。 */
+  value: string;
+  /** 该平台下的评价条数（「全部」是总数）。 */
+  count: number;
+}
+
+/**
+ * 从评价列表里归纳出可选的平台，附带每个平台的条数。
+ *
+ * 只列**评价里真实出现过**的平台，而不是游戏自身的平台列表：M 站对同一款游戏在
+ * 不同平台下收录的媒体不同，游戏支持 PS5/PC 不代表它在这两个平台下都有媒体评价。
+ * 若按游戏平台列，用户切过去只会得到空列表，会以为功能坏了。
+ *
+ * `platform` 为空的评价不单独列一项：它们多是站点没标平台的评价，单独列一个
+ * 「未知平台」既难理解，也会让「全部」与它的关系变得含糊。它们始终留在「全部」里。
+ *
+ * 排序：条数多的在前（通常也是用户最关心的平台），同数量按名称，保证渲染顺序稳定
+ * —— 否则 React 列表在不同请求间会抖动。
+ */
+export function platformOptions(
+  reviews: { platform: string | null }[],
+): PlatformOption[] {
+  const counts = new Map<string, number>();
+  for (const r of reviews) {
+    const p = (r.platform ?? '').trim();
+    if (!p) continue;
+    counts.set(p, (counts.get(p) ?? 0) + 1);
+  }
+
+  const opts: PlatformOption[] = [...counts.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+
+  return [{ value: ALL_PLATFORMS, count: reviews.length }, ...opts];
+}
+
+/**
+ * 按平台筛出评价。`ALL_PLATFORMS`（或空值）返回原列表。
+ *
+ * 平台名比较时忽略大小写与首尾空白：抓取侧会把 `"PlayStation 5"` 归一成 `"PS5"`，
+ * 但历史数据里可能存着归一化之前的值，大小写不一致时不该筛出空结果。
+ */
+export function filterByPlatform<T extends { platform: string | null }>(
+  reviews: T[],
+  platform: string | null | undefined,
+): T[] {
+  if (!platform || platform === ALL_PLATFORMS) return reviews;
+  const want = platform.trim().toLowerCase();
+  return reviews.filter((r) => (r.platform ?? '').trim().toLowerCase() === want);
+}

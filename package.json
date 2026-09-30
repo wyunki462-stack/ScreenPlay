@@ -1,6 +1,6 @@
 {
   "name": "screenplay",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "description": "ScreenPlay — personal game media album manager (backend + web frontend + flutter client)",
   "workspaces": [

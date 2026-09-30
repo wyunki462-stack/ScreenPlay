@@ -142,6 +142,11 @@ expect_in_tree "$WEB_DIST" "media-reviews-page" "媒体评价分页指示（第 
 expect_in_tree "$WEB_DIST" "展开显示" "「展开显示 {n} 条」文案"
 expect_in_tree "$WEB_DIST" "取消展示" "相册截图「取消展示」按钮文案"
 expect_in_tree "$WEB_DIST" "detail.reviews.pageOf" "分页 i18n 键（确认打包时键名未丢）"
+  # 第 6 轮补丁（0.6.2）
+  expect_in_tree "$WEB_DIST" "media-reviews-platform-select" "平台切换下拉框"
+  expect_in_tree "$WEB_DIST" "detail.reviews.filterPlatform" "平台切换 i18n 键"
+  expect_in_file "$BACKEND_DIST/metadata/providers/metacritic.provider.js" \
+    "critic-reviews" "落地页无分页器时的列表页补探（评价抓全）"
 
 head_ "== 6. 后端仍保留启动期清理（本轮的核心数据修复）=="
 # 只查字符串本身，不查缩进或函数体 —— 它只要在产物里就说明这版代码带着清理逻辑。

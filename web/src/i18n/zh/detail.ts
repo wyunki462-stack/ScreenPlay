@@ -115,6 +115,12 @@ export const detailZh: Record<string, string> = {
   "detail.reviews.pageOf": "第 {page} / {total} 页",
   "detail.reviews.prevPage": "上一页",
   "detail.reviews.nextPage": "下一页",
+  // 平台切换：只列评价里真实出现过的平台
+  "detail.reviews.filterPlatform": "按平台查看",
+  "detail.reviews.allPlatforms": "全部平台",
+  "detail.reviews.platformCount": "{platform}（{count} 条）",
+  "detail.reviews.platformEmpty": "该平台暂无媒体评价",
+  "detail.reviews.platformEmptyHint": "换一个平台，或点「全部平台」查看所有评价。",
 
   "detail.metacritic.withCritics": "Metacritic {score} · 基于 {criticCount} 家媒体",
   "detail.metacritic.score": "Metacritic {score}",

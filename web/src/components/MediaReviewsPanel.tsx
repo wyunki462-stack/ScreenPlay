@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ExternalLink, LoaderCircle, MessageSquareQuote, RefreshCw } from "lucide-react";
 import { useMediaReviews, useRefreshMediaReviews } from "../api/hooks";
 import { useT } from "../i18n";
 import {
+  ALL_PLATFORMS,
   FIRST_PAGE_COLLAPSED,
   PAGE_SIZE,
+  filterByPlatform,
   paginateReviews,
+  platformOptions,
   slicePage,
 } from "../lib/review-pagination";
 import { cn, metacriticTone } from "../lib/utils";
@@ -53,6 +56,7 @@ export default function MediaReviewsPanel({
   const [notice, setNotice] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState(false);
+  const [platform, setPlatform] = useState<string>(ALL_PLATFORMS);
   const query = useMediaReviews(gameId);
   const refresh = useRefreshMediaReviews(gameId);
 
@@ -60,20 +64,35 @@ export default function MediaReviewsPanel({
   const summary = query.data?.summary ?? fallbackSummary ?? null;
   const status = summary?.status ?? null;
 
-  // 换了游戏就把分页状态收回初始值，否则会停在上一个游戏的页码上。
+  // 换了游戏就把分页与平台筛选都收回初始值，否则会停在上一个游戏的选择上 ——
+  // 而平台是游戏特有的（上一个游戏有 PC 评价、新的未必有），留着会把新游戏
+  // 筛成空列表，看起来像「这个游戏没有媒体评价」。
   useEffect(() => {
     setPage(1);
     setExpanded(false);
+    setPlatform(ALL_PLATFORMS);
   }, [gameId]);
+
+  // 可选平台取自「评价里真实出现过的平台」，不是游戏自身的平台列表 ——
+  // 详见 `platformOptions` 的说明。
+  const platforms = useMemo(() => platformOptions(reviews), [reviews]);
+
+  // 当前平台在可选列表里已经不存在时（重新抓取后该平台的评价没了）回落到「全部」，
+  // 避免停在一个空选项上。用「派生值」而不是再写一次 state，就不会有中间态闪烁。
+  const activePlatform = platforms.some((p) => p.value === platform) ? platform : ALL_PLATFORMS;
+  const filtered = useMemo(
+    () => filterByPlatform(reviews, activePlatform),
+    [reviews, activePlatform],
+  );
 
   // 重新抓取后条数可能从 1 条涨到 60 条，也可能反过来变少；两种情况下停在
   // 越界的页码都会让面板空白，所以页码由 `paginateReviews` 夹回合法范围 ——
   // 渲染时一律用它返回的 `page`，不用本地那份可能越界的 state。
-  const paginate = paginateReviews(reviews.length, page, expanded);
+  const paginate = paginateReviews(filtered.length, page, expanded);
   const safePage = paginate.page;
 
   const onFirstPage = safePage === 1;
-  const visible = slicePage(reviews, safePage).slice(
+  const visible = slicePage(filtered, safePage).slice(
     0,
     onFirstPage && !expanded ? FIRST_PAGE_COLLAPSED : PAGE_SIZE,
   );
@@ -154,8 +173,67 @@ export default function MediaReviewsPanel({
         </div>
       )}
 
+      {/* 平台切换。只在真的有多个平台可选时才出现 —— 一个游戏只有单一平台的评价时，
+          这个下拉框没有可切的东西，摆在那里只是噪音。
+          这里用的是原生 <select> 而不是自绘下拉：它自带键盘操作、移动端会唤起系统
+          选择器，而本组件在手机上同样会被用到。 */}
+      {reviews.length > 0 && platforms.length > 2 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <label
+            htmlFor="media-reviews-platform"
+            className="text-xs text-zinc-500"
+          >
+            {t("detail.reviews.filterPlatform")}
+          </label>
+          <select
+            id="media-reviews-platform"
+            data-testid="media-reviews-platform-select"
+            value={activePlatform}
+            onChange={(e) => {
+              setPlatform(e.target.value);
+              // 换了平台就回到第一页的初始形态：新平台下页码很可能越界，
+              // 而且用户期待的是「从头看这个平台的评价」。
+              setPage(1);
+              setExpanded(false);
+            }}
+            className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none transition-colors hover:border-zinc-600 focus:border-cyan-700"
+          >
+            {platforms.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.value === ALL_PLATFORMS
+                  ? t("detail.reviews.platformCount", {
+                      platform: t("detail.reviews.allPlatforms"),
+                      count: opt.count,
+                    })
+                  : t("detail.reviews.platformCount", {
+                      platform: opt.value,
+                      count: opt.count,
+                    })}
+              </option>
+            ))}
+          </select>
+          {/* 当前筛选下有几条 —— 让「切过去变空了」这件事有明确解释。 */}
+          {activePlatform !== ALL_PLATFORMS && (
+            <span className="text-xs text-zinc-600" data-testid="media-reviews-platform-active">
+              {activePlatform}
+            </span>
+          )}
+        </div>
+      )}
+
       {reviews.length === 0 ? (
+        // 这个游戏一条评价都没有：靠 `status` 区分「从没抓过 / 抓过但没有 / 抓取失败」。
         <EmptyState status={status} error={summary?.error ?? null} />
+      ) : filtered.length === 0 ? (
+        // 游戏有评价、但当前平台一条都没有：说清是筛选造成的，不要复用
+        // 「暂无媒体评价」—— 那句话会让用户以为这个游戏根本没有媒体评价。
+        <div
+          data-testid="media-reviews-platform-empty"
+          className="rounded-lg border border-dashed border-zinc-800 p-8 text-center text-sm text-zinc-500"
+        >
+          <div className="font-medium text-zinc-400">{t("detail.reviews.platformEmpty")}</div>
+          <div className="mt-1 text-xs">{t("detail.reviews.platformEmptyHint")}</div>
+        </div>
       ) : (
         <>
           <ul className="space-y-3" data-testid="media-reviews-list">
@@ -214,12 +292,14 @@ export default function MediaReviewsPanel({
           </div>
 
           {/* 告诉用户「当前显示了几条 / 一共几条」，否则翻页时看不出还剩多少。
-              分页控件只在多于 1 页时出现，这条提示则始终显示。 */}
+              分页控件只在多于 1 页时出现，这条提示则始终显示。
+              数字取自 `filtered`：选了平台之后，用户关心的是**这个平台**有多少条，
+              而不是全部平台的总数（总数在上方的标题行里另有一处）。 */}
           <p
             className="text-center text-[11px] text-zinc-600"
             data-testid="media-reviews-shown"
           >
-            {t("detail.reviews.shown", { shown: visible.length, total: reviews.length })}
+            {t("detail.reviews.shown", { shown: visible.length, total: filtered.length })}
           </p>
         </>
       )}

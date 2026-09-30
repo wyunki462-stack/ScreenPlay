@@ -205,11 +205,29 @@ for (const mode of ['static', 'slideshow']) {
     : bad('大图区容器缺失');
 }
 
-// 单张图不应产生可翻页的错觉
+// 单张图不应产生可翻页的错觉。
+//
+// 这两条以前只是 `info()` 打印，没有断言 —— 于是「单张图仍渲染出箭头」这种回归
+// 会静静地打印一行 "按钮数 = 2" 然后报「8 项通过 / 0 项失败」。现在改成真断言。
+//
+// 判据用 aria-label 精确定位「上一张 / 下一张」，不是数所有 <button>：
+// 大图区里还有别的按钮（如打开海报弹窗），数总量会把它们一起算进来。
+const arrowsIn = (html) =>
+  [...html.matchAll(/<button[^>]*aria-label="([^"]*)"/g)]
+    .map((m) => m[1])
+    .filter((l) => /上一张|下一张|prev|next/i.test(l)).length;
+
 {
-  const html = mod.renderHero('slideshow', ['/only.png']);
-  const arrows = [...html.matchAll(/<button/g)].length;
-  info(`单张图时按钮数 = ${arrows}`);
+  const html1 = mod.renderHero('slideshow', ['/only.png']);
+  const a1 = arrowsIn(html1);
+  if (a1 === 0) ok('单张图时不渲染翻页箭头（不会造成可翻页的错觉）');
+  else bad(`单张图却渲染了 ${a1} 个翻页箭头`);
+
+  // 多于一张时才该出现箭头 —— 否则上一条可能只是「箭头压根不渲染」而恒真。
+  const html2 = mod.renderHero('slideshow', ['/a.png', '/b.png']);
+  const a2 = arrowsIn(html2);
+  if (a2 === 2) ok('两张图时渲染上一张/下一张两个箭头');
+  else bad(`两张图应渲染 2 个箭头，实际 ${a2} 个`);
 }
 
 fs.rmSync(OUT, { recursive: true, force: true });

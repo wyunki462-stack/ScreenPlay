@@ -114,6 +114,12 @@ export const detailEn: Record<string, string> = {
   "detail.reviews.shown": "Showing {shown} of {total}",
   "detail.reviews.pageOf": "Page {page} / {total}",
   "detail.reviews.prevPage": "Previous",
+  // Platform filter: only platforms that actually appear in the reviews.
+  "detail.reviews.filterPlatform": "Filter by platform",
+  "detail.reviews.allPlatforms": "All platforms",
+  "detail.reviews.platformCount": "{platform} ({count})",
+  "detail.reviews.platformEmpty": "No critic reviews for this platform",
+  "detail.reviews.platformEmptyHint": "Pick another platform, or choose All platforms to see everything.",
   "detail.reviews.nextPage": "Next",
 
   "detail.metacritic.withCritics": "Metacritic {score} · based on {criticCount} critic reviews",
