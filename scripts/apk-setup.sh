@@ -347,7 +347,25 @@ main() {
       printf '索引OK → '
 
       # 第二段：真实安装（给足时间，避免慢速可用源被误判）
-      if run_limited "$INSTALL_TIMEOUT" apk add --no-cache $PKGS >/tmp/apk-add.log 2>&1; then
+      # 输出不该被藏起来：装 make/g++/git 要下载 150MB+，经代理在 NAS 上就是十几分钟，
+      # 而「十几分钟没有任何输出」在用户眼里就是**卡死** —— 实测因此被误判成 hang。
+      # 所以边跑边显示进度，同时保留日志供失败诊断。
+      #
+      # 这里**不能**写成 `apk add ... | tee 日志`：管道的退出码取的是右侧 tee 的，
+      # 于是安装失败也会被判成成功。实测（busybox ash，与 Alpine 一致）：
+      #
+      #   if false | tee f; then ...        → 误判为成功   ← 原写法
+      #   false | tee f; rc=$?              → rc=0，仍误判 ← 不要这样修
+      #   set -o pipefail; false | tee f    → rc=1，正确
+      #
+      # busybox ash 确实支持 pipefail，但本脚本面向 POSIX sh，依赖 shell 方言等于把
+      # 「脚本是对的」建立在基础镜像不变这个假设上。改用重定向 + 读回：退出码由普通
+      # 命令单独取得，显示交给后续的 sed，正确性与实时显示彼此独立、都不依赖方言。
+      rm -f /tmp/apk-add.log 2>/dev/null || true
+      run_limited "$INSTALL_TIMEOUT" apk add --no-cache $PKGS >/tmp/apk-add.log 2>&1
+      apk_rc=$?
+      cat /tmp/apk-add.log 2>/dev/null | sed 's/^/     | /'
+      if [ "$apk_rc" -eq 0 ]; then
         printf '安装成功\n'
         _ok=1; _used_mirror="$_m"; _used_mode="$_mode"
         break

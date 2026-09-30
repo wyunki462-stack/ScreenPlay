@@ -78,7 +78,6 @@ ARG BUILD_VERSION="0.0.0-dev"
 COPY scripts/apk-setup.sh /tmp/apk-setup.sh
 COPY scripts/npm-run.sh /tmp/npm-run.sh
 COPY scripts/proxy-probe.js /tmp/proxy-probe.js
-COPY scripts/verify-build-artifacts.sh /tmp/verify-build-artifacts.sh
 
 # --- build 阶段：容器内真实校验 + 自动换源，再装原生模块编译工具链 ---
 # 关键：用「行内环境变量前缀」把参数交给脚本，而不是 ENV，避免代理写进镜像。
@@ -157,6 +156,24 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
 # 打得开，只是少一个标签页。常见成因是构建缓存命中了旧的 COPY 层，或某个
 # workspace 的 build 静默失败。这里直接检查 backend/dist 与 web/dist 里有没有
 # 本轮功能必须存在的符号，缺一个就让构建在这里失败。
+#   COPY 放在**使用点之前**，而不是前面和 apk-setup.sh 一起。
+#
+#   这个脚本是「每轮都改」的文件：每加一条本轮功能的产物检查（比如 17 项 → 23 项）
+#   它就变一次。放在 apk-setup.sh 旁边时，它一变就打穿下面这几层的缓存：
+#
+#     COPY scripts/verify-build-artifacts.sh   ← 改这里
+#       ↓
+#     RUN sh /tmp/apk-setup.sh python3 make g++ git   ← 缓存失效，重装 150MB+
+#       ↓
+#     RUN npm run build                                ← 跟着重跑
+#
+#   实测过一次：一次小改动导致每次构建都要经代理重装 make/g++，在 NAS 上表现为
+#   「卡在第 6/26 步」且长时间没有任何输出（apk add 的日志被重定向到文件里）。
+#   放到这里之后，改这个脚本最多只影响最后这一步，apk 与 npm install 层照旧命中。
+#
+#   位置正确性：脚本只在下面这一条 RUN 里用，紧接着就被 rm 掉（见构建指纹那一步），
+#   所以放在这里除了「更贴近使用点」之外没有副作用。
+COPY scripts/verify-build-artifacts.sh /tmp/verify-build-artifacts.sh
 RUN sh /tmp/verify-build-artifacts.sh
 
 # --- 构建指纹：回答「这个镜像到底是哪份源码构建的」--------------------------
