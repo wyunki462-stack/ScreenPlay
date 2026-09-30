@@ -145,16 +145,43 @@ if [ -f .source-hash ] && [ -n "$IMAGE_HASH" ]; then
   fi
 fi
 
-# 镜像里是否有本轮功能的关键产物 —— 和 build 阶段那道自查互相印证，
-# 用来兜住「宿主机上用了别的途径构建」的情形。
-if docker run --rm --entrypoint sh "$IMAGE_TAG" -c \
-     'test -f /app/backend/dist/maintenance/maintenance.service.js && test -f /app/public/assets && grep -rqF "media-reviews-panel" /app/public/assets'; then
-  ok "镜像内含媒体评价前端产物 + 启动期修复模块"
-else
-  err "镜像里缺少本轮功能的产物（前端 media-reviews-panel 或 maintenance.service.js）"
-  err "请用 scripts/docker-build.sh --no-cache 重建后重试。"
-  exit 1
-fi
+  # 镜像里是否有本轮功能的关键产物 —— 和 build 阶段那道自查互相印证，
+  # 用来兜住「宿主机上用了别的途径构建」的情形。
+  #
+  # 检查项必须跟着**当前这一轮**走。原来只查 `media-reviews-panel`（媒体评价那一轮
+  # 的前端字符串）和 `maintenance.service.js`（该模块早就存在）—— 这两个符号在好几轮
+  # 之前就成立了，于是这道检查对**本轮**改动等于没有把关：一个不含本轮修复的旧镜像
+  # 照样能通过。新增的两项才是本轮独有的：
+  #
+  #   · slideshowItemHint         —— 本轮新增的 i18n 文案（前端产物里）
+  #   · purgeAutoAddedAlbumFrames —— 本轮新增的旧规则遗留帧清理（后端产物里）
+  #
+  # 每项分开放进 `&&` 链，失败时能指出是哪一项，不必再摸黑猜。
+  if ! docker run --rm --entrypoint sh "$IMAGE_TAG" -c \
+       'test -f /app/backend/dist/maintenance/maintenance.service.js'; then
+    err "镜像里缺少启动期修复模块（/app/backend/dist/maintenance/maintenance.service.js）"
+    err "请用 scripts/docker-build.sh --no-cache 重建后重试。"
+    exit 1
+  fi
+  if ! docker run --rm --entrypoint sh "$IMAGE_TAG" -c \
+       'grep -rqF "purgeAutoAddedAlbumFrames" /app/backend/dist'; then
+    err "镜像里缺少本轮的后端产物（purgeAutoAddedAlbumFrames —— 旧规则遗留帧清理）"
+    err "镜像不是本轮版本。请用 scripts/docker-build.sh --no-cache 重建后重试。"
+    exit 1
+  fi
+  if ! docker run --rm --entrypoint sh "$IMAGE_TAG" -c \
+       'test -f /app/public/assets'; then
+    err "镜像里缺少前端产物目录（/app/public/assets）"
+    err "请用 scripts/docker-build.sh --no-cache 重建后重试。"
+    exit 1
+  fi
+  if ! docker run --rm --entrypoint sh "$IMAGE_TAG" -c \
+       'grep -rqF "slideshowItemHint" /app/public/assets'; then
+    err "镜像里缺少本轮的前端产物（slideshowItemHint —— 轮播归属说明文案）"
+    err "镜像不是本轮版本。请用 scripts/docker-build.sh --no-cache 重建后重试。"
+    exit 1
+  fi
+  ok "镜像内含本轮前后端产物（轮播归属文案 + 遗留帧清理模块）"
 
 # ─────────────────────────────────────────────────────────────────────────────
 step "3/4 重建容器"
