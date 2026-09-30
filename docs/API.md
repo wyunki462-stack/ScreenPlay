@@ -230,7 +230,9 @@ Liveness/readiness probe.
     "game-neighbors", "duration-backfill", "scraped-posters-all",
     "duration-cache-guard",
     "hero-poster-carousel", "duration-coverage-api", "duration-backfill-ui",
-    "poster-rotation-all-games", "poster-rotation-floor", "poster-config-protected",
+    "poster-rotation-all-games", "poster-rotation-cover-only",
+    "poster-rotation-user-decided", "card-carousel-vs-hero-carousel",
+    "review-pagination", "poster-config-protected",
     "media-reviews-api", "media-reviews-ui", "media-reviews-coverage-api"
   ]
 }
@@ -243,7 +245,9 @@ Liveness/readiness probe.
 curl -s http://<主机>:3001/api/health | grep -o 'poster-rotation-all-games'
 ```
 
-看不到 `poster-rotation-all-games` / `poster-rotation-floor` / `poster-config-protected`
+看不到 `poster-rotation-all-games` / `poster-rotation-cover-only` /
+`poster-rotation-user-decided` / `card-carousel-vs-hero-carousel` / `review-pagination` /
+`poster-config-protected`
 就说明跑的还是旧镜像（也就是「只有个别游戏能翻海报」的那一版），需要重新
 `docker compose build && docker compose up -d`。
 

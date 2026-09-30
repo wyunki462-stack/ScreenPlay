@@ -19,7 +19,15 @@ export const BACKEND_FEATURES = [
   'duration-backfill-ui', // 设置页「一键批量补全通关时长」按钮
   // 本轮（第四轮）修「只有个别游戏能翻页」时新增的能力。
   'poster-rotation-all-games', // 官方刮取到的海报/截图全部登记且默认进轮播
-  'poster-rotation-floor', // 官方图不足时用本地相册截图补齐轮播，保证每个游戏都能翻
+  // 第五轮：按需求 21 收口轮播归属。
+  //
+  // 原来的 `poster-rotation-floor` 标记的正是「官方图不足时用本地相册截图补齐
+  // 轮播」这个行为 —— 它已按需求移除（相册截图不再自动进轮播，只有用户勾选才
+  // 加入），所以标记也跟着换名。沿用旧名会让人以为补齐逻辑还在。
+  'poster-rotation-cover-only', // 只有封面默认进轮播；相册截图仅用户勾选才加入
+  'poster-rotation-user-decided', // 取消勾选（含封面）不会被刮削/启动期修复改回
+  'card-carousel-vs-hero-carousel', // 首页卡片用完整海报集，详情页大图用轮播勾选集
+  'review-pagination', // Metacritic 媒体评价按 critic-reviews 分页全量拉取
   'poster-config-protected', // 用户取消勾选的轮播项不会被重新刮削自动加回
   // 本轮新增：Metacritic 媒体评价（「媒体评价」标签页 + 批量补全）。
   // 早先占位的 `critic-reviews` 从未实现，已由下面三个按交付面拆分的名字取代：

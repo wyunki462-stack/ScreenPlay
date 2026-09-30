@@ -669,14 +669,14 @@ docker compose logs screenplay | grep 'Boot maintenance'
 docker compose up -d
 
 # 3) 确认跑的是新镜像（关键：features 列表跟着镜像走）
-curl -s http://127.0.0.1:3001/api/health | python3 -m json.tool | grep -E 'buildTime|poster-rotation-all-games|poster-rotation-floor|poster-config-protected'
+curl -s http://127.0.0.1:3001/api/health | python3 -m json.tool | grep -E 'buildTime|poster-rotation-cover-only|poster-rotation-user-decided|card-carousel-vs-hero-carousel|review-pagination'
 
 # 4) 容器健康状态
 docker compose ps
 ```
 
-期望在 `features` 里看到 `poster-rotation-all-games` / `poster-rotation-floor` /
-`poster-config-protected` 三项；看不到就说明镜像还是旧的 —— 也就是「只有个别游戏
+期望在 `features` 里看到 `poster-rotation-cover-only` / `poster-rotation-user-decided` /
+`card-carousel-vs-hero-carousel` / `review-pagination` 三项；看不到就说明镜像还是旧的 —— 也就是「只有个别游戏
 能翻海报」的那一版。
 
 > **升级后不需要重新刮削**：扫描时会把旧库里「用户从未手动动过」的海报行回填为

@@ -2284,6 +2284,52 @@ provider 只返回一张图、用户又没勾任何东西的游戏，详情页�
 
 ---
 
+## 3.5 旧规则已经写进库的相册帧：一次性清理
+
+去掉「自动补齐」规则**不会撤回旧镜像已经写下的数据**。线上实测那条启动日志是：
+
+```
+Boot maintenance finished in 15.6s — poster rotation topped up for 39 game(s) (+268 frame(s))
+```
+
+这 268 帧仍留在轮播里 —— 也就是用户看到的「相册截图自动进了轮播」依然存在。所以新增
+一次清理（`MaintenanceService.purgeAutoAddedAlbumFrames()`）：
+
+```sql
+UPDATE game_posters SET in_slideshow = 0
+ WHERE source = 'media' AND in_slideshow = 1 AND slideshow_user_set = 0
+```
+
+**为什么这个判据是安全的**：`slideshow_user_set = 0` 恰好是「机器决定的、用户从没决定过」
+的签名 —— 旧规则插入时写的是 `VALUES (…, 'media', …, 0, 1, 0, …)`（注意最后那个 0），
+而**每一个用户动作都会把它置 1**（「从相册添加」、勾选、取消勾选）。所以这次清理不可能
+碰到用户的选择，且它是幂等的（跑过一次之后就没有符合条件的行为 0 条）。
+
+**它不做什么**：不碰 `source = 'scraped'`。官方刮取的美术资源仍默认进轮播，只有相册截图
+是用户的报障对象。
+
+`ROTATION_MARKER` 同时从 `poster-rotation-floor.v2` 换成 `poster-rotation-cover-only.v3` ——
+这是**必须的**：v2 的标记已经在现有库里写过，沿用同一个 key 会让启动期修复直接跳过，
+那些库就永远等不到新规则。
+
+启动日志的措辞也改了，避免误读：
+
+```
+# 旧（会让人以为相册截图还在被自动加入）
+poster rotation topped up for 39 game(s) (+268 frame(s))
+# 新
+cover rotation repaired for N game(s) (+M frame(s)); auto-added album frames removed: K
+```
+
+`GET /api/health` 的 `features` 里新增了本轮标记，一条 curl 就能判断部署的是不是这一版：
+
+| 标记 | 含义 |
+| --- | --- |
+| `poster-rotation-cover-only` | 只有封面默认进轮播；相册截图仅用户勾选才加入（取代 `poster-rotation-floor`） |
+| `poster-rotation-user-decided` | 取消勾选（含封面）不会被刮削 / 启动期修复改回 |
+| `card-carousel-vs-hero-carousel` | 首页卡片用完整海报集，详情页大图用轮播勾选集 |
+| `review-pagination` | Metacritic 媒体评价按 `critic-reviews` 分页全量拉取 |
+
 ## 4. 回归
 
 改的是海报/轮播的共享路径（`ensureScrapedPosters`、启动期修复、摘要 DTO），所以必须确认
@@ -2293,7 +2339,7 @@ provider 只返回一张图、用户又没勾任何东西的游戏，详情页�
 | --- | --- |
 | 离线分页解析 | 63 / 0 |
 | 媒体评价端到端 | 63 / 0 |
-| 轮播归属后端 | 15 / 0 |
+| 轮播归属后端 | 16 / 0 |
 | 海报轮播 UI（SSR 渲染真实组件） | 8 / 0 |
 | 产物自查 | 17 命中 / 0 缺失 |
 | `backend` tsc | 0 错误 |

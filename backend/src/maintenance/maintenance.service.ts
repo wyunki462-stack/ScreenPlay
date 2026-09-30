@@ -31,11 +31,14 @@ const MARKER_PREFIX = 'maintenance.';
 
 /**
  * Bumped whenever a repair must run again on libraries that already ran the old
- * one (e.g. the rotation rule changes from "at least 2" to "2 + album count").
+ * one (e.g. the rotation rule changes from "2 + album count" to "cover only").
  * A new key means every existing install runs it once more, which is exactly the
  * intent — the marker records "this specific rule has been applied".
  */
-const ROTATION_MARKER = `${MARKER_PREFIX}poster-rotation-floor.v2`;
+// v3：规则从「相册截图不足就补齐」改为「只保证封面在轮播里」（需求 21）。
+// 换 key 是**必须的**，不只是好看：v2 的标记已经在现有库里写过一次，沿用同一个
+// key 会让启动期修复直接跳过 —— 那些还没跑过新规则的库就永远等不到它。
+const ROTATION_MARKER = `${MARKER_PREFIX}poster-rotation-cover-only.v3`;
 const DURATION_MARKER = `${MARKER_PREFIX}duration-backfill.v1`;
 
 @Injectable()
@@ -73,14 +76,19 @@ export class MaintenanceService implements OnApplicationBootstrap {
       await this.waitForScan();
 
       const posters = this.repairPosterRotation();
+      const purged = this.purgeAutoAddedAlbumFrames();
       const durations = await this.repairDurations();
 
       const seconds = ((Date.now() - t0) / 1000).toFixed(1);
       if (posters.games > 0 || durations.started) {
         this.logger.log(
           `Boot maintenance finished in ${seconds}s — ` +
-            `poster rotation topped up for ${posters.games} game(s) ` +
+            // 「cover rotation」而不是旧的「poster rotation topped up」：现在只会
+            // 把**封面**补进轮播，不再按相册截图补齐。措辞不改会让人以为相册截图
+            // 又被自动加进轮播了（这正是需求 21 要禁掉的行为）。
+            `cover rotation repaired for ${posters.games} game(s) ` +
             `(+${posters.added} frame(s)); ` +
+            `auto-added album frames removed: ${purged}; ` +
             `completion-time backfill ${
               durations.started ? `started for ${durations.total} game(s)` : 'not needed'
             }.`,
@@ -133,108 +141,163 @@ export class MaintenanceService implements OnApplicationBootstrap {
     }
   }
 
-    /**
-     * Guarantee every game's **cover** is in the rotation.
-     *
-     * ## What changed and why
-     *
-     * This used to top every game's rotation up to `min(2 + albumCount, 8)`,
-     * pulling in the game's own album screenshots. Running on every boot made it the
-     * loudest source of 「相册截图默认自动加入轮播」: a screenshot the user had never
-     * chosen was enrolled into the carousel and left unmarked as a user decision, so
-     * unticking it was silently undone on the next restart. That is exactly the
-     * 「勾选后无法取消」the user reported.
-     *
-     * The rule now follows 需求 21（「只有封面默认加入轮播…需求要的是「**可以**加入」，
-     * 不是「自动加入」」）: the cover is the only thing forced in. Album screenshots
-     * join only when the user ticks them in 「编辑海报」.
-     *
-     * Older versions could also switch ON an album row sitting at `in_slideshow = 0`
-     * with `slideshow_user_set = 0`. Nothing does that any more, so an unticked row
-     * stays unticked for good.
-     *
-     * Still runs on every boot rather than once: it is pure SQLite, it is cheap, and
-     * "runs once" is the wrong semantics for a repair whose target set grows as the
-     * user adds games. The write is idempotent — a cover already in the rotation
-     * reports 0.
-     *
-     * A marker is still written, for diagnosability only (`docker compose exec` can
-     * read it to answer "did this image ever repair the rotation?").
-     */
-    private repairPosterRotation(): { games: number; added: number } {
-      let candidates: { id: string; name: string }[] = [];
-      try {
-        // Games whose selected cover is missing from the rotation. One query for the
-        // whole library; no per-game scan.
-        candidates = this.db.all<{ id: string; name: string }>(`
-          SELECT g.id, g.name
-            FROM games g
-            JOIN game_posters p
-              ON p.game_id = g.id AND p.is_selected = 1
-           WHERE p.in_slideshow = 0
-        `);
-      } catch (err) {
-        this.logger.warn(`Poster rotation query failed: ${(err as Error)?.message}`);
-        return { games: 0, added: 0 };
-      }
-
-      let games = 0;
-      let added = 0;
-      for (const g of candidates) {
-        try {
-          const n = this.posters.ensureCoverInRotation(g.id);
-          if (n > 0) {
-            games += 1;
-            added += n;
-          }
-        } catch (err) {
-          // One bad game must not stop the sweep — the rest of the library still
-          // deserves its cover.
-          this.logger.warn(`Cover rotation repair failed for "${g.name}": ${(err as Error)?.message}`);
-        }
-      }
-
-      return { games, added };
+  /**
+   * Take the album screenshots the OLD rule auto-enrolled back OUT of the rotation.
+   *
+   * ## Why this exists
+   *
+   * The previous rule (`ensureRotationFloor`, target `min(2 + albumCount, 8)`) and
+   * the boot-time repair INSERTed album frames with
+   * `in_slideshow = 1, slideshow_user_set = 0`. Measured on the live library:
+   * 「poster rotation topped up for 39 game(s) (+268 frame(s))」. Those 268 frames
+   * are still enrolled — removing the rule does not retroactively undo what the old
+   * image already wrote, so without this pass the library keeps showing precisely
+   * the thing the user asked to stop: 「相册截图默认自动加入轮播」.
+   *
+   * ## Why this is safe
+   *
+   * `slideshow_user_set = 0` is the exact signature of "the machine decided this,
+   * the user never did":
+   *
+   *   - the old rule's INSERT / UPDATE never set it (verified against the previous
+   *     revision: `VALUES (…, 'media', …, 0, 1, 0, …)` — note the 0 for
+   *     `slideshow_user_set`);
+   *   - every user action sets it, including 「从相册添加」and unticking
+   *     (`PATCH … { inSlideshow: false }`).
+   *
+   * So this pass cannot touch a user's choice in either direction. It is also
+   * idempotent: after the first run there is nothing left with that signature.
+   *
+   * ## What it deliberately does NOT do
+   *
+   * It does not touch `source = 'scraped'` rows. Official artwork still defaults
+   * into the rotation (that half of 「所有刮取到的海报默认加入轮播」is unchanged) —
+   * only the album screenshots were ever the user's complaint.
+   *
+   * @returns how many rows were switched off.
+   */
+  private purgeAutoAddedAlbumFrames(): number {
+    try {
+      const row = this.db.get<{ c: number }>(
+        `SELECT COUNT(*) AS c FROM game_posters
+          WHERE source = 'media' AND in_slideshow = 1 AND slideshow_user_set = 0`,
+      );
+      const pending = row?.c ?? 0;
+      if (pending === 0) return 0;
+      this.db.run(
+        `UPDATE game_posters SET in_slideshow = 0
+          WHERE source = 'media' AND in_slideshow = 1 AND slideshow_user_set = 0`,
+      );
+      return pending;
+    } catch (err) {
+      // A failed cleanup must not abort the other repairs or block boot.
+      this.logger.warn(`Auto-added album frame purge failed: ${(err as Error)?.message}`);
+      return 0;
     }
+  }
 
   /**
-   * Re-ask the completion-time sources for every game that still has none.
+   * Guarantee every game's **cover** is in the rotation.
    *
-   * Marker-guarded because this one DOES hit the network, and the source is
-   * rate-limited: repeating a full-library sweep on every restart would be rude to
-   * the source and slow to boot for no benefit. Once the sweep has run, the
-   * settings card's 「一键批量补全」 covers games added later.
+   * ## What changed and why
+   *
+   * This used to top every game's rotation up to `min(2 + albumCount, 8)`,
+   * pulling in the game's own album screenshots. Running on every boot made it the
+   * loudest source of 「相册截图默认自动加入轮播」: a screenshot the user had never
+   * chosen was enrolled into the carousel and left unmarked as a user decision, so
+   * unticking it was silently undone on the next restart. That is exactly the
+   * 「勾选后无法取消」the user reported.
+   *
+   * The rule now follows 需求 21（「只有封面默认加入轮播…需求要的是「**可以**加入」，
+   * 不是「自动加入」」）: the cover is the only thing forced in. Album screenshots
+   * join only when the user ticks them in 「编辑海报」.
+   *
+   * Older versions could also switch ON an album row sitting at `in_slideshow = 0`
+   * with `slideshow_user_set = 0`. Nothing does that any more, so an unticked row
+   * stays unticked for good.
+   *
+   * Still runs on every boot rather than once: it is pure SQLite, it is cheap, and
+   * "runs once" is the wrong semantics for a repair whose target set grows as the
+   * user adds games. The write is idempotent — a cover already in the rotation
+   * reports 0.
+   *
+   * A marker is still written, for diagnosability only (`docker compose exec` can
+   * read it to answer "did this image ever repair the rotation?").
    */
-  private async repairDurations(): Promise<{ started: boolean; total: number }> {
-    if (this.settings.getValue(DURATION_MARKER)) {
-      return { started: false, total: 0 };
+  private repairPosterRotation(): { games: number; added: number } {
+    let candidates: { id: string; name: string }[] = [];
+    try {
+      // Games whose selected cover is missing from the rotation. One query for the
+      // whole library; no per-game scan.
+      candidates = this.db.all<{ id: string; name: string }>(`
+        SELECT g.id, g.name
+          FROM games g
+          JOIN game_posters p
+            ON p.game_id = g.id AND p.is_selected = 1
+         WHERE p.in_slideshow = 0
+      `);
+    } catch (err) {
+      this.logger.warn(`Poster rotation query failed: ${(err as Error)?.message}`);
+      return { games: 0, added: 0 };
     }
 
-    const missing =
-      this.db.get<{ c: number }>(
-        `SELECT COUNT(*) AS c FROM games
-          WHERE main_story_hours IS NULL
-             OR COALESCE(duration_source, '') <> 'hltb'`,
-      )?.c ?? 0;
-
-    // Record the marker even when there is nothing to do, so a library that is
-    // already complete does not re-query on every boot.
-    if (missing === 0) {
-      this.settings.setValue(DURATION_MARKER, JSON.stringify({ at: Date.now(), total: 0 }));
-      return { started: false, total: 0 };
+    let games = 0;
+    let added = 0;
+    for (const g of candidates) {
+      try {
+        const n = this.posters.ensureCoverInRotation(g.id);
+        if (n > 0) {
+          games += 1;
+          added += n;
+        }
+      } catch (err) {
+        // One bad game must not stop the sweep — the rest of the library still
+        // deserves its cover.
+        this.logger.warn(`Cover rotation repair failed for "${g.name}": ${(err as Error)?.message}`);
+      }
     }
 
-    this.logger.log(
-      `Completion-time backfill: ${missing} game(s) have no duration yet — ` +
-        `asking the sources in the background (first boot of this image only).`,
-    );
+    return { games, added };
+  }
 
-    const res = await this.games.backfillDurations();
+/**
+ * Re-ask the completion-time sources for every game that still has none.
+ *
+ * Marker-guarded because this one DOES hit the network, and the source is
+ * rate-limited: repeating a full-library sweep on every restart would be rude to
+ * the source and slow to boot for no benefit. Once the sweep has run, the
+ * settings card's 「一键批量补全」 covers games added later.
+ */
+private async repairDurations(): Promise<{ started: boolean; total: number }> {
+  if (this.settings.getValue(DURATION_MARKER)) {
+    return { started: false, total: 0 };
+  }
 
-    // Marked AFTER the job starts (not after it finishes): `backfillDurations`
-    // is a background bulk job, and marking earlier would risk a crash mid-sweep
-    // looking "done" forever.
-    this.settings.setValue(DURATION_MARKER, JSON.stringify({ at: Date.now(), total: missing }));
-    return res;
+  const missing =
+    this.db.get<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM games
+        WHERE main_story_hours IS NULL
+           OR COALESCE(duration_source, '') <> 'hltb'`,
+    )?.c ?? 0;
+
+  // Record the marker even when there is nothing to do, so a library that is
+  // already complete does not re-query on every boot.
+  if (missing === 0) {
+    this.settings.setValue(DURATION_MARKER, JSON.stringify({ at: Date.now(), total: 0 }));
+    return { started: false, total: 0 };
+  }
+
+  this.logger.log(
+    `Completion-time backfill: ${missing} game(s) have no duration yet — ` +
+      `asking the sources in the background (first boot of this image only).`,
+  );
+
+  const res = await this.games.backfillDurations();
+
+  // Marked AFTER the job starts (not after it finishes): `backfillDurations`
+  // is a background bulk job, and marking earlier would risk a crash mid-sweep
+  // looking "done" forever.
+  this.settings.setValue(DURATION_MARKER, JSON.stringify({ at: Date.now(), total: missing }));
+  return res;
   }
 }

@@ -122,7 +122,9 @@ fs.writeFileSync(
 );
 
 const app = spawn(process.execPath, [runJs], {
-  stdio: ['ignore', 'pipe', 'pipe'],
+  // stdout 必须透传：Nest 的 Logger 写 stdout，用 'pipe' 而不消费会把日志缓冲吞掉，
+  // 排查启动期修复时看不到任何输出（已踩过一次）。
+  stdio: ['ignore', 'inherit', 'pipe'],
   env: {
     ...process.env,
     DATA_DIR: DATA,
@@ -235,10 +237,31 @@ afterRefresh && afterRefresh.in_slideshow === 0
   ? ok('重新刮削/刷新后取消状态保留（in_slideshow 仍为 0）')
   : bad(`刷新后被改回 in_slideshow=${afterRefresh?.in_slideshow}`);
 
+// 造一条「旧规则遗留」的行，验证启动期清理会把它从轮播里摘掉。
+//
+// 旧实现（ensureRotationFloor / 启动期修复）插入相册帧时写的是
+// `in_slideshow = 1, slideshow_user_set = 0` —— 实测线上库就是
+// 「topped up for 39 game(s) (+268 frame(s))」。去掉规则不会撤回已经写下的数据，
+// 所以必须有一次清理，否则用户看到的仍是「相册截图自动进了轮播」。
+{
+  const d = db();
+  try {
+    const px = posterRows(gameId).find((r) => r.source === 'media');
+    const id = `legacy-auto-${Date.now()}`;
+    d.prepare(
+      `INSERT INTO game_posters
+         (id, game_id, url, source, media_id, is_selected, in_slideshow, slideshow_user_set, sort_order, created_at)
+       VALUES (?, ?, ?, 'media', ?, 0, 1, 0, 999, ?)`,
+    ).run(id, gameId, '/legacy-auto.png', px?.media_id ?? null, Date.now());
+    globalThis.__legacyId = id;
+    info(`已造一条旧规则遗留行（in_slideshow=1, slideshow_user_set=0）：${id.slice(0, 18)}…`);
+  } finally { d.close(); }
+}
+
 // 兜底逻辑（启动期修复）会不会把它打开 —— 直接调一次等价路径：重启实例。
 killAll();
 const app2 = spawn(process.execPath, [runJs], {
-  stdio: ['ignore', 'pipe', 'pipe'],
+  stdio: ['ignore', 'inherit', 'pipe'],
   env: {
     ...process.env,
     DATA_DIR: DATA, MEDIA_DIRS: MEDIA, WEB_DIST: path.join(ROOT, 'web/dist'),
@@ -254,6 +277,21 @@ app2.stderr.on('data', (d) => process.stderr.write(`   [app2:err] ${d}`));
 
 if (await waitUp(`${BASE}/api/health`, 80)) {
   ok('实例已重启（启动期数据修复开启）');
+
+  // 启动期修复是**异步**的：它要等首轮库扫描结束（`waitForScan`）才开始，
+  // 而 health 接口在那之前就已经应答了。直接查库会读到「还没修」的状态 ——
+  // 这不是缺陷，是测试的竞态。轮询等它落地。
+  const purgeDeadline = Date.now() + 60_000;
+  let purged = false;
+  while (Date.now() < purgeDeadline) {
+    if (posterRows(gameId).find((r) => r.id === globalThis.__legacyId)?.in_slideshow === 0) {
+      purged = true;
+      break;
+    }
+    await sleep(500);
+  }
+  info(`启动期清理${purged ? '已完成' : '在 60s 内未完成'}`);
+
   const afterBoot = posterRows(gameId).find((r) => r.id === target?.id);
   afterBoot && afterBoot.in_slideshow === 0
     ? ok('启动期修复后取消状态仍然保留 —— 这是「无法取消」的核心回归点')
@@ -263,6 +301,26 @@ if (await waitUp(`${BASE}/api/health`, 80)) {
   onCount === 0
     ? ok('没有任何相册截图被自动加进轮播（用户一张都没勾）')
     : bad(`启动后有 ${onCount} 张相册截图被自动加进轮播`);
+
+  // 旧规则遗留的自动补帧应被清理掉
+  const legacy = posterRows(gameId).find((r) => r.id === globalThis.__legacyId);
+  if (!legacy) {
+    bad('旧规则遗留行不见了（不该被删除，只应被移出轮播）');
+  } else if (legacy.in_slideshow === 0) {
+    ok('旧规则自动加入的相册帧已被启动期清理移出轮播（用户不必手动取消 268 帧）');
+  } else {
+    bad('旧规则遗留行仍在轮播里 —— 线上库会保持「相册截图自动进轮播」的旧状态');
+  }
+
+  // 这条行是测试自己造的假数据（url 是 /legacy-auto.png），留着会污染后面
+  // 「摘要海报数 == 登记海报数」的断言 —— 那是测试的账不平，不是产品的问题。
+  {
+    const d = db();
+    try {
+      d.prepare('DELETE FROM game_posters WHERE id = ?').run(globalThis.__legacyId);
+    } finally { d.close(); }
+    info('已删除测试用的遗留行，避免影响后续断言');
+  }
 } else {
   hint('实例重启超时，启动期修复断言已跳过');
 }
