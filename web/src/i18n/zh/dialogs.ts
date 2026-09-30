@@ -2,10 +2,13 @@
 export const dialogsZh: Record<string, string> = {
   // PosterDialog — "编辑海报"
   "dialogs.poster.title": "编辑海报 · {name}",
-  "dialogs.poster.displayMode": "卡片封面显示",
+  "dialogs.poster.displayMode": "详情页大图轮播",
   "dialogs.poster.modeStatic": "静态（单张）",
   "dialogs.poster.modeSlideshow": "轮播（自动切换）",
-  "dialogs.poster.slideshowCount": "已勾选 {n} 张参与轮播",
+  "dialogs.poster.slideshowCount": "已勾选 {n} 张参与详情页大图轮播",
+  "dialogs.poster.slideshowHint":
+    "下面「轮播」勾选决定哪些图进入**详情页大图区**的轮播（首页卡片用的是全部海报，不受这里影响）。相册截图默认不勾选，只有你主动勾选才会加入。",
+  "dialogs.poster.slideshowItemHint": "勾选后这张进入详情页大图轮播；取消勾选即移出，不会被重新加回。",
   "dialogs.poster.tabUpload": "本地图片",
   "dialogs.poster.tabAlbum": "从相册选择",
   "dialogs.poster.chooseFile": "选择图片上传",

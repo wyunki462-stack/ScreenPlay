@@ -3,7 +3,7 @@
  *
  * Why this exists at all: fixing a provider does NOT repair an existing library.
  * A game whose `last_meta_refresh` is already set is never re-scraped by a scan,
- * and `ensureRotationFloor()` only runs from inside metadata persistence — so a
+ * and `ensureCoverInRotation()` only runs from inside metadata persistence — so a
  * library that was built before those fixes keeps the old symptoms forever:
  *
  *   - 「其余所有游戏只有默认单张封面」  → the poster rotation was never topped up;
@@ -133,59 +133,69 @@ export class MaintenanceService implements OnApplicationBootstrap {
     }
   }
 
-  /**
-   * Top every game's poster rotation up to the floor.
-   *
-   * Runs on EVERY boot rather than once, because it is cheap (pure SQLite, no
-   * network) and because "runs once" is the wrong semantics for a repair whose
-   * target set grows: a library the user adds games to next week would otherwise
-   * never get the treatment. `ensureRotationFloor()` only ever ADDS album frames
-   * and never touches a `slideshow_user_set` exclusion or a user's chosen cover,
-   * so repeating it is a no-op once a game is at the floor.
-   *
-   * A marker is still written, for diagnosability only (`docker compose exec`
-   * can read it to answer "did this image ever repair the rotation?").
-   */
-  private repairPosterRotation(): { games: number; added: number } {
-    let candidates: { id: string; name: string }[] = [];
-    try {
-      // The `target = 2 + albumCount` expression is duplicated from
-      // PostersService.ensureRotationFloor on purpose: selecting the candidate
-      // set has to agree with what that method will do, and it is not exported.
-      // Kept here as one SQL statement so a library of thousands of games costs
-      // one query instead of thousands.
-      candidates = this.db.all<{ id: string; name: string }>(`
-        SELECT g.id, g.name
-          FROM games g
-         WHERE (SELECT COUNT(*) FROM game_posters p
-                 WHERE p.game_id = g.id AND p.in_slideshow = 1)
-             < MIN(2 + (SELECT COUNT(*) FROM media m
-                         WHERE m.game_id = g.id AND m.type = 'image'), 8)
-      `);
-    } catch (err) {
-      this.logger.warn(`Poster rotation query failed: ${(err as Error)?.message}`);
-      return { games: 0, added: 0 };
-    }
-
-    let games = 0;
-    let added = 0;
-    for (const g of candidates) {
+    /**
+     * Guarantee every game's **cover** is in the rotation.
+     *
+     * ## What changed and why
+     *
+     * This used to top every game's rotation up to `min(2 + albumCount, 8)`,
+     * pulling in the game's own album screenshots. Running on every boot made it the
+     * loudest source of 「相册截图默认自动加入轮播」: a screenshot the user had never
+     * chosen was enrolled into the carousel and left unmarked as a user decision, so
+     * unticking it was silently undone on the next restart. That is exactly the
+     * 「勾选后无法取消」the user reported.
+     *
+     * The rule now follows 需求 21（「只有封面默认加入轮播…需求要的是「**可以**加入」，
+     * 不是「自动加入」」）: the cover is the only thing forced in. Album screenshots
+     * join only when the user ticks them in 「编辑海报」.
+     *
+     * Older versions could also switch ON an album row sitting at `in_slideshow = 0`
+     * with `slideshow_user_set = 0`. Nothing does that any more, so an unticked row
+     * stays unticked for good.
+     *
+     * Still runs on every boot rather than once: it is pure SQLite, it is cheap, and
+     * "runs once" is the wrong semantics for a repair whose target set grows as the
+     * user adds games. The write is idempotent — a cover already in the rotation
+     * reports 0.
+     *
+     * A marker is still written, for diagnosability only (`docker compose exec` can
+     * read it to answer "did this image ever repair the rotation?").
+     */
+    private repairPosterRotation(): { games: number; added: number } {
+      let candidates: { id: string; name: string }[] = [];
       try {
-        const n = this.posters.ensureRotationFloor(g.id);
-        if (n > 0) {
-          games += 1;
-          added += n;
-        }
+        // Games whose selected cover is missing from the rotation. One query for the
+        // whole library; no per-game scan.
+        candidates = this.db.all<{ id: string; name: string }>(`
+          SELECT g.id, g.name
+            FROM games g
+            JOIN game_posters p
+              ON p.game_id = g.id AND p.is_selected = 1
+           WHERE p.in_slideshow = 0
+        `);
       } catch (err) {
-        // One bad game must not stop the sweep — the rest of the library still
-        // deserves its frames.
-        this.logger.warn(`Rotation top-up failed for "${g.name}": ${(err as Error)?.message}`);
+        this.logger.warn(`Poster rotation query failed: ${(err as Error)?.message}`);
+        return { games: 0, added: 0 };
       }
-    }
 
-    this.settings.setValue(ROTATION_MARKER, JSON.stringify({ at: Date.now(), games, added }));
-    return { games, added };
-  }
+      let games = 0;
+      let added = 0;
+      for (const g of candidates) {
+        try {
+          const n = this.posters.ensureCoverInRotation(g.id);
+          if (n > 0) {
+            games += 1;
+            added += n;
+          }
+        } catch (err) {
+          // One bad game must not stop the sweep — the rest of the library still
+          // deserves its cover.
+          this.logger.warn(`Cover rotation repair failed for "${g.name}": ${(err as Error)?.message}`);
+        }
+      }
+
+      return { games, added };
+    }
 
   /**
    * Re-ask the completion-time sources for every game that still has none.

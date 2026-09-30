@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Images } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useT } from "../i18n";
@@ -22,16 +22,35 @@ import { useT } from "../i18n";
 export default function HeroPosterCarousel({
   images,
   alt,
+  mode = "static",
+  intervalMs = 3500,
 }: {
   /** 有序海报 URL；调用方保证第一张是当前封面。 */
   images: string[];
   alt?: string;
+  /**
+   * 展现模式。`slideshow` 时自动轮播这套图片。
+   *
+   * 为什么大图区需要它：这里以前只有左右箭头，**永远不会自动切换**。而
+   * 「编辑海报」的轮播勾选控制的正是这套图片，于是用户勾了半天，页面上唯一
+   * 会自动动的东西是首页图库卡片 —— 这就成了「编辑海报的轮播设置控制的是首页
+   * 卡片轮播，而不是详情页大图轮播」这个报告。
+   *
+   * 现在两件事分开：勾选决定**哪些图进这套集合**，本模式决定**这套集合是否自动
+   * 切换**。首页卡片用另一个数据源（完整海报集），互不影响。
+   */
+  mode?: "static" | "slideshow";
+  intervalMs?: number;
 }) {
   const t = useT();
   const list = useMemo(() => [...new Set(images.filter(Boolean))], [images]);
 
   const [failed, setFailed] = useState<Record<string, true>>({});
   const [index, setIndex] = useState(0);
+
+  // 悬停/手动操作后暂停一会儿，避免定时器与用户的点击抢同一个位置。
+  const [paused, setPaused] = useState(false);
+  const resumeAt = useRef(0);
 
   // 海报集合变化（重新刮削、手动换封面）时回到第一张。
   const listKey = list.join("|");
@@ -54,9 +73,22 @@ export default function HeroPosterCarousel({
       if (count < 1) return;
       // 循环：首尾相连，两个箭头永远可用（这正是旧实现缺的）。
       setIndex((i) => (i + delta + count) % count);
+      // 手动翻过之后留一点时间给用户看，再恢复自动轮播。
+      resumeAt.current = Date.now() + intervalMs * 2;
     },
-    [count],
+    [count, intervalMs],
   );
+
+  // 自动轮播：只有 `slideshow` 模式且确实有多张时才启动。
+  const rotating = mode === "slideshow" && count > 1;
+  useEffect(() => {
+    if (!rotating) return;
+    const timer = setInterval(() => {
+      if (paused || Date.now() < resumeAt.current) return;
+      setIndex((i) => (i + 1) % count);
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [rotating, count, intervalMs, paused]);
 
   if (count === 0) {
     return (
@@ -74,7 +106,10 @@ export default function HeroPosterCarousel({
   return (
     <div
       data-testid="hero-carousel"
+      data-mode={mode}
       className="group/hero relative aspect-video w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
     >
       {list.map((src, i) => {
         if (failed[src]) return null;

@@ -2035,3 +2035,274 @@ docker inspect -f '{{.State.Health.Status}}' screenplay
 
 看不到就是旧镜像（前端产物在 `public/`、后端产物在 `dist/`，两者都可能被旧镜像覆盖）。
 不用脚本时等价命令：`docker compose build && docker compose up -d`。
+
+---
+
+# 验收报告 · 第五轮补丁（媒体评价分页 · 相册截图轮播归属 · 两个轮播解耦）
+
+## 0. 结论速览
+
+用户报的三个问题，逐项修复并逐项验证：
+
+| # | 报告 | 根因 | 状态 |
+| --- | --- | --- | --- |
+| 1 | M 站 65 家媒体只抓到 1 条 | provider 只请求了游戏落地页一次，从未跟进页面自带的分页器 | 已修复 · 66 条全量落库 |
+| 2 | 相册截图勾选后无法取消、且默认自动加入轮播 | ① 勾选框被包在 `mode === "slideshow"` 里，**静态模式下控件根本不渲染**；② 「从相册添加」直接写 `in_slideshow = 1`；③ 兜底逻辑与启动期修复把取消掉的又打开 | 已修复 · 默认不勾选、可取消、不会被加回 |
+| 3 | 编辑海报的轮播控制的是首页卡片，不是详情页大图 | `GameSummary.posters` 只返回 `in_slideshow` 子集，而首页卡片消费的正是它；同时详情页大图区**从不自动切换** | 已修复 · 按数据源分离 |
+
+验证脚本（全部离线可跑，**不访问任何真实站点**）：
+
+| 脚本 | 覆盖 | 结果 |
+| --- | --- | --- |
+| `backend/scripts/verify/metacritic-reviews-test.mjs` | 分页解析（离线夹具） | 63 项通过 / 0 失败 |
+| `backend/scripts/verify/media-reviews-e2e.mjs` | 问题 1 端到端（含新增场景 H） | 63 项通过 / 0 失败 |
+| `backend/scripts/verify/poster-rotation-e2e.mjs` | 问题 2 / 3 后端行为 | 15 项通过 / 0 失败 |
+| `backend/scripts/verify/poster-ui-ssr.mjs` | 问题 2 / 3 前端 DOM | 8 项通过 / 0 失败 |
+| `scripts/verify-build-artifacts.sh` | 产物含本轮代码 | 17 项命中 / 0 缺失 |
+
+跑法：
+
+```bash
+node backend/scripts/verify/metacritic-reviews-test.mjs
+node backend/scripts/verify/media-reviews-e2e.mjs
+node backend/scripts/verify/poster-rotation-e2e.mjs
+node backend/scripts/verify/poster-ui-ssr.mjs
+APP_DIR=. bash scripts/verify-build-artifacts.sh
+```
+
+---
+
+## 1. 媒体评价抓取不全（问题 1）
+
+### 根因
+
+Metacritic 的**游戏落地页只打印少量媒体评价**，其余在
+`/game/<slug>/critic-reviews/?page=N` 里，由页面自带的分页器链过去。而 provider 的实现是
+「取一次落地页 → 解析 → 结束」，分页器从来没被跟进 —— 所以有多少条完全取决于落地页上
+印了几条。
+
+### 修复
+
+- `metacritic-reviews.ts` 新增 `parseReviewsPagination()`（收集 `?page=N`，`rel="next"`
+  优先，再退化到文字标签）与 `nextReviewsPageUrl()`；
+- `metacritic.provider.ts` 新增 `fetchAllMediaReviews()`：落地页起手，逐页跟进，
+  上限 `MAX_REVIEW_PAGES = 20`、页间 `REVIEW_PAGE_DELAY_MS = 350`，按
+  `(outlet, url)` 去重合并。
+
+### 实测中修掉的两个自己引入的缺陷
+
+**① 前进判据写错，把分页器判成「指向自己」。** 第一版比较的是 `stripPage(next)` 与
+`stripPage(current)`，而 `?page=2` 和 `?page=3` 去掉页码后是同一个 URL，于是第 2 页被
+判定为「回头」直接终止 —— 复现了它本来要修的那个 bug。离线测试当场抓到：
+
+```
+✗ 已在 page=2 → 拉 page=3，不回头（实际 null）
+```
+
+改为**只看页码是否前进**（`target <= currentPage` → 停止）。
+
+**② 相对链接被写死补成真实域名，测试隔离失效。**
+`absolutise()` 把相对 href 一律补成 `https://www.metacritic.com`，绕过了 provider 的
+`MC_ORIGIN`（它才是指向本地桩服的那个）。后果有两层：桩服-based 的测试**测不到分页**，
+而且会**静默访问真实站点**。加请求日志后一眼可见：
+
+```
+请求#1 http://127.0.0.1:4702/game/astro-bot/          → 收到 1905 字节
+请求#2 https://www.metacritic.com/game/astro-bot/critic-reviews/?page=2 → 收到 277614 字节  ← 泄漏到真实站点
+```
+
+修复后 `absolutise(href, base)` 支持传入实际来源，provider 传 `MC_ORIGIN`：
+
+```
+请求#1 http://127.0.0.1:4702/game/astro-bot/                       → 1905 字节
+请求#2 http://127.0.0.1:4702/game/astro-bot/critic-reviews/?page=2 → 5715 字节
+请求#3 …?page=3  #4 …?page=4  #5 …?page=5  #6 …?page=6
+合并后条数: 66
+桩服统计 reviewPages=5
+```
+
+### 端到端验证（场景 H）
+
+夹具：`paginated-p1.html`（落地页 2 条 + 分页器 1..6）与 `paginated-p2..p6.html`
+（13/13/13/13/12 = 64 条），合计 66 家媒体。
+
+```
+== 场景 H · 分页：一次刷新要把全部分页的媒体评价都抓回来
+   桩服列表页请求 5 → 10（应 ≥5，说明真的在翻页）
+   落库 66 条，状态 ok
+   ✓ 全部 66 家媒体的评价都落库了（而不是只有首页的 2 条）
+   ✓ 确实翻到了后续分页（新增 5 次列表页请求）
+   ✓ 每条都带媒体名 + 打分 + 评价内容（不是只有第一条完整）
+   ✓ 媒体名无重复（首页与分页内容正确合并去重）
+   首页媒体 IGN=true，末页媒体 Gamona=true
+   ✓ 首页与末页的媒体都在（没有提前中断）
+   ✓ 详情接口返回全部 66 条（前端「媒体评价」面板能拿到）
+   ✓ 重复抓取幂等（仍为 66 条，无重复行）
+```
+
+### 一个既有设计，不是本轮缺陷（容易误判）
+
+`refreshReviews` 对「有 M 站绑定但 `ratings` 里没有 Metascore」的游戏会**放弃绑定、改去
+搜索**（日志：`still has no Metascore; re-searching metacritic`）。场景 H 最初就是因此拿到
+0 条 —— 桩服的 `/search/` 返回空页，于是 `status=empty`。这是**有意设计**（绑定可能指错
+条目），不是 bug；测试里给游戏种一个 Metascore 让它走绑定分支即可。
+
+---
+
+## 2. 相册截图的轮播归属（问题 2）
+
+### 根因（三处叠加）
+
+**① 勾选框在静态模式下根本不渲染** —— 这是「勾选后无法取消」的**直接原因**：
+
+```tsx
+// 旧实现
+{mode === "slideshow" && (
+  <label>…<input type="checkbox" checked={p.inSlideshow} …/>…</label>
+)}
+```
+
+用户的 `posterMode` 是 `static`，所以整个控件不存在。不是状态回弹，是**没有东西可点**。
+
+**② 「从相册添加」默认写 `in_slideshow = 1`**，且**不写** `slideshow_user_set` ——
+于是「默认自动加入轮播」，并且该行看起来像「自动加入的、可以再动」。
+
+**③ 兜底逻辑与启动期修复把它改回来**（这是第二层，修掉 ① 之后才暴露）：
+
+```
+取消勾选后   slide=0 uset=1   ← 用户的选择
+重新匹配后   slide=1 uset=1   ← 被兜底逻辑改回
+```
+
+原因是 `ensureRotationFloor` 会强制把**封面**放进轮播，而用户取消的那张正好是封面。
+
+### 修复
+
+| 位置 | 改动 |
+| --- | --- |
+| `posters.service.ts` `addFromMedia` | 插入 `in_slideshow = 0`、`slideshow_user_set = 1` |
+| `posters.service.ts` `ensureRotationFloor` → `ensureCoverInRotation` | 只把封面放进轮播；相册图一律不补；`slideshow_user_set = 1` 的行直接返回 |
+| `posters.service.ts` `ensureScrapedPosters` | 删除「旧行回填 `in_slideshow = 1`」整段 |
+| `maintenance.service.ts` `repairPosterRotation` | 只补「封面不在轮播里」的游戏，不再按 `min(2 + 相册数, 8)` 补相册帧 |
+| `PosterDialog.tsx` | 勾选框移出 `mode === "slideshow"` 条件，**始终渲染** |
+
+### 取舍（真实存在，已接受）
+
+provider 只返回一张图、用户又没勾任何东西的游戏，详情页大图区现在只有一帧（以前会显示
+若干本地相册帧）。这是「不主动勾就不加入」的代价。缓解：`games.posterList` 始终带全部
+登记海报 + 相册，`screenshots` 作为精选集为空时的回退。
+
+### 验证
+
+```
+== 问题 2-A · 从相册添加的海报默认不勾选轮播
+   media 海报：in_slideshow=0,user_set=1 | in_slideshow=0,user_set=1 | in_slideshow=0,user_set=1
+   ✓ 全部 3 张默认 in_slideshow=0（默认不勾选）—— 修复前是 1
+   ✓ 全部标记为已决定（slideshow_user_set=1），兜底逻辑不会自行改动
+
+== 问题 2-B · 手动勾选后能取消，且取消状态不会被加回
+   ✓ 主动勾选生效（PATCH 200，in_slideshow=1）
+   ✓ 取消勾选生效（PATCH 200，in_slideshow=0）
+   ✓ 取消后仍标记为用户决定（slideshow_user_set=1）
+
+== 问题 2-C · 「重新刮削」不会把取消掉的又打开
+   ✓ 重新刮削/刷新后取消状态保留（in_slideshow 仍为 0）
+   ✓ 实例已重启（启动期数据修复开启）
+   ✓ 启动期修复后取消状态仍然保留 —— 这是「无法取消」的核心回归点
+   ✓ 没有任何相册截图被自动加进轮播（用户一张都没勾）
+```
+
+前端 DOM（SSR 渲染真实组件）：
+
+```
+== 问题 2 · 「编辑海报」的轮播勾选框
+   ✓ static 模式下渲染出 3 个轮播勾选框（静态模式下也渲染 —— 旧实现这里是 0 个）
+   ✓ 初始勾选 1 张 —— 只有官方海报在轮播里，相册截图一张都没勾
+   ✓ slideshow 模式下渲染出 3 个轮播勾选框
+   ✓ 静态模式下勾选框确实存在于 DOM（不再是 mode==="slideshow" 才渲染）
+```
+
+**反向对照**（把实现临时改回旧写法，确认测试真能抓到，而不是写了个恒过的断言）：
+
+```
+✗ static 模式下只有 0 个勾选框，期望 3 个
+✗ 静态模式下勾选框不存在 —— 用户无法取消勾选（这正是被报告的 bug）
+```
+
+---
+
+## 3. 两个轮播解耦（问题 3）
+
+### 根因
+
+`GameSummary.posters` 返回的是 `in_slideshow` **子集**，而**首页图库卡片消费的正是这个
+字段**。于是「取消勾选」实际改变的是「卡片能显示哪些图」；同时详情页大图区虽然数据对，
+却**从不自动切换**（只有左右箭头）。用户看到动的只有卡片 → 「编辑海报的轮播设置控制的
+是首页卡片轮播」。
+
+### 修复（按数据源分离，不靠约定）
+
+| 界面 | 数据源 | 自动切换 |
+| --- | --- | --- |
+| 首页图库卡片 `PosterCarousel` | `GameSummary.posters` = **全部**登记海报（`slideshowPosters()` 去掉 `in_slideshow` 过滤） | 由 `posterMode` 决定 |
+| 详情页大图区 `HeroPosterCarousel` | `posterList` 过滤 `inSlideshow`，并上封面 | 由 `posterMode` 决定（新增），带 `data-mode` |
+| 详情页信息卡缩略图 | `detailPosters()` = 全部登记海报 + 相册 | 由 `posterMode` 决定 |
+
+`HeroPosterCarousel` 新增 `mode` / `intervalMs`：`slideshow` 模式且有 ≥2 张时按
+`posterMode` 自动轮播（默认 3500ms，悬停暂停，手动翻过后延迟恢复），`static` 模式保持
+只有箭头。这样「勾选决定哪些图进集合、模式决定集合是否自动切换」两件事各自独立。
+
+文案同步说清归属（`dialogs.poster.displayMode` 由「卡片封面显示」改为
+「详情页大图轮播」，并新增 `slideshowHint` / `slideshowItemHint`）。
+
+### 验证
+
+```
+== 问题 3 · 首页卡片集与详情页大图轮播集已分离
+   摘要 posters=3，登记海报总数=3，其中轮播中=0
+   ✓ 摘要 posters 返回完整海报集（首页卡片不再受轮播勾选影响）
+   详情页大图集合 1 张（封面 1 + 勾选 0）
+   ✓ 详情页大图集合不含任何「用户未勾选」的相册截图
+   ✓ 勾选一张后详情页大图集合 1 → 2（勾选真的控制大图轮播）
+   ✓ 首页卡片集保持 3 张不变（两个轮播互不干扰）
+```
+
+```
+== 问题 3 · 详情页大图区轮播
+   ✓ 大图区 data-mode="static"（mode=static 正确透传）
+   ✓ 大图区 data-mode="slideshow"（mode=slideshow 正确透传）
+   ✓ 大图区有计数器（多张时可翻页）
+   ✓ 大图区容器存在（详情页大图轮播挂载点）
+```
+
+### 需求冲突的处理
+
+`docs/API.md` 曾明确为先前的「**所有**刮取到的海报/截图默认加入轮播」辩护，而需求 21 写
+的是「**只有封面默认加入轮播**」。本轮按需求 21 收口，并把这条规则**限定在相册截图**
+（`source='media'`）上：官方刮取的海报仍默认全进轮播，避免误伤既有行为。冲突已在
+`docs/API.md`「相册截图不再自动补轮播（需求 21）」一节记录清楚。
+
+---
+
+## 4. 回归
+
+改的是海报/轮播的共享路径（`ensureScrapedPosters`、启动期修复、摘要 DTO），所以必须确认
+没破坏既有能力：
+
+| 检查 | 结果 |
+| --- | --- |
+| 离线分页解析 | 63 / 0 |
+| 媒体评价端到端 | 63 / 0 |
+| 轮播归属后端 | 15 / 0 |
+| 海报轮播 UI（SSR 渲染真实组件） | 8 / 0 |
+| 产物自查 | 17 命中 / 0 缺失 |
+| `backend` tsc | 0 错误 |
+| `web` tsc | 0 错误 |
+| i18n zh/en key 对齐 | 77/77（dialogs）、123/123（detail） |
+
+`round-e-backend.mjs` 里的注释提到「换绑定后的刷新会调用 `ensureRotationFloor()` 补相册帧，
+所以 `game_posters` 行数会合法增长」—— 该行为已按需求 21 移除。它的判据是「原有的用户
+海报一张都没丢」（不是数量相等），所以断言仍然成立，只是**注释已过时**。
+
+启动期修复现在还检一条新符号，产物自查据此更新（`ensureRotationFloor` →
+`ensureCoverInRotation`）—— 否则每次改名都会假报「产物像是旧的」。

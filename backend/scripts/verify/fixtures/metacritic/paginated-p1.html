@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Astro Bot Reviews - Metacritic</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "VideoGame",
+        "name": "Astro Bot",
+        "aggregateRating": {
+          "@type": "AggregateRating",
+          "ratingValue": 94,
+          "reviewCount": 65
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1 class="hero-title__text">Astro Bot</h1>
+
+    <!-- 首页只印出前几条媒体评价（真实站点行为），其余在分页里 -->
+    <div class="c-site-review">
+      <div class="c-site-review__critic"><a href="/critic/ign/">IGN</a></div>
+      <div class="c-site-review__score">94</div>
+      <div class="c-site-review__review-quote">A joyful, inventive platformer that understands exactly what makes the genre sing.</div>
+      <div class="c-site-review__platform">PlayStation 5</div>
+      <time datetime="2024-09-05">Sep 5, 2024</time>
+    </div>
+
+    <div class="c-site-review">
+      <div class="c-site-review__critic"><a href="/critic/gamespot/">GameSpot</a></div>
+      <div class="c-site-review__score">90</div>
+      <div class="c-site-review__review-quote">Endlessly charming, and one of the most polished platformers in years.</div>
+      <div class="c-site-review__platform">PlayStation 5</div>
+    </div>
+
+    <!-- 分页器：这是「抓不全」的根因所在 —— 其余 ~63 条挂在 page=2..5 -->
+    <div class="c-filter-bar__review-filters">
+      <nav class="c-pagination" aria-label="Pagination">
+        <a href="/game/astro-bot/critic-reviews/?page=1" rel="prev">1</a>
+        <a href="/game/astro-bot/critic-reviews/?page=2" rel="next">2</a>
+        <a href="/game/astro-bot/critic-reviews/?page=3">3</a>
+        <a href="/game/astro-bot/critic-reviews/?page=4">4</a>
+        <a href="/game/astro-bot/critic-reviews/?page=5">5</a>
+        <span aria-current="page">1</span>
+      </nav>
+    </div>
+  </body>
+</html>

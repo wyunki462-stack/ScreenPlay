@@ -199,11 +199,34 @@ export class GamesService {
     return this.platformsOf(r);
   }
 
-  /** Poster URLs participating in the slideshow (feature 5). */
+  /**
+   * Every registered poster URL for a game — the **card / gallery** set.
+   *
+   * This deliberately returns the full set rather than the `in_slideshow` subset.
+   * It used to return only the slideshow rows, which conflated two different
+   * things and produced the reported defect 「编辑海报的轮播设置控制的是首页图库
+   * 卡片轮播，而不是详情页的大图轮播」: because the gallery card consumed this
+   * field, unticking a poster in 「编辑海报」changed *which pictures the card
+   * could show*, while the detail page's large carousel — the thing the checkbox
+   * is supposed to curate — was not what the user was watching change.
+   *
+   * The two carousels are now separated by data source, not just by intent:
+   *
+   *   - **首页图库卡片** (`GameCard`) → this field: cover first, then every
+   *     registered poster. Browsable with its arrows; auto-advances only according
+   *     to the game's 展现模式 (`posterMode`).
+   *   - **详情页大图区** (`HeroPosterCarousel`) → `posterList` filtered on
+   *     `inSlideshow`, i.e. exactly what 「编辑海报」shows ticked, plus the cover.
+   *
+   * So ticking/unticking a poster changes the detail-page carousel and leaves the
+   * card set alone, and the two can no longer drift in or out of sync by accident.
+   */
   private slideshowPosters(r: GameRow): string[] {
     const rows = this.db.all<{ url: string; source: string; id: string; media_id: string | null }>(
+      // No `in_slideshow` filter here — see the docblock: this is the card set.
+      // Cover first so it is always the frame the gallery shows.
       `SELECT id, url, source, media_id FROM game_posters
-        WHERE game_id = ? AND in_slideshow = 1
+        WHERE game_id = ?
         ORDER BY is_selected DESC, sort_order ASC, created_at ASC`,
       [r.id],
     );

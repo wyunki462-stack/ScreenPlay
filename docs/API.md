@@ -833,10 +833,10 @@ provider 返回的片段只有在**确实带有该来源应提供的数据**时�
 
 1. **`ensureScrapedPosters` 注册全部官方图**（含截图），且**默认全部进轮播**
    （`in_slideshow = 1`）；
-2. **`ensureRotationFloor` 兜底**：官方图不足时，从游戏自己的相册截图补齐轮播，
-   目标 `min(2 + 相册图数, 8)`。相册图是本地文件、一定加载得出来，所以即使外部 CDN
-   抖动，大图区也有可翻的帧；
-3. **前端不额外过滤**，只展示 `in_slideshow` 集合。
+2. ~~**`ensureRotationFloor` 兜底**：官方图不足时，从游戏自己的相册截图补齐轮播，
+   目标 `min(2 + 相册图数, 8)`~~ → **已移除**，见下方「相册截图不再自动补轮播」；
+3. **前端不额外过滤**，只展示 `in_slideshow` 集合（详情页大图区）；首页图库卡片走
+   另一份数据（`GameSummary.posters` = 全部登记海报），两者互不影响。
 
 ```bash
 # 逐项确认某个游戏是否真的能翻
@@ -850,7 +850,8 @@ curl -s http://<主机>:3001/api/games/<gameId>/posters \
 而不只是封面：调用方传入 `[封面, ...screenshots]`，封面排在第一位。
 
 - 只有封面能在用户未选过封面时占据封面位；
-- **所有**刮取到的海报/截图默认加入轮播（`in_slideshow = 1`）；
+- **所有**刮取到的**官方**海报/截图默认加入轮播（`in_slideshow = 1`）—— 注意这条只针对
+  `source='scraped'`。**从相册添加的截图默认不加入**，见下方；
 - **这里从不删除任何行**。曾经的剪枝逻辑用「封面原始字符串是否还在本次入参里」判断
   海报是否过时，而一次刮削会写入多个 provider 的分片、其中带封面的分片彼此不一致，
   于是后一个分片把前一个刚登记的官方截图整批删掉了 —— 实测
@@ -858,18 +859,59 @@ curl -s http://<主机>:3001/api/games/<gameId>/posters \
   20/20 个游戏最终都只剩 1 张在轮播。这就是「只有 007 和宝可梦能翻」的根因；
 - 身份变更（用户手动换绑到另一个游戏）由 `resetForRematch()` 负责清理，**这是唯一的
   清理入口**，它按游戏 id 整体重置，不会误伤同一身份的其它海报；
-- 兼容旧库：扫描时留下的、用户从未动过的旧行会被回填为 `in_slideshow = 1`，
-  所以升级后不需要重新刮削就能恢复轮播。
+- ~~兼容旧库：扫描时留下的、用户从未动过的旧行会被回填为 `in_slideshow = 1`~~
+  → **已移除**。回填会把用户刚取消掉的又打开，是「勾选后无法取消」的来源之一。
+
+### 相册截图不再自动补轮播（需求 21）
+
+这一版把「谁能自动进轮播」收到了一条规则上：**只有封面默认加入，其余一律等用户勾选**。
+
+改之前的行为（两个地方都在自动加相册截图）：
+
+| 位置 | 旧行为 | 现在 |
+| --- | --- | --- |
+| `POST /posters/from-media`（「从相册添加」） | 插入 `in_slideshow = 1`，且不标记用户决定 | 插入 `in_slideshow = 0` 且 `slideshow_user_set = 1` |
+| `ensureRotationFloor`（刮削后兜底） | 相册图不足时自动补到 `min(2 + 相册数, 8)` | 改名为 `ensureCoverInRotation`，**只把封面放进轮播**，不碰相册图 |
+| 启动期 `repairPosterRotation` | 每次开机都按上面的目标补相册帧 | 只补「封面不在轮播里」的游戏 |
+| `ensureScrapedPosters` 的旧行回填 | 把 `slideshow_user_set = 0` 的旧行打开 | 整段删除 |
+
+**取舍（真实存在，已接受）**：provider 只返回一张图、用户又没勾任何东西的游戏，详情页
+大图区现在只有一帧（以前会显示若干本地相册帧）。这是「不主动勾就不加入」的代价。缓解
+措施：`games.posterList` 始终带全部登记海报 + 相册，所以「编辑海报」里永远能勾到它们；
+详情页在大图精选集为空时回退到 `screenshots`。
+
+**封面也会尊重用户**：`ensureCoverInRotation` 遇到 `slideshow_user_set = 1` 的行直接返回，
+不再强推。否则「用户取消勾选的正好是封面」时，每次刷新都会被改回来 —— 实测就是这样：
+
+```
+取消勾选后   slide=0 uset=1   ← 用户的选择
+重新匹配后   slide=1 uset=1   ← 被兜底逻辑改回（修复前）
+```
 
 用户配置的保护由两个**语义不同**的列承担，不要混用：
 
 | 列 | 含义 | 谁写 |
 | --- | --- | --- |
 | `is_user_choice` | 用户把这张**设为封面** | `POST /api/games/:id/posters/select` |
-| `slideshow_user_set` | 用户**亲自决定过**这张的轮播归属 | `PATCH /api/games/:id/posters/:posterId` |
+| `slideshow_user_set` | 用户**亲自决定过**这张的轮播归属（勾或取消都算） | `PATCH /api/games/:id/posters/:posterId`，以及「从相册添加」 |
 
-`ensureScrapedPosters` / `ensureRotationFloor` 只回填 `slideshow_user_set = 0` 的行，
+`ensureScrapedPosters` / `ensureCoverInRotation` 只回填 `slideshow_user_set = 0` 的行，
 用户手动关掉的（`in_slideshow = 0` 且 `slideshow_user_set = 1`）**永远不会被自动打开**。
+
+### 两个轮播互不相干
+
+「编辑海报」里的轮播勾选只决定**详情页大图区**显示哪些图；首页图库卡片用的是另一份
+数据，不受勾选影响。前端消费方式：
+
+| 界面 | 数据源 | 自动切换 |
+| --- | --- | --- |
+| 首页图库卡片 `PosterCarousel` | `GameSummary.posters`（`slideshowPosters()` → **全部**登记海报，封面优先） | 由 `posterMode` 决定 |
+| 详情页大图区 `HeroPosterCarousel` | `posterList` 过滤 `inSlideshow`，并上封面 | 由 `posterMode` 决定，且带 `data-mode` |
+| 详情页信息卡缩略图 | `detailPosters()`（全部登记海报 + 相册） | 由 `posterMode` 决定 |
+
+> 历史坑：`GameSummary.posters` 以前只返回 `in_slideshow` 的子集，而首页卡片消费的正是
+> 它 —— 于是「取消勾选」改的是**卡片能显示哪些图**，用户看到动的却是卡片，而勾选框声称
+> 控制的详情页大图什么都没变。现在按数据源分离，不靠约定。
 
 弹窗本来就按 `source` 分组，所以官方海报会统一归入「官方刮取」一组。
 

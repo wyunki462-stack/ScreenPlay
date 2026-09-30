@@ -17,7 +17,15 @@ import { isTransientNetworkError } from '../../common/http/proxy-config';
 import { SettingsService } from '../../settings/settings.service';
 import { GameRecognizerService } from '../../library/game-recognizer.service';
 import { MetadataProvider, MetadataFragment, ProviderMatch, RatingData } from '../provider.interface';
-import { parseMediaReviews } from './metacritic-reviews';
+import {
+  MAX_REVIEWS,
+  dedupeReviews,
+  nextReviewsPageUrl,
+  pageOfUrlIn,
+  parseMediaReviews,
+  parseReviewsPagination,
+} from './metacritic-reviews';
+import type { ParsedMediaReview } from './metacritic-reviews';
 import { latinFragment, resolveMetacriticAlias } from './metacritic-aliases';
 
 /**
@@ -37,6 +45,18 @@ const SEARCH = `${MC_ORIGIN}/search/`;
 const GAME = `${MC_ORIGIN}/game/`;
 const TIMEOUT_MS = 20_000;
 const MAX_RETRIES = 3;
+
+/**
+ * Upper bound on how many review-listing pages one refresh may walk.
+ *
+ * A game with 65 publications needs ~5 pages at the site's page size; 20 leaves
+ * generous headroom while keeping a pathological/mis-detected pager from turning
+ * one game's refresh into hundreds of requests against a rate-limited site.
+ */
+const MAX_REVIEW_PAGES = 20;
+
+/** Politeness gap between review-page requests (the site rate-limits). */
+const REVIEW_PAGE_DELAY_MS = 350;
 
 /**
  * Fuzzy-score floor below which a candidate is rejected unless one title
@@ -424,7 +444,8 @@ export class MetacriticProvider implements MetadataProvider {
   async fetch(match: ProviderMatch): Promise<MetadataFragment> {
     // externalId may be "hades" (current scheme) or "pc/hades" (legacy); both
     // resolve because Metacritic redirects the legacy form.
-    const html = await this.fetchHtml(`${GAME}${match.externalId}/`);
+    const gameUrl = `${GAME}${match.externalId}/`;
+    const html = await this.fetchHtml(gameUrl);
     if (!html) {
       // Throw rather than return `{}`.
       //
@@ -437,7 +458,7 @@ export class MetacriticProvider implements MetadataProvider {
       //
       // The metadata sweep already treats a throw as "this provider contributed
       // nothing", so rating behaviour is unchanged.
-      throw new Error(`Metacritic 页面抓取失败：${GAME}${match.externalId}/`);
+      throw new Error(`Metacritic 页面抓取失败：${gameUrl}`);
     }
 
     // `canonicalName` is what MetadataService.resolveMatchName() reads, and the
@@ -448,12 +469,74 @@ export class MetacriticProvider implements MetadataProvider {
     return {
       canonicalName: this.parseTitle(html),
       rating: this.parseRating(html),
-      // The same page also carries the individual critic reviews shown on the
-      // detail page's 「媒体评价」 tab. Parsing them here rather than issuing a
-      // second request keeps a refresh at one page fetch per game — which
-      // matters on a site that rate-limits.
-      mediaReviews: parseMediaReviews(html),
+      // The landing page carries only the first slice of the critic reviews; the
+      // rest are paginated. See `fetchAllMediaReviews`.
+      mediaReviews: await this.fetchAllMediaReviews(html, match.externalId),
     };
+  }
+
+  /**
+   * Collect **all** critic reviews for a game, following the pager.
+   *
+   * The landing page shows a handful of reviews (the site's own first page).
+   * A game with 65 publications therefore looked like it had 1: the crawl read
+   * the game page once and stopped, and the paginated listing — reachable at
+   * `/game/<slug>/critic-reviews/?page=N` and linked from the page's own pager —
+   * was never visited. This walks the pager until no forward link remains.
+   *
+   * Cost control, because Metacritic rate-limits and this runs during a refresh:
+   *   - the landing page's own reviews are parsed first, so a pager failure still
+   *     leaves the user with what the first page showed;
+   *   - the walk is bounded by `MAX_REVIEW_PAGES`;
+   *   - visited URLs are remembered, so a pager that links back to itself cannot
+   *     loop;
+   *   - a small delay between requests keeps the crawl polite.
+   *
+   * Everything merges through `dedupeReviews`, so the landing page's copy of a
+   * review and the listing's copy collapse into one card instead of two.
+   */
+  private async fetchAllMediaReviews(html: string, externalId: string): Promise<ParsedMediaReview[]> {
+    const collected: ParsedMediaReview[] = parseMediaReviews(html);
+
+    // Where the listing lives. The landing page's own pager is preferred (that is
+    // the site telling us the real URL); otherwise derive it from the slug.
+    const slug = externalId.replace(/^[a-z0-9-]+\//i, ''); // drop a legacy "pc/" prefix
+    const gameUrl = `${GAME}${slug}/`;
+
+    let links = parseReviewsPagination(html);
+    // No pager anywhere → the landing page is the whole set.
+    if (!links.next && links.last <= 1) return dedupeReviews(collected).slice(0, MAX_REVIEWS);
+
+    const visited = new Set<string>([gameUrl]);
+    let currentUrl = gameUrl;
+    let page = 0;
+
+    while (page < MAX_REVIEW_PAGES) {
+      // Resolve against THIS provider's origin, so a stubbed base URL stays
+      // fully isolated instead of leaking requests to the live site.
+      const nextUrl = nextReviewsPageUrl(links, currentUrl, page, MC_ORIGIN);
+      if (!nextUrl || visited.has(nextUrl)) break;
+      visited.add(nextUrl);
+
+      const nextHtml = await this.fetchHtml(nextUrl);
+      if (!nextHtml) break; // network gave up — keep what we already have
+
+      const before = collected.length;
+      collected.push(...parseMediaReviews(nextHtml));
+      currentUrl = nextUrl;
+      page = pageOfUrlIn(nextUrl) ?? page + 1;
+      links = parseReviewsPagination(nextHtml);
+
+      // A page that contributes nothing new means we have run past the end.
+      if (collected.length === before && !links.next) break;
+      if (page < MAX_REVIEW_PAGES) await sleep(REVIEW_PAGE_DELAY_MS);
+    }
+
+    const merged = dedupeReviews(collected).slice(0, MAX_REVIEWS);
+    this.logger.log(
+      `Metacritic 媒体评价：「${slug}」抓取 ${page} 页，合并后 ${merged.length} 条`,
+    );
+    return merged;
   }
 
   /**

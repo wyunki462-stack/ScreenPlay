@@ -265,10 +265,23 @@ export class PostersService {
 
     const id = uuidv5(`poster:media:${gameId}:${mediaId}`, UUID_NAMESPACE);
     const hasAny = this.list(gameId).length > 0;
+    // A poster the user adds from the album starts OUT of the rotation, and that
+    // decision is recorded as the user's own (`slideshow_user_set = 1`).
+    //
+    // Why the default is 0: 「从相册添加」is how a screenshot becomes *available*
+    // as a poster. Silently enrolling it in the rotation changed what the detail
+    // page showed without the user asking — 需求 21 puts it plainly: 「只有封面默认
+    // 加入轮播…需求要的是「**可以**加入」，不是「自动加入」」. The checkbox in
+    // 「编辑海报」is the user's switch, so it has to start off.
+    //
+    // Why `slideshow_user_set = 1` matters as much as the 0: it records that this
+    // row is already decided, so `ensureCoverInRotation` and the boot-time repair
+    // leave it alone. Without it the row would be treated as "auto-included, safe
+    // to switch back on", which is what made unticking appear to do nothing.
     this.db.run(
       `INSERT INTO game_posters
-         (id, game_id, url, source, media_id, is_selected, in_slideshow, sort_order, created_at)
-       VALUES (?, ?, ?, 'media', ?, 0, 1, ?, ?)`,
+         (id, game_id, url, source, media_id, is_selected, in_slideshow, slideshow_user_set, sort_order, created_at)
+       VALUES (?, ?, ?, 'media', ?, 0, 0, 1, ?, ?)`,
       [
         id,
         gameId,
@@ -285,74 +298,65 @@ export class PostersService {
   }
 
   /**
-   * Guarantee a game can actually be browsed in the detail-page carousel.
+   * Guarantee the cover participates in the rotation — and nothing else.
    *
-   * A game whose official source yields only a single image (RAWG's screenshots
-   * endpoint is a separate, optional request; some entities simply have none, e.g.
-   * 「宇宙机器人」) would otherwise stay at one frame forever, and the requirement is
-   * that EVERY game behaves the same as the ones with rich artwork.
+   * ## What changed and why
    *
-   * So: if the rotation would end up with fewer than two frames, the game's own
-   * album screenshots join it. They are the same images the poster manager already
-   * offers via 「从相册添加」, just added automatically for this case, and they are
-   * registered as `source='media'` so the editor still groups them separately from
-   * the official artwork.
+   * This used to top the rotation up with the game's own album screenshots
+   * (`min(2 + albumCount, 8)`) so that every game had several browseable frames
+   * even when the provider CDN was unreachable. The intent was good, but it was
+   * the direct cause of the reported defect 「相册截图默认自动加入轮播」: an album
+   * screenshot the user never picked appeared in the carousel, and because it was
+   * auto-added it was not marked as a user decision — so unticking it was undone
+   * by the next refresh, which read as 「勾选后无法取消」.
    *
-   * Deliberately conditional — for a game with real official artwork nothing
-   * changes, so the user's manual configuration is untouched.
+   * The rule now is the one 需求 21 states explicitly: 「只有封面默认加入轮播。
+   * 把每张截图都自动塞进轮播会悄悄改变用户看到的东西；需求要的是「**可以**加入」，
+   * 不是「自动加入」」. Album screenshots join the rotation **only** when the user
+   * ticks them in 「编辑海报」.
+   *
+   * ## Trade-off (accepted, and it is a real one)
+   *
+   * A game whose provider returns a single image and whose user has ticked nothing
+   * now shows one frame in the detail hero carousel, where before it showed several
+   * local album frames. That is the deliberate cost of "nothing joins unless you say
+   * so". Richness is not lost entirely: `games.posterList` always carries every
+   * registered poster plus the album, so 「编辑海报」can still offer them, and the
+   * detail carousel falls back to `screenshots` when the curated set is empty.
+   *
+   * The cover is still force-included because a detail page with no frame at all is
+   * a bug, not a preference.
+   *
+   * @returns how many rows this call actually changed.
    */
-  ensureRotationFloor(gameId: string): number {
-    const row = this.db.get<{ c: number }>(
-      "SELECT COUNT(*) AS c FROM game_posters WHERE game_id = ? AND in_slideshow = 1",
+  ensureCoverInRotation(gameId: string): number {
+    const cover = this.db.get<PosterRow>(
+      `SELECT * FROM game_posters
+        WHERE game_id = ? AND is_selected = 1
+        LIMIT 1`,
       [gameId],
     );
-    const current = row?.c ?? 0;
-
-    const media = this.db.all<{ id: string }>(
-      "SELECT id FROM media WHERE game_id = ? AND type = 'image' ORDER BY sort_order, file_created_at, id",
-      [gameId],
-    );
-
-    // Target: enough LOCAL frames that the carousel stays browsable even when the
-    // provider CDN is unreachable.
+    if (!cover) return 0;
+    if (cover.in_slideshow) return 0;
+    // The user has already answered for this exact row — respect it.
     //
-    // A flat "at least 2" was not enough. Measured on 「Pokemon Scarlet」: 5 official
-    // frames, but only 1 image actually downloaded, so the browser had a single
-    // usable frame and the arrows did nothing — the same "no carousel" symptom, just
-    // caused by the network instead of by the database.
+    // This guard used to be missing, and it was the last surviving way for an
+    // untick to be undone: the cover is normally force-included ("a detail page
+    // with no frame at all is a bug"), but when the row the user unticked *is* the
+    // cover, force-including it silently reverses their click on every refresh.
+    // Measured before the fix:
     //
-    // Album screenshots are local files served by this app, so they always load. Top
-    // the rotation up to `2 + albumCount`, capped at 8: a few real local frames plus
-    // whatever the CDN manages to deliver.
-    const target = Math.min(2 + media.length, 8);
-    if (current >= target) return 0;
+    //   取消勾选后   slide=0 uset=1   ← 用户的选择
+    //   重新匹配后   slide=1 uset=1   ← 被兜底逻辑改回
+    //
+    // 需求 is explicit that nothing joins the rotation unless the user ticks it,
+    // so a decision — in either direction — wins over the default. The default
+    // still applies to a cover the user has never touched, which is what keeps a
+    // fresh library from rendering an empty hero.
+    if (cover.slideshow_user_set) return 0;
 
-    let added = 0;
-    for (const m of media) {
-      if (current + added >= target) break;
-      const dup = this.db.get<PosterRow>(
-        "SELECT * FROM game_posters WHERE game_id = ? AND media_id = ? AND source = 'media'",
-        [gameId, m.id],
-      );
-      if (dup) {
-        // Registered earlier but the user took it out of the rotation — leave it.
-        if (!dup.in_slideshow && dup.slideshow_user_set) continue;
-        if (!dup.in_slideshow) {
-          this.db.run('UPDATE game_posters SET in_slideshow = 1 WHERE id = ?', [dup.id]);
-          added += 1;
-        }
-        continue;
-      }
-      const id = uuidv5(`poster:media:${gameId}:${m.id}`, UUID_NAMESPACE);
-      this.db.run(
-        `INSERT OR IGNORE INTO game_posters
-           (id, game_id, url, source, media_id, is_selected, in_slideshow, slideshow_user_set, sort_order, created_at)
-         VALUES (?, ?, ?, 'media', ?, 0, 1, 0, ?, ?)`,
-        [id, gameId, `/api/media/${m.id}/preview`, m.id, this.nextOrder(gameId), Date.now()],
-      );
-      added += 1;
-    }
-    return added;
+    this.db.run('UPDATE game_posters SET in_slideshow = 1 WHERE id = ?', [cover.id]);
+    return 1;
   }
 
   /** Mark one poster as the selected cover (mirrored onto games.poster_url). */

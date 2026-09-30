@@ -452,6 +452,90 @@ stG.reviews_status === 'empty'
   : bad(`重新绑定后状态 ${stG.reviews_status}`);
 
 // ---------------------------------------------------------------------------
+step('场景 H · 分页：一次刷新要把全部分页的媒体评价都抓回来');
+
+// 桩服的 astro-bot 页面刻意复刻真实站点的形态：**首页只印 2 条**评价，
+// 其余 64 条挂在 `/game/astro-bot/critic-reviews/?page=2..6` 上。
+//
+// 这正是用户报的「Metacritic 有 65 家媒体评论，只抓到 1 条」：旧的抓取只读
+// 游戏首页一次就停了，分页列表从未被访问。这里验证修复后**跟随分页**并把
+// 全部 66 条唯一媒体落库。
+const astro = await api.post(`/api/games/${bloodborne.id}/match`, {
+  provider: 'metacritic',
+  externalId: 'astro-bot',
+  name: 'Astro Bot',
+});
+info(`绑定到分页条目返回状态 ${astro.status}`);
+
+// 必须给这个游戏种一个 Metascore。
+//
+// `refreshReviews` 有一条既有设计：绑定存在但游戏没有评分时，它会认为绑定可能
+// 指错了条目，于是**放弃绑定、改去搜索**（日志：「still has no Metascore;
+// re-searching metacritic」）。不种分就会走搜索分支，抓的根本不是 astro-bot
+// 这一页 —— 实测就是这样拿到 0 条的。
+seedRating(bloodborne.id, 94);
+info('已种 Metascore=94，使刷新走绑定而不是改去搜索');
+
+// 绑定本身不抓取评价（场景 G 已证明它只清旧行）；这里显式触发一次补全，
+// 走的才是「抓取 → 解析 → 落库」的真实路径。
+const pagesBefore = (await fetch(`${STUB}/__stats`).then((r) => r.json())).hits.reviewPages ?? 0;
+const bfH = await api.post('/api/games/backfill-ratings', { scope: 'all', limit: 50 });
+const pagesAfter = (await fetch(`${STUB}/__stats`).then((r) => r.json())).hits.reviewPages ?? 0;
+info(`补全处理 ${bfH.body?.processed} 个游戏`);
+info(`桩服列表页请求 ${pagesBefore} → ${pagesAfter}（应 ≥5，说明真的在翻页）`);
+
+const astroRows = reviewRows(bloodborne.id);
+const stH = gameState(bloodborne.id);
+info(`落库 ${astroRows.length} 条，状态 ${stH.reviews_status}`);
+
+astroRows.length === 66
+  ? ok('全部 66 家媒体的评价都落库了（而不是只有首页的 2 条）')
+  : bad(`只落库 ${astroRows.length} 条，期望 66 条`);
+
+pagesAfter - pagesBefore >= 5
+  ? ok(`确实翻到了后续分页（新增 ${pagesAfter - pagesBefore} 次列表页请求）`)
+  : bad(`只发了 ${pagesAfter - pagesBefore} 次列表页请求，说明没有跟随分页`);
+
+stH.reviews_status === 'ok'
+  ? ok('分页抓取后状态为 ok')
+  : bad(`状态 ${stH.reviews_status}（错误：${stH.reviews_error ?? '无'}）`);
+
+// 三要素齐全：媒体名 + 打分 + 评价正文，而不是只有第一条有内容。
+const withAll = astroRows.filter((r) => r.outlet && r.score != null && r.review_text);
+withAll.length === astroRows.length && astroRows.length > 0
+  ? ok('每条都带媒体名 + 打分 + 评价内容（不是只有第一条完整）')
+  : bad(`${astroRows.length - withAll.length} 条缺少三要素之一`);
+
+// 去重：媒体名不得重复（分页之间以及首页与列表页之间都可能重复）。
+const outletNames = astroRows.map((r) => r.outlet);
+new Set(outletNames).size === outletNames.length
+  ? ok('媒体名无重复（首页与分页内容正确合并去重）')
+  : bad(`有重复媒体名：${outletNames.length - new Set(outletNames).size} 个`);
+
+// 覆盖到末页：第一页与最后一页的媒体都要在。
+const hasFirst = outletNames.includes('IGN');
+const hasLast = outletNames.includes('Gamona');
+info(`首页媒体 IGN=${hasFirst}，末页媒体 Gamona=${hasLast}`);
+hasFirst && hasLast
+  ? ok('首页与末页的媒体都在（没有提前中断）')
+  : bad('分页抓取不完整：缺少首页或末页的媒体');
+
+// 接口层也要能读到全部——前端面板的数据来源。
+const detailH = await api.get(`/api/games/${bloodborne.id}`);
+const apiReviews = detailH?.mediaReviews ?? [];
+apiReviews.length === 66
+  ? ok('详情接口返回全部 66 条（前端「媒体评价」面板能拿到）')
+  : bad(`详情接口只返回 ${apiReviews.length} 条`);
+
+// 幂等：再抓一次不应产生重复行。
+const beforeIdem = reviewRows(bloodborne.id).length;
+await api.post('/api/games/backfill-ratings', { scope: 'all', limit: 50 });
+const afterIdem = reviewRows(bloodborne.id).length;
+afterIdem === beforeIdem
+  ? ok(`重复抓取幂等（仍为 ${afterIdem} 条，无重复行）`)
+  : bad(`重复抓取后变成 ${afterIdem} 条（去重失效）`);
+
+// ---------------------------------------------------------------------------
 console.log(`\n\x1b[1m结果：${pass} 项通过 / ${fail} 项失败\x1b[0m`);
 killAll();
 process.exit(fail === 0 ? 0 : 1);

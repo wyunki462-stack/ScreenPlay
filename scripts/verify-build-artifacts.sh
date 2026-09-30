@@ -112,8 +112,11 @@ expect_in_file "$BACKEND_DIST/metadata/providers/metacritic-reviews.js" \
   "__NEXT_DATA__" "页面内嵌 JSON 解析策略（__NEXT_DATA__）"
 expect_in_file "$BACKEND_DIST/metadata/providers/metacritic-reviews.js" \
   "isPlausibleOutlet" "媒体名合理性校验"
+# 符号名跟着实现走：`ensureRotationFloor`（兜底把相册截图填满轮播）已按需求 21
+# 改为 `ensureCoverInRotation`（只保证封面在轮播里，其余一律等用户勾选）。
+# 这里检的是「产物是新的」，所以必须盯当前符号名，否则每次改名都会假报缺失。
 expect_in_file "$BACKEND_DIST/maintenance/maintenance.service.js" \
-  "ensureRotationFloor" "启动期海报轮播修复"
+  "ensureCoverInRotation" "启动期封面轮播修复"
 expect_in_file "$BACKEND_DIST/maintenance/maintenance.service.js" \
   "backfillDurations" "启动期通关时长补全"
 

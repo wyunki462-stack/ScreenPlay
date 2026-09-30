@@ -37,7 +37,7 @@ try {
   process.exit(1);
 }
 
-const { parseMediaReviews, parseReviewsFromDom, scoreFromText, clampScore, normaliseDate, normalisePlatform, isPlausibleOutlet, dedupeReviews } = mod;
+const { parseMediaReviews, parseReviewsFromDom, scoreFromText, clampScore, normaliseDate, normalisePlatform, isPlausibleOutlet, dedupeReviews, parseReviewsPagination, nextReviewsPageUrl, pageOfUrlIn } = mod;
 
 function fixture(name) {
   return readFileSync(join(FIXTURES, name), 'utf8');
@@ -168,6 +168,81 @@ console.log(`   夹具：${names.join(', ')}\n`);
 {
   const dom = parseReviewsFromDom(fixture('dom.html'));
   check(Array.isArray(dom) && dom.length >= 3, `parseReviewsFromDom 独立可用（${dom.length} 条）`);
+}
+
+// --- 9. 分页：这是「65 家媒体只抓到 1 条」的根因所在 -----------------------
+{
+  const p1 = fixture('paginated-p1.html');
+  const landing = parseMediaReviews(p1);
+  check(
+    landing.length === 2,
+    `分页首页只含 2 条（实际 ${landing.length}）—— 真实站点首页只印前几条，其余在分页里`,
+  );
+
+  const links = parseReviewsPagination(p1);
+  check(links.next != null, `首页能识别出「下一页」链接（${links.next}）`);
+  check(links.last === 5, `识别出总页数 5（实际 ${links.last}）`);
+  check(
+    /page=2/.test(links.next ?? ''),
+    `下一页指向 page=2（实际 ${links.next}）`,
+  );
+
+  // 从「还没有翻过」的位置起步：next 必须是 page=2 而不是回跳 page=1。
+  const first = nextReviewsPageUrl(links, 'https://www.metacritic.com/game/astro-bot/', 0);
+  check(
+    first != null && /page=2/.test(first),
+    `第 0 页出发 → 拉 page=2（实际 ${first}）`,
+  );
+
+  // 已经在 page=2 上时，不能回头再拉 page=1 或重复拉 page=2。
+  const p2 = fixture('paginated-p2.html');
+  const l2 = parseReviewsPagination(p2);
+  const fromP2 = nextReviewsPageUrl(l2, 'https://www.metacritic.com/game/astro-bot/critic-reviews/?page=2', 2);
+  check(
+    fromP2 != null && /page=3/.test(fromP2),
+    `已在 page=2 → 拉 page=3，不回头（实际 ${fromP2}）`,
+  );
+
+  // 末页：没有向前的链接时必须停下，否则会无限翻。
+  const p6 = fixture('paginated-p6.html');
+  const l6 = parseReviewsPagination(p6);
+  const fromP6 = nextReviewsPageUrl(l6, 'https://www.metacritic.com/game/astro-bot/critic-reviews/?page=6', 6);
+  check(fromP6 === null, `末页(page=6)不再返回下一页（实际 ${fromP6}）`);
+
+  // 单页（无分页器）也必须停下。
+  const single = parseReviewsPagination(fixture('dom.html'));
+  check(
+    nextReviewsPageUrl(single, 'https://www.metacritic.com/game/hades/', 0) === null,
+    '没有分页器的页面不会产生下一页（避免死循环）',
+  );
+
+  check(pageOfUrlIn('https://x/y/?page=7') === 7, `pageOfUrlIn 解析出 7（实际 ${pageOfUrlIn('https://x/y/?page=7')}）`);
+  check(pageOfUrlIn('https://x/y/') === null, 'pageOfUrlIn 无 page 参数时返回 null');
+
+  // 全量合并：首页 2 条 + 5 个分页文件 64 条 = 66 条唯一媒体。
+  const all = [
+    ...landing,
+    ...[2, 3, 4, 5, 6].flatMap((n) => parseMediaReviews(fixture(`paginated-p${n}.html`))),
+  ];
+  const merged = dedupeReviews(all);
+  check(
+    merged.length === 66,
+    `合并 6 页共 66 条唯一媒体评价（实际 ${merged.length}）—— 而不是只有首页的 2 条`,
+  );
+  check(
+    merged.every((r) => r.outlet && r.score != null && r.text),
+    '每条都带媒体名 + 打分 + 评价原文（三要素齐全，不是只有第一条）',
+  );
+  const outlets = merged.map((r) => r.outlet);
+  check(
+    new Set(outlets).size === outlets.length,
+    '媒体名无重复（去重有效）',
+  );
+  check(
+    merged.some((r) => r.outlet === 'PlayStation Universe') &&
+      merged.some((r) => r.outlet === 'Gamona'),
+    '首尾两页的媒体都在（覆盖到最后一页，不是提前中断）',
+  );
 }
 
 console.log(`\n   \x1b[1m结果：${pass} 项通过 / ${fail} 项失败\x1b[0m\n`);

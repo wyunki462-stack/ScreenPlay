@@ -2,10 +2,13 @@
 export const dialogsEn: Record<string, string> = {
   // PosterDialog — "Edit poster"
   "dialogs.poster.title": "Edit poster · {name}",
-  "dialogs.poster.displayMode": "Card cover display",
+  "dialogs.poster.displayMode": "Detail-page large-image slideshow",
   "dialogs.poster.modeStatic": "Static (single)",
   "dialogs.poster.modeSlideshow": "Slideshow (auto-switch)",
-  "dialogs.poster.slideshowCount": "{n} posters in the slideshow",
+  "dialogs.poster.slideshowCount": "Selected {n} for the detail-page slideshow",
+  "dialogs.poster.slideshowHint":
+    "The 「slideshow」 ticks below choose which images join the DETAIL-PAGE large-image rotation. The gallery card uses the full poster set and is unaffected. Album screenshots start unticked; only ones you tick join.",
+  "dialogs.poster.slideshowItemHint": "Tick to include this image in the detail-page slideshow; untick to remove it — it will not be added back.",
   "dialogs.poster.tabUpload": "Upload image",
   "dialogs.poster.tabAlbum": "Choose from album",
   "dialogs.poster.chooseFile": "Choose image to upload",

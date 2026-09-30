@@ -904,7 +904,7 @@ export class MetadataService {
     // column that does not exist; the exception was swallowed one level up and the
     // feature silently did nothing.
     try {
-      const floored = this.posters.ensureRotationFloor(game.id);
+      const floored = this.posters.ensureCoverInRotation(game.id);
       if (floored > 0) {
         this.logger.log(
           `"${game.name}": added ${floored} local album screenshot(s) to the poster ` +

@@ -23,6 +23,18 @@
 
 import * as cheerio from 'cheerio';
 
+export interface ReviewsPageLinks {
+  /**
+   * Next page to fetch, absolute or site-relative — whichever the page printed.
+   * `null` when the document is the last page.
+   */
+  next: string | null;
+  /** Highest `?page=N` seen on the page. Used to bound the crawl. */
+  last: number;
+  /** Current page number as printed, when discoverable. */
+  current: number;
+}
+
 export interface ParsedMediaReview {
   /** Publication name, e.g. "IGN". The only field we insist on. */
   outlet: string;
@@ -44,8 +56,9 @@ export interface ParsedMediaReview {
 
 /** Review text is an excerpt; cap it so one pathological page cannot bloat a row. */
 const MAX_TEXT = 1200;
-/** Metacritic caps the list at ~100 on the page; more than this is a parse bug. */
-const MAX_REVIEWS = 200;
+/** Upper bound on stored reviews. The pager is walked in full; this only guards
+ *  against a mis-detected pager ballooning one game's row set. */
+export const MAX_REVIEWS = 200;
 
 /**
  * Outlets that are navigation/filter chrome rather than publications.
@@ -365,6 +378,111 @@ export function parseReviewsFromDom(html: string): ParsedMediaReview[] {
  * card. Running only the first strategy that matched is what left review text
  * empty on pages whose `__NEXT_DATA__` had scores but no quotes.
  */
+/**
+ * Discover the pagination of a critic-reviews listing.
+ *
+ * Why this exists: a game page carries only the first slice of its critic
+ * reviews. 「宇宙机器人」has 65 publications on Metacritic, and the landing page
+ * shows a handful — the rest live behind `?page=2`, `?page=3`, … Without
+ * following those links the 「媒体评价」 tab can never show more than the first
+ * page, which is exactly the reported "65 家媒体却只抓到 1 条".
+ *
+ * The parser stays deliberately dumb: it reports every `?page=N` link it can see
+ * plus any `rel="next"`. The caller knows which page it just fetched, so it —
+ * not the parser — decides what "forward" means. That split is what keeps this
+ * function pure and trivially testable.
+ */
+export function parseReviewsPagination(html: string): ReviewsPageLinks {
+  const result: ReviewsPageLinks = { next: null, last: 0, current: 0 };
+  if (!html || typeof html !== 'string') return result;
+
+  const $ = cheerio.load(html);
+
+  /** page number from a href like "/game/x/critic-reviews/?page=3". */
+  const pageOf = (href: string): number | null => {
+    const m = /[?&]page=(\d+)/i.exec(href);
+    if (!m) return null;
+    const n = Number(m[1]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  // Every numbered pager link, smallest forward-most first.
+  const numbered: { page: number; href: string }[] = [];
+  $('a[href]').each((_, el) => {
+    const href = $(el).attr('href') ?? '';
+    const page = pageOf(href);
+    if (page == null) return;
+    numbered.push({ page, href });
+    if (page > result.last) result.last = page;
+  });
+  numbered.sort((a, b) => a.page - b.page);
+  // The pager always lists page 1; `next` is refined by the caller using the
+  // page it actually fetched. Reporting the lowest link is the useful default.
+  result.next = numbered[0]?.href ?? null;
+
+  // `rel="next"` is authoritative when present — it beats any guess.
+  const relNext = $('a[rel="next"][href], link[rel="next"][href]').first().attr('href');
+  if (relNext) result.next = relNext;
+
+  // Text-labelled fallback ("Next", "下一页", "›") for skins that paginate
+  // without a query string. Restricted to pager-looking anchors so a "next game"
+  // link cannot be mistaken for a next page.
+  if (!result.next) {
+    const labelled = $('a[href]').filter((_, el) => {
+      const label = ($(el).text() || '').replace(/\s+/g, ' ').trim();
+      const aria = $(el).attr('aria-label') ?? '';
+      return /^(next|next page|下一页|下页|›|»|→)$/i.test(label) || /next page/i.test(aria);
+    });
+    result.next = labelled.first().attr('href') ?? null;
+  }
+
+  return result;
+}
+
+/**
+ * Decide the next URL to fetch, or `null` to stop.
+ *
+ * `currentPage` is the 1-based page the caller just parsed. The only rule is
+ * **the page number must move forward**:
+ *
+ *   - a pager link to `?page=N` with N <= current is a back-link (the numbered
+ *     pager always lists earlier pages, and a single-page game links to its own
+ *     `page=1`), so it stops the walk instead of looping;
+ *   - a link with no page number at all is a one-shot "next" anchor — allowed,
+ *     and the caller's seen-URL set prevents revisiting it.
+ *
+ * An earlier version also compared the two URLs with the `page` parameter
+ * stripped, meaning to catch "a pager that links back to itself". That was wrong
+ * and killed every walk: `?page=2` and `?page=3` strip to the *same* listing URL,
+ * so page 2 was judged to be pointing at itself and the crawl stopped after one
+ * page — reproducing exactly the bug it was written to prevent. The page-number
+ * comparison alone is both simpler and correct.
+ */
+export function nextReviewsPageUrl(
+  links: ReviewsPageLinks,
+  _currentUrl: string,
+  currentPage: number,
+  base?: string,
+): string | null {
+  if (!links.next) return null;
+  const absolute = absolutise(links.next, base);
+  const target = pageOfUrl(absolute);
+  if (target != null && target <= currentPage) return null;
+  return absolute;
+}
+
+function pageOfUrl(url: string): number | null {
+  const m = /[?&]page=(\d+)/i.exec(url);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Public alias: the 1-based page number embedded in a listing URL, if any. */
+export function pageOfUrlIn(url: string): number | null {
+  return pageOfUrl(url);
+}
+
 export function parseMediaReviews(html: string): ParsedMediaReview[] {
   if (!html || typeof html !== 'string') return [];
 
@@ -603,9 +721,20 @@ function resolveMaybe(...values: unknown[]): string | null {
   return raw ? absolutise(raw) : null;
 }
 
-/** Make a site-relative href absolute against metacritic.com. */
-export function absolutise(href: string): string {
+/**
+ * Make a site-relative href absolute.
+ *
+ * `base` must be the origin the caller actually fetched from — NOT a hardcoded
+ * metacritic.com. Hardcoding it was a real defect: the provider resolves its
+ * origin from `METACRITIC_BASE_URL` so the whole fetch/parse path can be verified
+ * against a local stub, but pagination links were still absolutised against the
+ * live site. A stub-based test therefore either missed the paged reviews entirely
+ * or silently reached out to the real Metacritic — the opposite of the isolation
+ * the override exists to provide.
+ */
+export function absolutise(href: string, base = 'https://www.metacritic.com'): string {
   if (/^https?:\/\//i.test(href)) return href;
   if (href.startsWith('//')) return `https:${href}`;
-  return `https://www.metacritic.com${href.startsWith('/') ? '' : '/'}${href}`;
+  const origin = base.replace(/\/+$/, '');
+  return `${origin}${href.startsWith('/') ? '' : '/'}${href}`;
 }

@@ -181,6 +181,13 @@ export default function PosterDialog({
               })}
             </span>
           )}
+          {/* 说清楚这套勾选管的是哪个轮播。
+              曾经这里只写「已勾选 N 张参与轮播」，而页面上唯一会自动动的是首页
+              图库卡片 —— 用户因此以为勾选在控制卡片。实际数据源已经分开（见
+              GameCard / HeroPosterCarousel），文案也必须跟着说清楚。 */}
+          <span className="text-xs text-zinc-500">
+            {t("dialogs.poster.slideshowHint")}
+          </span>
         </div>
 
         {/* Add a poster (feature 4) */}
@@ -444,22 +451,35 @@ export default function PosterDialog({
                       </button>
                     )}
 
-                    {mode === "slideshow" && (
-                      <label className="flex cursor-pointer items-center gap-1 text-[10px] text-zinc-400">
-                        <input
-                          type="checkbox"
-                          checked={p.inSlideshow}
-                          onChange={(e) =>
-                            toggleSlideshow.mutate(
-                              { posterId: p.id, inSlideshow: e.target.checked },
-                              opts,
-                            )
-                          }
-                          className="h-3 w-3 accent-sky-500"
-                        />
-                        {t("dialogs.poster.slideshow")}
-                      </label>
-                    )}
+                    {/*
+                      轮播勾选框**始终渲染**，不再包在 `mode === "slideshow"` 里。
+                      
+                      这是「相册截图勾选后无法取消」的直接原因：静态模式下整个
+                      label 都不渲染，用户根本找不到可点的勾选框 —— 不是状态回弹，
+                      而是控件不存在。
+                      
+                      两件事必须分开：
+                        · 勾选 → 这张图是否进入**详情页大图区**的集合（本控件）
+                        · 展现模式 → 这套集合是否**自动切换**（上方的按钮组）
+                      把它们绑在一起，等于「不自动轮播就不许你挑选哪些图」。
+                    */}
+                    <label
+                      className="flex cursor-pointer items-center gap-1 text-[10px] text-zinc-400"
+                      title={t("dialogs.poster.slideshowItemHint")}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={p.inSlideshow}
+                        onChange={(e) =>
+                          toggleSlideshow.mutate(
+                            { posterId: p.id, inSlideshow: e.target.checked },
+                            opts,
+                          )
+                        }
+                        className="h-3 w-3 accent-sky-500"
+                      />
+                      {t("dialogs.poster.slideshow")}
+                    </label>
 
                     {p.source !== "media" && (
                       <button

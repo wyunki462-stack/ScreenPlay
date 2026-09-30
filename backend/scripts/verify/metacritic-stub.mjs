@@ -28,13 +28,15 @@ const FIXTURES = path.join(HERE, 'fixtures', 'metacritic');
 
 const PORT = Number(process.argv[2] || 4600);
 let mode = process.argv[3] || 'ok';
-const hits = { game: 0, search: 0, robots: 0, byMode: {} };
+const hits = { game: 0, search: 0, robots: 0, reviewPages: 0, byMode: {} };
 
 /** 每个 slug 用哪份 fixture —— 让不同游戏走不同分支。 */
 const PAGE_FOR = {
   bloodborne: 'nextdata.html',
   hades: 'dom.html',
   'no-reviews-game': 'empty.html',
+  // 分页场景：首页只印 2 条，其余 64 条分布在 paginated-p2..p6
+  'astro-bot': 'paginated-p1.html',
 };
 
 const EMPTY = fs.readFileSync(path.join(FIXTURES, 'empty.html'), 'utf8');
@@ -93,6 +95,29 @@ const server = http.createServer((req, res) => {
         return false;
     }
   };
+
+  // 媒体评价的分页列表。
+  //
+  // 真实站点把绝大部分媒体评价挂在 `/game/<slug>/critic-reviews/?page=N`
+  // 上，游戏首页只印出前几条 —— 这正是「65 家媒体只抓到 1 条」的根因。
+  // 桩服必须能服务这条路径，否则「跟随分页」的逻辑在离线环境里测不到。
+  const listing = /^\/game\/([^/]+)\/critic-reviews\/?$/.exec(url.pathname);
+  if (listing) {
+    hits.reviewPages = (hits.reviewPages ?? 0) + 1;
+    if (fail()) return;
+    const page = Number(url.searchParams.get('page') || '1');
+    const file = path.join(FIXTURES, `paginated-p${page}.html`);
+    const html = fs.existsSync(file)
+      ? fs.readFileSync(file, 'utf8')
+      : fs.readFileSync(path.join(FIXTURES, 'empty.html'), 'utf8');
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      etag: `"stub-${listing[1]}-p${page}-${mode}"`,
+      'last-modified': new Date(0).toUTCString(),
+    });
+    res.end(html);
+    return;
+  }
 
   if (url.pathname.startsWith('/game/')) {
     hits.game += 1;

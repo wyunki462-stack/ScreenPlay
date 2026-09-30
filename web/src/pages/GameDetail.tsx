@@ -85,12 +85,15 @@ const timelineLabels: Record<TimelineType, string> = {
  * Posters for the detail header: the selected cover first, then every other
  * poster the user can manage, then the game's screenshots.
  *
- * This must be the full set, not just the rotation queue. `game.posters` only
- * holds rows flagged `in_slideshow`, which meant a game with seven scraped
- * official posters still handed the carousel a single URL — the other six were
- * registered (and visible in the edit dialog) but unreachable in the big image.
- * The carousel's arrows browse this list; `in_slideshow` still decides only
- * whether the rotation auto-advances.
+ * This must be the full set, not just the rotation queue. `game.posters` now
+ * carries every registered poster (it feeds the gallery card — see
+ * `GamesService.slideshowPosters`), but the detail header's *curated* set is
+ * `posterList` filtered on `inSlideshow`, i.e. exactly what 「编辑海报」shows
+ * ticked. This list is the browsable one: the arrows walk every image so none
+ * sits unreachable in the big picture, while `heroPosters()` below is the
+ * curated set the slideshow rotates. Keeping the two apart is what makes the
+ * checkbox mean 「这张进详情页大图轮播」without also changing which pictures the
+ * gallery card can show.
  */
 function detailPosters(game: GameDetailType): string[] {
   const selected = (game.posterList ?? []).filter((p) => p.isSelected).map((p) => p.url);
@@ -850,7 +853,11 @@ export default function GameDetail() {
         </CardContent>
       </Card>
 
-      <HeroPosterCarousel images={heroPosters} alt={game.name} />
+      <HeroPosterCarousel
+                images={heroPosters}
+                alt={game.name}
+                mode={game.posterMode ?? "static"}
+              />
 
       <Card>
         <CardHeader>
