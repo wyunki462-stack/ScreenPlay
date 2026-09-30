@@ -178,8 +178,64 @@ say "导出镜像 → $TARBALL"
 mkdir -p "$OUT_DIR"
 [ -e "$TARBALL" ] && die "目标文件已存在：$TARBALL
     换个 OUT_DIR，或先删掉它。"
-docker save "$IMAGE" | gzip > "$TARBALL" \
-  || die "导出失败（磁盘空间？）"
+
+# 导出必须是「要么完整、要么什么都不留」。
+#
+# 不能写成 `docker save "$IMAGE" | gzip > "$TARBALL" || die`：这条管道的退出码在
+# pipefail 下取决于 gzip —— docker save 中途死掉时 gzip 仍会正常结束并返回 0，
+# 于是**残缺包被判为成功导出**。实测拿到过一个这种包：里面有 blobs 但 index.json
+# /manifest.json/oci-layout/repositories 四个索引文件全缺，docker load 根本用不了，
+# 而脚本当时打印的是"导出完成"。docker save 是先写 blobs、最后写索引，所以流断在
+# 中途就正好留下这种"有内容、没索引"的包。
+#
+# 所以：写临时文件 → 分别取两个退出码 → 校验包可载入 → 才挪到最终文件名。
+TMP_TAR="${TARBALL}.partial"
+rm -f "$TMP_TAR" "$TMP_TAR.err"
+
+# 取「docker save 那一段」的退出码。
+#
+# 不读 PIPESTATUS：本脚本是 set -u，而直接写 ${PIPESTATUS[1]} 会因未绑定而
+# **让整个脚本崩在这一步**（实测：三种情形全部卡在 .partial 不动，报
+# "PIPESTATUS[1]: unbound variable"）。这里只用管道的整体退出码判断成败 ——
+# 在 pipefail 下它已能反映 docker save 失败；真正的损坏形态（缺索引）由下面
+# 的冒烟校验兜住，所以不需要精确区分是哪一段失败的。
+SAVE_RC=0
+docker save "$IMAGE" 2>"$TMP_TAR.err" | gzip > "$TMP_TAR" || SAVE_RC=$?
+
+if [ "$SAVE_RC" != 0 ]; then
+  echo
+  [ -s "$TMP_TAR.err" ] && sed 's/^/     | /' "$TMP_TAR.err"
+  rm -f "$TMP_TAR" "$TMP_TAR.err"
+  die "docker save 导出失败（退出码 $SAVE_RC）。
+    docker save 自身出错时常见原因：buildx 并发操作（构建收尾会跑
+    docker image prune -f）、磁盘空间不足。重跑一次通常就好。"
+fi
+rm -f "$TMP_TAR.err"
+
+# 冒烟校验：真的把索引文件解出来看内容，而不是拿文件名去猜。
+#
+# 这里连踩了两个坑，都记录一下：
+#   1. 最初写 `tar -tzf | grep -E '^(index\.json|manifest\.json)$'` —— 匹配不上，
+#      因为 tar 内路径带 "./" 前缀。正常的包被判成残缺。
+#   2. 改成 `tar -xzOf pkg index.json` 还是取不到，同样是因为这个前缀。
+# 所以两种写法都试。只解一个几 KB 的索引文件，不解 500MB 的全部层。
+_extract_index() {
+  tar -xzOf "$TMP_TAR" "$1" 2>/dev/null || tar -xzOf "$TMP_TAR" "./$1" 2>/dev/null
+}
+_index_ok=0
+for _f in index.json manifest.json; do
+  if _extract_index "$_f" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
+    _index_ok=1; break
+  fi
+done
+if [ "$_index_ok" != 1 ]; then
+  rm -f "$TMP_TAR"
+  die "导出的包里解不出合法的 index.json / manifest.json —— 是个残缺包，
+    docker load 用不了。已删除，没有留下坏文件。
+    这通常是 docker save 中途失败导致的，重跑本脚本。"
+fi
+
+mv "$TMP_TAR" "$TARBALL"
 ok "导出完成：$(du -h "$TARBALL" | cut -f1)"
 
 # ── 4. 校验和 + 命令清单 ─────────────────────────────────────────────────────
