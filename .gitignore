@@ -4,6 +4,8 @@ node_modules/
 
 # build output
 dist/
+# 镜像包输出目录（scripts/package-image.sh 的 OUT_DIR），单个 .tar.gz 可达 500MB+
+dist-image/
 # 锚定到仓库根：原来的 `build/` 会匹配**任意层级**的 build 目录，把
 # scripts/build/（构建期脚本的源码，必须进版本库）也一并忽略了 —— 后果是别人
 # 克隆后 scripts/build/ 为空，Dockerfile 的 COPY 直接失败，而本地因为文件还在
