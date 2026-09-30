@@ -22,6 +22,10 @@ web/dist/
 data/
 cache/
 thumbnails/
+# media/ 是 MEDIA_HOST_DIR 的默认挂载点（.env 里指向真实相册目录），里面是用户的
+# 私人截图/视频。此前没排除它，靠的是"目录为空所以 git 不跟踪"这一巧合 —— 一旦
+# 有人往里放一个文件就会被跟踪并上传。显式排除掉，别依赖巧合。
+media/
 *.db
 *.db-journal
 *.db-wal
