@@ -1,0 +1,203 @@
+#!/usr/bin/env node
+/**
+ * 媒体评价分页的离线测试。
+ *
+ * 断言的是 `web/src/lib/review-pagination.ts` 的真实源码 —— 不是复制一份逻辑过来
+ * 再自测。做法：用 esbuild 把那个 TS 文件打成一份临时 CJS 再 require。
+ *
+ * 为什么值得单独测：这段逻辑的边界（0/1/5/6/10/11/200 条、翻页后条数变化导致页码
+ * 越界、展开与翻页的交互）肉眼看不出来，而它一旦错了，界面要么空白、要么静默少显示
+ * 数据 —— 从截图上发现不了。
+ *
+ * 用法：node backend/scripts/verify/review-pagination-test.mjs
+ */
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(here, "../../..");
+const src = resolve(repoRoot, "web/src/lib/review-pagination.ts");
+
+let pass = 0;
+let fail = 0;
+const ok = (msg) => {
+  pass += 1;
+  console.log(`  \x1b[32m✓\x1b[0m ${msg}`);
+};
+const bad = (msg, actual, expected) => {
+  fail += 1;
+  console.log(`  \x1b[31m✗\x1b[0m ${msg}（期望 ${expected}，实际 ${actual}）`);
+};
+const eq = (msg, actual, expected) => {
+  if (actual === expected) ok(`${msg} → ${actual}`);
+  else bad(msg, actual, expected);
+};
+
+// ---- 用 esbuild 把真实源码打成 CJS ------------------------------------------
+const tmp = mkdtempSync(join(tmpdir(), "sp-pagination-"));
+const outfile = join(tmp, "review-pagination.cjs");
+try {
+  const esbuild = await import("esbuild");
+  await esbuild.build({
+    entryPoints: [src],
+    outfile,
+    bundle: true,
+    format: "cjs",
+    platform: "node",
+    logLevel: "silent",
+  });
+} catch (err) {
+  console.error("esbuild 打包失败：", err.message);
+  rmSync(tmp, { recursive: true, force: true });
+  process.exit(1);
+}
+
+const { PAGE_SIZE, FIRST_PAGE_COLLAPSED, paginateReviews, slicePage } = await import(
+  `file://${outfile}`
+);
+
+console.log("\n\x1b[1m媒体评价分页 · 离线测试\x1b[0m\n");
+
+// ---- 常量与要求一致 ---------------------------------------------------------
+console.log("  \x1b[1m[常量]\x1b[0m");
+eq("每页最多条数", PAGE_SIZE, 10);
+eq("第一页默认露出条数", FIRST_PAGE_COLLAPSED, 5);
+
+// ---- 默认态：第一页露 5 条 --------------------------------------------------
+console.log("\n  \x1b[1m[第一页默认 5 条]\x1b[0m");
+{
+  const p = paginateReviews(66, 1, false);
+  eq("66 条时可见条数", p.visibleCount, 5);
+  eq("66 条时已显示", p.shown, 5);
+  eq("66 条时可展开", p.canExpand, true);
+  eq("66 条时总页数", p.pageCount, 7);
+}
+{
+  const p = paginateReviews(4, 1, false);
+  eq("4 条时可见条数", p.visibleCount, 5);
+  eq("4 条时已显示（不能超过总数）", p.shown, 4);
+  eq("4 条时无可展开", p.canExpand, false);
+}
+{
+  const p = paginateReviews(5, 1, false);
+  eq("恰好 5 条时已显示", p.shown, 5);
+  eq("恰好 5 条时无可展开（没有多余的了）", p.canExpand, false);
+}
+{
+  const p = paginateReviews(6, 1, false);
+  eq("6 条时可展开", p.canExpand, true);
+}
+
+// ---- 展开态：补齐到整页 10 条 ----------------------------------------------
+console.log("\n  \x1b[1m[展开后 10 条，且不越过页边界]\x1b[0m");
+{
+  const p = paginateReviews(66, 1, true);
+  eq("66 条展开后可见条数", p.visibleCount, 10);
+  eq("66 条展开后已显示", p.shown, 10);
+  eq("展开后不再提供展开按钮", p.canExpand, false);
+}
+{
+  const p = paginateReviews(7, 1, true);
+  eq("7 条展开后已显示（不超过总数）", p.shown, 7);
+}
+{
+  // 要求「一页最多展示十条」：展开不得变成第 11 条。
+  const p = paginateReviews(200, 1, true);
+  eq("200 条展开后仍只有一页 10 条", p.visibleCount, PAGE_SIZE);
+}
+
+// ---- 第二页起：整页 10 条、无展开 -------------------------------------------
+console.log("\n  \x1b[1m[第 2 页起]\x1b[0m");
+{
+  const p = paginateReviews(66, 2, false);
+  eq("第 2 页可见条数", p.visibleCount, 10);
+  eq("第 2 页无展开按钮", p.canExpand, false);
+  eq("第 2 页已显示", p.shown, 10);
+}
+{
+  const p = paginateReviews(66, 7, false);
+  eq("最后一页（第 7 页）已显示", p.shown, 6);
+  eq("最后一页无展开按钮", p.canExpand, false);
+}
+
+// ---- 页码越界必须夹回 ------------------------------------------------------
+// 重新抓取会让条数变化；用户停在第 7 页而条数缩到 15 条时，不夹取就会渲染空白。
+console.log("\n  \x1b[1m[页码越界夹取 —— 重新抓取后条数变化]\x1b[0m");
+{
+  const p = paginateReviews(15, 7, false);
+  eq("15 条却停在第 7 页 → 夹到第 2 页", p.page, 2);
+  eq("夹取后已显示", p.shown, 5);
+}
+{
+  const p = paginateReviews(66, 0, false);
+  eq("页码 0 → 夹到第 1 页", p.page, 1);
+}
+{
+  const p = paginateReviews(66, -3, false);
+  eq("负数页码 → 夹到第 1 页", p.page, 1);
+}
+{
+  const p = paginateReviews(66, 999, false);
+  eq("超大页码 → 夹到最后一页", p.page, 7);
+}
+{
+  const p = paginateReviews(66, 2.7, false);
+  eq("小数页码 → 向下取整", p.page, 2);
+}
+{
+  const p = paginateReviews(66, NaN, false);
+  eq("NaN 页码 → 第 1 页", p.page, 1);
+}
+
+// ---- 空集合：不能出现 0 页 -------------------------------------------------
+console.log("\n  \x1b[1m[空集合]\x1b[0m");
+{
+  const p = paginateReviews(0, 1, false);
+  eq("0 条时总页数（至少 1，便于渲染「第 x / y 页」）", p.pageCount, 1);
+  eq("0 条时已显示", p.shown, 0);
+  eq("0 条时无可展开", p.canExpand, false);
+}
+{
+  const p = paginateReviews(-5, 1, false);
+  eq("负数条数不产生负页码", p.page, 1);
+  eq("负数条数按 0 处理", p.shown, 0);
+}
+
+// ---- slicePage 必须与 paginateReviews 的分页一致 ---------------------------
+// 两者若各算各的，就会出现「页码说第 3 页、切片却给了第 1 页」这种错位。
+console.log("\n  \x1b[1m[切片与页码一致]\x1b[0m");
+{
+  const items = Array.from({ length: 66 }, (_, i) => i + 1);
+  eq("第 1 页切片首项", slicePage(items, 1)[0], 1);
+  eq("第 1 页切片长度", slicePage(items, 1).length, 10);
+  eq("第 3 页切片首项", slicePage(items, 3)[0], 21);
+  eq("第 7 页切片长度（余 6 条）", slicePage(items, 7).length, 6);
+
+  // 全量遍历：每一条都必须恰好出现在一页里，不重不漏。
+  const seen = [];
+  for (let pg = 1; pg <= paginateReviews(items.length, 1, false).pageCount; pg += 1) {
+    seen.push(...slicePage(items, pg));
+  }
+  eq("逐页取完的总条数", seen.length, 66);
+  eq("无重复", new Set(seen).size, 66);
+  eq("首尾连续", seen[0] === 1 && seen[65] === 66, true);
+}
+
+// ---- 展开态在翻页后必须复位（否则第 2 页会因为 expanded 残留而异常）--------
+console.log("\n  \x1b[1m[展开态与翻页的组合]\x1b[0m");
+{
+  // 第 2 页即使 expanded 残留为 true，也应当整页 10 条、无展开按钮。
+  const p = paginateReviews(66, 2, true);
+  eq("第 2 页 expanded=true 时可见条数", p.visibleCount, 10);
+  eq("第 2 页 expanded=true 时无展开按钮", p.canExpand, false);
+}
+
+rmSync(tmp, { recursive: true, force: true });
+
+console.log(
+  `\n\x1b[1m结果：${pass} 项通过 / ${fail} 项失败\x1b[0m\n`,
+);
+process.exit(fail === 0 ? 0 : 1);

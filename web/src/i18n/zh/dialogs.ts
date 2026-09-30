@@ -41,6 +41,7 @@ export const dialogsZh: Record<string, string> = {
   "dialogs.poster.setCoverHint": "设为卡片封面",
   "dialogs.poster.slideshow": "轮播",
   "dialogs.poster.deletePoster": "删除此海报",
+  "dialogs.poster.deleteMediaPoster": "取消展示（之后可从相册重新添加）",
   "dialogs.poster.footerHint": "设置即时生效，保存在数据库与数据卷中，重启容器后仍然保留。",
   "dialogs.poster.done": "完成",
 

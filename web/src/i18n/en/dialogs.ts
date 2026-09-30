@@ -41,6 +41,7 @@ export const dialogsEn: Record<string, string> = {
   "dialogs.poster.setCoverHint": "Set as the card cover",
   "dialogs.poster.slideshow": "Slideshow",
   "dialogs.poster.deletePoster": "Delete this poster",
+  "dialogs.poster.deleteMediaPoster": "Remove from display (can be re-added from the album)",
   "dialogs.poster.footerHint":
     "Changes apply immediately and live in the database and data volume, so they survive a container restart.",
   "dialogs.poster.done": "Done",

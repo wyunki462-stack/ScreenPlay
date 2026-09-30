@@ -2330,6 +2330,67 @@ cover rotation repaired for N game(s) (+M frame(s)); auto-added album frames rem
 | `card-carousel-vs-hero-carousel` | 首页卡片用完整海报集，详情页大图用轮播勾选集 |
 | `review-pagination` | Metacritic 媒体评价按 `critic-reviews` 分页全量拉取 |
 
+## 5. 界面三则（本轮追加）
+
+### 5.1 首页卡片轮播去掉底部圆点
+
+`PosterCarousel` 新增 `showDots`（默认 `true`），只有 `GameCard` 传 `false`。详情页头部那张
+大图**保留**圆点 —— 两者用途不同：卡片宽约 300px、排在一整屏几十张的网格里，没人会去点一个
+6px 的圆点（要点就直接点卡片进详情页）；而详情页大图上用户是真的在翻看，圆点在那里有用。
+左上角的 `x/y` 计数保留，因为它是「这里还有别的图」的唯一提示。
+
+### 5.2 相册截图可逐张「取消展示」
+
+原来 `PosterDialog` 里删除按钮是 `{p.source !== "media" && (...)}` —— 相册截图没有删除入口。
+现在对所有来源都提供垃圾桶按钮。
+
+不加第二套状态，是因为**已有的删除动作天然就能往返**：
+
+```
+删除 → DELETE 掉 game_posters 那一行
+     → 相册选择器的 used 判据 posters.some(p => p.mediaId === m.id) 立刻变 false
+     → 那张图重新可点，点一下即重新登记
+```
+
+所以「取消展示」和「重新展示」共用同一个入口。也不会回弹：`ensureScrapedPosters` 只处理
+`source='scraped'` 的行，且注释里明确写了「this method never deletes anything」，永远不会把
+相册行重新登记回来。这比新增一个 `hidden` 列更少出错 —— 少一个列就少一处「忘记过滤」的机会。
+
+这也是用户在两个方案里明确挑了「bug 少」的那个。
+
+### 5.3 媒体评价分页
+
+要求：默认展示 5 条，点展开变成 10 条，一页最多 10 条。
+
+实现落在 `web/src/lib/review-pagination.ts`（纯函数，可离线测），`MediaReviewsPanel` 只做
+渲染。两处容易错的地方：
+
+- **页码越界**：重新抓取会让条数变化（1 条 → 66 条，也可能反过来）。用户停在第 7 页而条数
+  缩到 15 条时，页码就落到范围外，页面会空白。所以返回的 `page` 是夹取后的值，渲染一律用它。
+- **「展开」只属于第一页**：第 2 页起本身就是整页 10 条；而「一页最多 10 条」也意味着展开
+  不能越界去拿第 11 条。
+
+`backend/scripts/verify/review-pagination-test.mjs` 用 esbuild 把**真实源码**打成 CJS 后
+断言 43 项，覆盖 0/1/4/5/6/7/10/11/15/66/200 条、页码为 0/负数/小数/NaN、以及「逐页取完不重
+不漏」。这段逻辑肉眼看不出来，错了也只表现为「界面空白」或「静默少显示」。
+
+### 5.4 顺带修掉的一个日志缺陷
+
+线上实测发现：新镜像首次启动后库里
+`source='media' AND in_slideshow=1 AND slideshow_user_set=0` 从 268 张变成 0 张（清理确实
+执行了），但启动日志只有
+
+```
+Boot maintenance finished in 13.0s — nothing to repair.
+```
+
+原因是日志条件 `if (posters.games > 0 || durations.started)` 漏了 `purged`。于是一次「只做了
+清理、没有封面要补、没有时长要补」的启动会把整条详细日志跳过，**把唯一能证明清理生效的证据
+吞掉** —— 排查时这一点直接把人引向「是不是还有第二个原因」的错路。
+
+已改为 `if (posters.games > 0 || purged > 0 || durations.started)`，并加了 feature 标记
+`boot-purge-logged`。
+
 ## 4. 回归
 
 改的是海报/轮播的共享路径（`ensureScrapedPosters`、启动期修复、摘要 DTO），所以必须确认
@@ -2337,14 +2398,15 @@ cover rotation repaired for N game(s) (+M frame(s)); auto-added album frames rem
 
 | 检查 | 结果 |
 | --- | --- |
+| 媒体评价分页（离线，纯函数） | 43 / 0 |
 | 离线分页解析 | 63 / 0 |
 | 媒体评价端到端 | 63 / 0 |
 | 轮播归属后端 | 16 / 0 |
 | 海报轮播 UI（SSR 渲染真实组件） | 8 / 0 |
-| 产物自查 | 17 命中 / 0 缺失 |
+| 产物自查 | 23 命中 / 0 缺失 |
 | `backend` tsc | 0 错误 |
 | `web` tsc | 0 错误 |
-| i18n zh/en key 对齐 | 77/77（dialogs）、123/123（detail） |
+| i18n zh/en key 对齐 | 78/78（dialogs）、128/128（detail） |
 
 `round-e-backend.mjs` 里的注释提到「换绑定后的刷新会调用 `ensureRotationFloor()` 补相册帧，
 所以 `game_posters` 行数会合法增长」—— 该行为已按需求 21 移除。它的判据是「原有的用户

@@ -109,6 +109,12 @@ export const detailEn: Record<string, string> = {
   "detail.reviews.fetchedAt": "Fetched {time}",
   "detail.reviews.platform": "Platform",
   "detail.reviews.author": "Critic",
+  // Pagination: 5 shown by default, expanding fills the page up to 10.
+  "detail.reviews.expand": "Show {n} reviews",
+  "detail.reviews.shown": "Showing {shown} of {total}",
+  "detail.reviews.pageOf": "Page {page} / {total}",
+  "detail.reviews.prevPage": "Previous",
+  "detail.reviews.nextPage": "Next",
 
   "detail.metacritic.withCritics": "Metacritic {score} · based on {criticCount} critic reviews",
   "detail.metacritic.score": "Metacritic {score}",

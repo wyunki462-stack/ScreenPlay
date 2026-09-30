@@ -131,6 +131,23 @@ head_ "== 4. 前端产物里要有中文文案（确认 i18n 打进去了）=="
 expect_in_tree "$WEB_DIST" "媒体评价" "「媒体评价」标签文案"
 expect_in_tree "$WEB_DIST" "暂无媒体评价" "空状态文案"
 
+# ---- 本轮新增：首页卡片隐藏圆点 / 相册截图取消展示 / 媒体评价分页 -------------
+#
+# 这三项都是「界面行为」，没有后端符号可以查，只能盯前端产物里的字符串。
+# 挑的都是**本轮才存在**的字符串：若镜像里是上一版代码，这几项必然缺失，
+# 从而在构建阶段就失败，而不是等到用户在页面上发现没变化。
+head_ "== 5. 本轮新增的前端行为在产物里 =="
+expect_in_tree "$WEB_DIST" "media-reviews-expand" "媒体评价「展开」按钮（默认 5 条 → 10 条）"
+expect_in_tree "$WEB_DIST" "media-reviews-page" "媒体评价分页指示（第 x / y 页）"
+expect_in_tree "$WEB_DIST" "展开显示" "「展开显示 {n} 条」文案"
+expect_in_tree "$WEB_DIST" "取消展示" "相册截图「取消展示」按钮文案"
+expect_in_tree "$WEB_DIST" "detail.reviews.pageOf" "分页 i18n 键（确认打包时键名未丢）"
+
+head_ "== 6. 后端仍保留启动期清理（本轮的核心数据修复）=="
+# 只查字符串本身，不查缩进或函数体 —— 它只要在产物里就说明这版代码带着清理逻辑。
+expect_in_file "$BACKEND_DIST/maintenance/maintenance.service.js" \
+  "purgeAutoAddedAlbumFrames" "启动期清理旧规则自动加入轮播的相册截图"
+
 printf '\n\033[1m结果：%s 项命中 / %s 项缺失\033[0m\n' "$pass" "$fail"
 if [ "$fail" -gt 0 ]; then
   printf '\033[1;31m产物自查未通过 —— 镜像里会有旧代码，构建中止。\033[0m\n'

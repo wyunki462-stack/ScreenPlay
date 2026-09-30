@@ -24,6 +24,7 @@ export default function PosterCarousel({
   name,
   className,
   intervalMs = 3500,
+  showDots = true,
 }: {
   /** Ordered poster URLs; the first is the selected cover. */
   images: string[];
@@ -31,6 +32,17 @@ export default function PosterCarousel({
   name: string;
   className?: string;
   intervalMs?: number;
+  /**
+   * Pagination dots under the image. On by default; the gallery card turns them
+   * off.
+   *
+   * On a card they are noise: the tile is ~300px wide, sits in a grid of dozens,
+   * and nobody clicks a 6px dot there — they click the card itself, which opens
+   * the detail page. On the detail hero the same dots sit above a large image the
+   * user is actually studying, and the counter in the corner reads as clutter
+   * next to them, so there they stay useful.
+   */
+  showDots?: boolean;
 }) {
   const t = useT();
   const list = images.filter(Boolean);
@@ -117,23 +129,25 @@ export default function PosterCarousel({
           <div className="absolute left-1.5 top-1.5 z-20 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white/90 backdrop-blur-sm">
             {index + 1}/{count}
           </div>
-          <div className="absolute bottom-1.5 left-1/2 z-20 flex -translate-x-1/2 gap-1">
-            {list.map((_, i) => (
-              <button
-                key={i}
-                type="button"
-                aria-label={t("detail.poster.goto", { index: i + 1 })}
-                onClick={() => {
-                  setIndex(i);
-                  resumeAt.current = Date.now() + intervalMs * 2;
-                }}
-                className={cn(
-                  "h-1.5 w-1.5 rounded-full transition-colors",
-                  i === index ? "bg-white/90" : "bg-white/40 hover:bg-white/70",
-                )}
-              />
-            ))}
-          </div>
+          {showDots && (
+            <div className="absolute bottom-1.5 left-1/2 z-20 flex -translate-x-1/2 gap-1">
+              {list.map((_, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  aria-label={t("detail.poster.goto", { index: i + 1 })}
+                  onClick={() => {
+                    setIndex(i);
+                    resumeAt.current = Date.now() + intervalMs * 2;
+                  }}
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full transition-colors",
+                    i === index ? "bg-white/90" : "bg-white/40 hover:bg-white/70",
+                  )}
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>

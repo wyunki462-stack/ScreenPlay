@@ -1,7 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ExternalLink, LoaderCircle, MessageSquareQuote, RefreshCw } from "lucide-react";
 import { useMediaReviews, useRefreshMediaReviews } from "../api/hooks";
 import { useT } from "../i18n";
+import {
+  FIRST_PAGE_COLLAPSED,
+  PAGE_SIZE,
+  paginateReviews,
+  slicePage,
+} from "../lib/review-pagination";
 import { cn, metacriticTone } from "../lib/utils";
 import type { MediaReview, MediaReviewsSummary } from "../types";
 import { Button } from "./ui/Button";
@@ -29,6 +35,9 @@ const scoreChipClass: Record<ReturnType<typeof metacriticTone>, string> = {
  *   - fetch failed   → show the reason and say retrying is safe.
  * Showing a bare 「暂无媒体评价」 for all three is what makes users think the
  * feature is broken when it is merely unconfigured.
+ *
+ * 分页而不是一次性全渲染：M 站一部热门游戏能有 60-100 家媒体，全部铺开会把整个
+ * 详情页拉成一条长滚动条，也让每一次 `refetch` 都要重建上百个 DOM 节点。
  */
 export default function MediaReviewsPanel({
   gameId,
@@ -42,12 +51,34 @@ export default function MediaReviewsPanel({
 }) {
   const t = useT();
   const [notice, setNotice] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [expanded, setExpanded] = useState(false);
   const query = useMediaReviews(gameId);
   const refresh = useRefreshMediaReviews(gameId);
 
   const reviews = query.data?.reviews ?? fallbackReviews ?? [];
   const summary = query.data?.summary ?? fallbackSummary ?? null;
   const status = summary?.status ?? null;
+
+  // 换了游戏就把分页状态收回初始值，否则会停在上一个游戏的页码上。
+  useEffect(() => {
+    setPage(1);
+    setExpanded(false);
+  }, [gameId]);
+
+  // 重新抓取后条数可能从 1 条涨到 60 条，也可能反过来变少；两种情况下停在
+  // 越界的页码都会让面板空白，所以页码由 `paginateReviews` 夹回合法范围 ——
+  // 渲染时一律用它返回的 `page`，不用本地那份可能越界的 state。
+  const paginate = paginateReviews(reviews.length, page, expanded);
+  const safePage = paginate.page;
+
+  const onFirstPage = safePage === 1;
+  const visible = slicePage(reviews, safePage).slice(
+    0,
+    onFirstPage && !expanded ? FIRST_PAGE_COLLAPSED : PAGE_SIZE,
+  );
+  const canExpand = paginate.canExpand;
+  const pageCount = paginate.pageCount;
 
   const onRefresh = () => {
     setNotice(null);
@@ -126,11 +157,71 @@ export default function MediaReviewsPanel({
       {reviews.length === 0 ? (
         <EmptyState status={status} error={summary?.error ?? null} />
       ) : (
-        <ul className="space-y-3">
-          {reviews.map((review) => (
-            <ReviewCard key={review.id} review={review} />
-          ))}
-        </ul>
+        <>
+          <ul className="space-y-3" data-testid="media-reviews-list">
+            {visible.map((review) => (
+              <ReviewCard key={review.id} review={review} />
+            ))}
+          </ul>
+
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+            {canExpand && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setExpanded(true)}
+                data-testid="media-reviews-expand"
+              >
+                {t("detail.reviews.expand", { n: PAGE_SIZE })}
+              </Button>
+            )}
+
+            {pageCount > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={safePage <= 1}
+                  onClick={() => {
+                    setPage(safePage - 1);
+                    // 翻页后回到「默认 5 条」的初始形态。
+                    setExpanded(false);
+                  }}
+                  data-testid="media-reviews-prev"
+                >
+                  {t("detail.reviews.prevPage")}
+                </Button>
+                <span
+                  className="text-xs text-zinc-500"
+                  data-testid="media-reviews-page"
+                >
+                  {t("detail.reviews.pageOf", { page: safePage, total: pageCount })}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={safePage >= pageCount}
+                  onClick={() => {
+                    setPage(safePage + 1);
+                    setExpanded(false);
+                  }}
+                  data-testid="media-reviews-next"
+                >
+                  {t("detail.reviews.nextPage")}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* 告诉用户「当前显示了几条 / 一共几条」，否则翻页时看不出还剩多少。
+              分页控件只在多于 1 页时出现，这条提示则始终显示。 */}
+          <p
+            className="text-center text-[11px] text-zinc-600"
+            data-testid="media-reviews-shown"
+          >
+            {t("detail.reviews.shown", { shown: visible.length, total: reviews.length })}
+          </p>
+        </>
       )}
     </div>
   );

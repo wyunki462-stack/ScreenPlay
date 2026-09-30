@@ -233,6 +233,8 @@ Liveness/readiness probe.
     "poster-rotation-all-games", "poster-rotation-cover-only",
     "poster-rotation-user-decided", "card-carousel-vs-hero-carousel",
     "review-pagination", "poster-config-protected",
+    "card-carousel-no-dots", "album-frame-removable",
+    "review-paged-ui", "boot-purge-logged",
     "media-reviews-api", "media-reviews-ui", "media-reviews-coverage-api"
   ]
 }
@@ -253,6 +255,16 @@ curl -s http://<主机>:3001/api/health | grep -o 'poster-rotation-all-games'
 
 同理，看不到 `media-reviews-api` 就说明镜像里还没有「媒体评价」这一块。
 早先占位的 `critic-reviews` 从未实现，已由上面三个按交付面拆分的名字取代。
+
+界面细节三则（第六轮）各有一个标记，用来区分「后端新了、前端还是旧的」这种最容易
+误判的情况 —— 这三项都在前端产物里：
+
+| 标记 | 对应界面行为 |
+| --- | --- |
+| `card-carousel-no-dots` | 首页卡片轮播不再显示底部圆点（详情页大图仍保留） |
+| `album-frame-removable` | 相册截图可逐张「取消展示」，删完可从相册重新添加 |
+| `review-paged-ui` | 媒体评价默认 5 条 / 展开 10 条 / 每页最多 10 条 |
+| `boot-purge-logged` | 启动期清理数量会写进日志（此前 `purged` 漏进日志条件，清理生效却报 nothing to repair） |
 
 ### `POST /api/library/scan`
 Trigger a (re)scan of configured media directories. Scans are idempotent and

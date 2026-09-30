@@ -109,6 +109,12 @@ export const detailZh: Record<string, string> = {
   "detail.reviews.fetchedAt": "抓取于 {time}",
   "detail.reviews.platform": "对应平台",
   "detail.reviews.author": "作者",
+  // 分页：默认展示 5 条，点展开补齐到整页 10 条
+  "detail.reviews.expand": "展开显示 {n} 条",
+  "detail.reviews.shown": "当前显示 {shown} / 共 {total} 条",
+  "detail.reviews.pageOf": "第 {page} / {total} 页",
+  "detail.reviews.prevPage": "上一页",
+  "detail.reviews.nextPage": "下一页",
 
   "detail.metacritic.withCritics": "Metacritic {score} · 基于 {criticCount} 家媒体",
   "detail.metacritic.score": "Metacritic {score}",

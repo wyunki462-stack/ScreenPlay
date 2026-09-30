@@ -481,15 +481,36 @@ export default function PosterDialog({
                       {t("dialogs.poster.slideshow")}
                     </label>
 
-                    {p.source !== "media" && (
-                      <button
-                        onClick={() => removePoster.mutate(p.id, opts)}
-                        className="text-zinc-500 transition-colors hover:text-red-400"
-                        title={t("dialogs.poster.deletePoster")}
-                      >
+                    {/*
+                      删除按钮对**所有来源**都提供，包括相册截图。
+
+                      以前这里排除了 `source === 'media'`，理由大概是「相册截图删了
+                      就没法恢复」。那个理由不成立：`remove` 只是删掉 game_posters
+                      里那一行，删完这张图在相册选择器里立刻变回可点（它的
+                      `used` 判据是 `posters.some(p => p.mediaId === m.id)`），
+                      再点一下就重新登记 —— 所以「取消展示」和「重新展示」共用同
+                      一个入口，不需要为取消单独造一套状态。
+
+                      也不会回弹：`ensureScrapedPosters` 只处理 source='scraped'
+                      的行，且从不删除任何东西，永远不会把相册行重新登记回来。
+                    */}
+                    <button
+                      onClick={() => removePoster.mutate(p.id, opts)}
+                      disabled={removePoster.isPending}
+                      className="text-zinc-500 transition-colors hover:text-red-400 disabled:opacity-50"
+                      title={
+                        p.source === "media"
+                          ? t("dialogs.poster.deleteMediaPoster")
+                          : t("dialogs.poster.deletePoster")
+                      }
+                      data-testid={`poster-remove-${p.source}`}
+                    >
+                      {removePoster.isPending && removePoster.variables === p.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
                         <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
+                      )}
+                    </button>
                   </div>
                 </div>
                       ))}

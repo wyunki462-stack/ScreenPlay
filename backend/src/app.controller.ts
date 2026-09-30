@@ -29,6 +29,11 @@ export const BACKEND_FEATURES = [
   'card-carousel-vs-hero-carousel', // 首页卡片用完整海报集，详情页大图用轮播勾选集
   'review-pagination', // Metacritic 媒体评价按 critic-reviews 分页全量拉取
   'poster-config-protected', // 用户取消勾选的轮播项不会被重新刮削自动加回
+  // 第六轮：界面细节三则。
+  'card-carousel-no-dots', // 首页卡片轮播不再显示底部圆点（详情页大图仍保留）
+  'album-frame-removable', // 相册截图可逐张「取消展示」，删完可从相册重新添加
+  'review-paged-ui', // 媒体评价默认 5 条 / 展开 10 条 / 每页最多 10 条
+  'boot-purge-logged', // 启动期清理数量会写进日志（此前 purged 漏进日志条件）
   // 本轮新增：Metacritic 媒体评价（「媒体评价」标签页 + 批量补全）。
   // 早先占位的 `critic-reviews` 从未实现，已由下面三个按交付面拆分的名字取代：
   // 这样「接口在不在」「前端在不在」「覆盖率接口在不在」可以分别判断。

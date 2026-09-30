@@ -138,6 +138,8 @@ export default function GameCard({
             mode={game.posterMode ?? "static"}
             name={game.name}
             className="transition-transform duration-300 group-hover:scale-105"
+            // No dots on a card — see the `showDots` docblock in PosterCarousel.
+            showDots={false}
           />
         </div>
         <div className="flex flex-1 flex-col gap-2 p-3">
