@@ -17,6 +17,13 @@ docs
 media
 README.md
 *.log
+# logs/ 目录整体排除（*.log 只匹配文件，目录本身仍会被打包进构建上下文）
+logs
+# 本地临时工作目录与私人备份：既不进镜像，也不该每次构建都发给 Docker 守护进程
+# （.tmp-* 实测累计 700MB+，其中单个就 554MB —— 每轮构建白传一遍）
+.tmp*
+.nas-mihomo-split-backup
+.nas-mihomo-split-backup.tar.gz
 Dockerfile.windows
 *.md
 .vscode
