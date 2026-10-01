@@ -1,4 +1,4 @@
-# 0.6.5 瘦身报告
+# 1.0.0 瘦身报告
 
 > 前提：**不改核心业务逻辑与接口定义**、不影响构建、保留核心文档与验证脚本。
 > 本文包含四件事：① 全量功能验收报告 ② 瘦身清单 ③ 瘦身前后体积对比 ④ 无回归证明。
@@ -7,6 +7,9 @@
 > `dist/assets/index-DZEuyZR6.js` 与 0.6.4 同哈希）。**第二轮**按用户要求合并 6 组重复逻辑并
 > 修掉一处海报归属缺陷（见 2.5），源码因此有改动，前端产物变为 `dist/assets/index-Ca5ByDzf.js`；
 > 这一轮的无回归由 10 个离线套件 / 382 条断言证明（见第四节），不再依赖哈希相同。
+>
+> 版号说明：这轮瘦身原计划作为 `0.6.5` 发布，用户要求直接作为**正式版 `1.0.0`** 提交，
+> 因此本文里所有「本轮」都对应 `1.0.0` 这个版号（`0.6.5` 从未发布）。
 
 ---
 
@@ -38,7 +41,7 @@
 | 20 | 构建产物完整性 | `scripts/verify-build-artifacts.sh`（构建期在 Dockerfile 内执行） | ✅ 检查 `*.js` 齐全 |
 | 21 | 镜像内原生依赖可加载 | Dockerfile 的 `node -e` 自检（better-sqlite3 内存库读写 + `require('sharp')`） | ⏳ 随用户的镜像构建执行；本地已用同一段断言复现「缺 binding 会失败」，证明它有效 |
 | 22 | 已部署实例运行时/代理/图片自检 | `bash scripts/verify-image-fix.sh`（需要一个在跑的实例） | ⏳ 需在部署实例上执行，本次未跑 |
-| 23 | 镜像构建与上传 | `bash scripts/docker-build.sh`、`bash scripts/push-to-ghcr.sh screenplay:latest 0.6.5` | ⏳ 本环境无 docker 权限，由用户执行 |
+| 23 | 镜像构建与上传 | `bash scripts/docker-build.sh`、`bash scripts/push-to-ghcr.sh screenplay:latest 1.0.0` | ⏳ 本环境无 docker 权限，由用户执行 |
 
 离线套件断言合计 **382 条，0 失败**（38+13+63+13+63+16+10+58+98+10）。
 
@@ -103,13 +106,14 @@ peerDependency）。
 ### 2.4 结构整理与文档
 
 - `docs/VERIFY.md` 顶部跑法重写为两段：**A 离线套件清单**（含 `npm run build` 前置）+ **B 已部署实例自检**
-  （`scripts/verify-image-fix.sh`），并注明「一次性轮次脚本已在 0.6.5 瘦身中删除，覆盖改由离线套件承担」。
+  （`scripts/verify-image-fix.sh`），并注明「一次性轮次脚本已在 1.0.0 瘦身中删除，覆盖改由离线套件承担」。
   正文里的历史命令与数字**故意保留为历史记录**。
-- `README.md:580-594`：本轮验收段标题与期望版本改为 0.6.5，并注明「0.6.5 是瘦身版，界面/接口/数据行为与
-  0.6.4 完全一致（前端 bundle 哈希都相同），区别只在镜像体积」。
+- `README.md`：版本徽章与「版本说明」整节改为 `1.0.0` 正式版（原为 `0.6.2` 测试阶段）；迭代历史表补
+  第 7～9 轮与 `1.0.0` 一行，并注明一次性轮次脚本已在瘦身中删除；本轮验收段标题与期望版本改为 `1.0.0`，
+  判据从 feature 标记改为 `version`（这一版的 features 列表与 `0.6.4` 相同），并新增第 4 条「海报归属」验收。
 - `docs/UPLOAD.md`：版号无关（`V=$(node -p "require('./package.json').version")`），删掉两个已过期的
   产物 sha256，改为「以本机 `sha256sum` 为准」。
-- `CHANGELOG.md`：新增 `## [0.6.5]`。
+- `CHANGELOG.md`：新增 `## [1.0.0]`（首个正式版；原计划作为 `0.6.5` 发布）。
 - 保留不动的结构：`flutter/`（README 有说明）、根目录 `fetch-and-build.sh` 与 `transfer-image.sh`
   （被 `screenplay.yml`、README、docs、`scripts/package-image.sh`、`scripts/push-to-ghcr.sh` 以根相对路径引用）、
   `scripts/verify-image-fix.sh`（`docs/VERIFY.md` 入口 + `scripts/docker-build.sh` 提示）。

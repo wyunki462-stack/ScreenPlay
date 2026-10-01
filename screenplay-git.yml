@@ -25,7 +25,7 @@ services:
       # ── 源码直接来自 GitHub ──────────────────────────────────────────────
       # 末尾的 #main 是分支（也可以是 tag 或 commit 哈希）。
       # 想锁定某个版本就换成具体 tag，例如：
-      #     context: "https://github.com/wyunki462-stack/ScreenPlay.git#v0.6.1"
+      #     context: "https://github.com/wyunki462-stack/ScreenPlay.git#v1.0.0"
       context: "${GIT_CONTEXT:-https://github.com/wyunki462-stack/ScreenPlay.git#main}"
       dockerfile: Dockerfile
       args:

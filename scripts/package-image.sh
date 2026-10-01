@@ -132,9 +132,14 @@ say "校验镜像内容"
 #     /app/backend/dist/app.controller.js；
 #   · 前端标记是界面/文案符号，打包进 /app/public/assets/*.js。
 # 一开始我把两者都往 /app/dist 里找，那是错的路径 —— 那样会永远报"缺少"。
-BACKEND_FEATURES="card-carousel-no-dots album-frame-removable review-paged-ui boot-purge-logged"
+# 1.0.0 与 0.6.4 的 features 列表**完全相同**（这一版只瘦身、去重、修一处缺陷，没有新增界面
+# 能力），所以这里查的是「0.6.4 那一轮 + 之前各轮」的标记 —— 它们只要在，界面侧就不是旧镜像；
+# 「跑的是不是 1.0.0」由下面的版本号检查回答。
+BACKEND_FEATURES="card-carousel-no-dots album-frame-removable review-paged-ui boot-purge-logged \
+ratings-no-user-score reviews-ui-search-sort reviews-page-jump poster-rotation-user-decided"
 # 本轮界面改动必须在产物里出现的关键符号
-FRONTEND_FEATURES="media-reviews-expand media-reviews-page"
+FRONTEND_FEATURES="media-reviews-expand media-reviews-page \
+media-reviews-search media-reviews-sort media-reviews-page-numbers"
 
 MISSING=""
 container_has() {  # $1 = 要搜的字面串, $2 = 搜索目录
@@ -165,6 +170,22 @@ if [ -n "$MISSING" ]; then
     这通常意味着构建缓存命中了旧层。用 --no-cache 重建一次：
       bash scripts/docker-build.sh --no-cache -t $IMAGE
     不要把这样的包传出去 —— 装上去会发现界面没变化。"
+fi
+
+# 版本号：1.0.0 的 features 与 0.6.4 相同，光查标记分不出这两版，所以直接读镜像内的
+# package.json（Dockerfile 把 backend/package.json 拷成了 /app/backend/package.json）。
+say "校验镜像版本号"
+IMG_VERSION="$(docker run --rm --entrypoint cat "$IMAGE" /app/backend/package.json 2>/dev/null \
+  | python3 -c "import json,sys;print(json.load(sys.stdin).get('version',''))" 2>/dev/null || true)"
+if [ -n "$IMG_VERSION" ]; then
+  if [ "$IMG_VERSION" = "$VERSION" ]; then
+    ok "镜像内版本号 $IMG_VERSION（与 package.json 一致）"
+  else
+    warn "镜像里的版本是 $IMG_VERSION，而 package.json 是 $VERSION —— 构建缓存可能命中了旧层"
+    warn "  建议：bash scripts/docker-build.sh --no-cache -t $IMAGE 重建后再打包"
+  fi
+else
+  warn "读不出镜像内 /app/backend/package.json 的版本号（镜像结构变了？）—— 不做版本判定"
 fi
 
 # 架构检查：目标机大多是 x86_64（Windows Docker Desktop 也是），

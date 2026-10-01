@@ -166,7 +166,7 @@ if [ -z "$FEATURES" ]; then
   info "$HEALTH"
 else
   missing=0
-  printf '  \033[1m本轮 feature 标记：\033[0m\n'
+  printf '  \033[1m预期 feature 标记：\033[0m\n'
   for f in "${EXPECTED_FEATURES[@]}"; do
     if printf '%s\n' "$FEATURES" | grep -qx "$f"; then
       printf '    \033[32m✓\033[0m %s\n' "$f"
@@ -177,12 +177,25 @@ else
   done
 
   if [ "$missing" -eq 0 ]; then
-    ok "这是新镜像（本轮 4 个标记全部存在）"
+    ok "这是新镜像（预期 ${#EXPECTED_FEATURES[@]} 个标记全部存在）"
   else
     bad "有 $missing 个标记缺失 —— 容器跑的不是本轮镜像"
     info "常见原因：构建产物被旧镜像覆盖 / 部署时用了旧 tag / 构建缓存。"
     info "试试：NO_CACHE=1 bash scripts/rebuild-and-verify.sh"
   fi
+fi
+
+# 版本号：1.0.0 与 0.6.4 的 features 列表完全相同（这一版没有新增界面能力），
+# 所以「跑的是不是 1.0.0」只能看 version 字段，标记查不出来。
+VERSION_OUT="$(printf '%s' "$HEALTH" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
+if [ -n "$VERSION_OUT" ]; then
+  if [ "$VERSION_OUT" = "1.0.0" ]; then
+    ok "版本号：$VERSION_OUT"
+  else
+    info "版本号是 $VERSION_OUT（期望 1.0.0）—— 若这是旧镜像请重建；若你刻意跑的是别的版本可忽略"
+  fi
+else
+  info "读不到 version 字段（health 返回异常？）"
 fi
 
 # 启动期清理的证据。旧规则已经写进库的相册帧要在这里被摘出去。

@@ -1,6 +1,6 @@
 {
   "name": "@screenplay/web",
-  "version": "0.6.5",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "ScreenPlay web frontend — personal game media album manager",

@@ -11,7 +11,7 @@
 #
 # 用法：
 #   bash scripts/push-to-ghcr.sh                    # 默认镜像 screenplay:latest，版本号读 package.json
-#   bash scripts/push-to-ghcr.sh screenplay:0.6.4 0.6.4
+#   bash scripts/push-to-ghcr.sh screenplay:1.0.0 1.0.0
 #   GH_USER=wyunki462-stack DOCKERHUB_USER=xxx bash scripts/push-to-ghcr.sh
 #   RETRIES=8 SLEEP=10 bash scripts/push-to-ghcr.sh
 #   DRY_RUN=1 bash scripts/push-to-ghcr.sh          # 只打印将要执行的命令

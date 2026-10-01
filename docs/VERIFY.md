@@ -33,11 +33,35 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 
 > **关于下文按轮次记录的「轮次脚本」**：`scripts/verify-round-{d,e,f,g,k,l}.sh`、
 > `scripts/verify-media-reviews-ui.mjs`、`scripts/verify-all-games.mjs` 等一次性轮次脚本
-> 已在 **0.6.5 瘦身**中删除（它们各自只跑一次、且与需求编号强耦合）。它们覆盖的行为
+> 已在 **1.0.0 瘦身**中删除（它们各自只跑一次、且与需求编号强耦合）。它们覆盖的行为
 > 现由上面那组离线套件承担：需求 1–4 的浏览器交互 → `requirements-ui.mjs`；评价分页
 > 纯函数与抓取链路 → `review-pagination-test.mjs` / `metacritic-*.mjs` / `media-reviews-e2e.mjs`；
 > 轮播归属 → `poster-rotation-e2e.mjs` / `poster-ui-ssr.mjs`；时长缓存 → `duration-cache-e2e.mjs`。
 > 下文的具体命令与数字作为**历史记录**保留，复现入口以上面 A/B 两段为准。
+
+---
+
+## 1.0.0 复核：瘦身 + 去重 + 海报归属修复（界面同 0.6.4）
+
+这一版**没有新增界面能力**，features 列表与 `0.6.4` **完全相同**，所以判据是 `version`：
+
+```bash
+curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' \
+  | grep -E '"version"|ratings-no-user-score|reviews-ui-search-sort|reviews-page-jump'
+# 期望：version 1.0.0，且 0.6.4 的三个界面标记都在
+```
+
+镜像本体与体积（0.6.4 为 572 MiB）：
+
+```bash
+docker image ls screenplay:latest
+docker run --rm --entrypoint cat screenplay:latest /app/backend/package.json | grep '"version"'
+# 期望 "version": "1.0.0"
+```
+
+- 无回归证明：10 个离线套件 / 382 条断言（含本轮新增的 `poster-merge-unit.mjs` 10 条）。
+  逐套件数字、源码指纹与体积核算见 [`SLIMMING.md`](SLIMMING.md) 第一、三、四节。
+- 唯一的**数据行为**变化是「用户自选海报不再被元数据覆盖」，验收步骤见 README 验收清单第 4 条。
 
 ---
 

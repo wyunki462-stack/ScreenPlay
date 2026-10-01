@@ -4,7 +4,7 @@
 
 ```bash
 cd /vol2/1000/ScreenPlay
-V=$(node -p "require('./package.json').version")   # 例：0.6.5
+V=$(node -p "require('./package.json').version")   # 例：1.0.0
 echo "$V"
 git log --oneline -1                              # 确认要推的就是这个提交
 ```
