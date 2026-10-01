@@ -39,6 +39,9 @@ EXPECTED_FEATURES=(
   poster-rotation-user-decided
   card-carousel-vs-hero-carousel
   review-pagination
+  # 0.6.2：评价抓全的第二层修复 + 平台切换。缺了这两条就说明镜像不是这一版。
+  review-listing-fallback
+  review-platform-filter
 )
 
 mkdir -p "$LOG_DIR" && chmod 755 "$LOG_DIR" 2>/dev/null

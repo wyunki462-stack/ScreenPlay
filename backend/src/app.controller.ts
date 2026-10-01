@@ -40,6 +40,14 @@ export const BACKEND_FEATURES = [
   'media-reviews-api', // GET /api/games/:id/media-reviews + POST /api/games/backfill-ratings
   'media-reviews-ui', // 详情页「媒体评价」标签页（媒体名称 / 媒体打分 / 评价原文）
   'media-reviews-coverage-api', // GET /api/games/media-reviews/coverage（设置页补全卡片）
+  // 第七轮（0.6.2）。
+  //
+  // `review-pagination` 只证明「会翻页」，不证明「落地页没有分页器时也会去翻」——
+  // 而这正是线上「65 家媒体只抓到 1 条」的真正原因（分页器长在 critic-reviews
+  // 列表页上，落地页不带）。所以单独一个标记，让「这次部署到底有没有修好」
+  // 在 health 里就能读出来。
+  'review-listing-fallback', // 落地页无分页器时补探 critic-reviews 列表页并翻页
+  'review-platform-filter', // 媒体评价面板按平台筛选（选项取自评价里出现过的平台）
 ] as const;
 
 @Controller()
@@ -52,7 +60,9 @@ export class AppController {
       // 版本号由镜像构建期通过 BUILD_VERSION 注入（Dockerfile 从根 package.json
       // 读取），而不是依赖 npm_package_version —— 容器里跑的是
       // `node dist/main.js`，npm 环境变量并不存在，那样只会永远回退到常量。
-      version: process.env.BUILD_VERSION ?? process.env.npm_package_version ?? '0.6.1',
+      // 兜底值用 'unknown' 而不是某个版本号字面量：写死一个号会在「没注入 BUILD_VERSION」
+      // 时假装成那个版本，而这恰恰是排障时最不能出错的一处。
+      version: process.env.BUILD_VERSION ?? process.env.npm_package_version ?? 'unknown',
       // Build stamp. `npm_package_version` is only set when npm runs the process,
       // which is NOT the case in the container (`node dist/main.js`), so it always
       // fell back to a constant and could not distinguish builds. These two can:
