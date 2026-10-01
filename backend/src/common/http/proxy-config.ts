@@ -359,16 +359,32 @@ function connectProbe(opts: ConnectProbeOptions): Promise<boolean> {
   });
 }
 
-/** Verify a plaintext HTTP proxy by tunnelling to a public host. */
-export function probeHttpProxy(
+/**
+ * Verify a proxy by tunnelling to a public host.
+ *
+ * `useTls` is the only difference between the two schemes a user can paste
+ * (`http://` plaintext proxy vs `https://` TLS-wrapped proxy), so the probe
+ * body lives here once.
+ */
+function probeProxy(
   url: string,
+  useTls: boolean,
   timeoutMs = 4000,
   target = 'api.rawg.io:443',
 ): Promise<boolean> {
   const u = safeParse(url);
   if (!u) return Promise.resolve(false);
   const port = Number(u.port || (u.protocol === 'https:' ? 443 : 80));
-  return connectProbe({ host: u.hostname, port, useTls: false, timeoutMs, target });
+  return connectProbe({ host: u.hostname, port, useTls, timeoutMs, target });
+}
+
+/** Verify a plaintext HTTP proxy by tunnelling to a public host. */
+export function probeHttpProxy(
+  url: string,
+  timeoutMs = 4000,
+  target = 'api.rawg.io:443',
+): Promise<boolean> {
+  return probeProxy(url, false, timeoutMs, target);
 }
 
 /** Verify a TLS-wrapped HTTP proxy (https:// scheme). */
@@ -377,10 +393,7 @@ export function probeHttpsProxy(
   timeoutMs = 4000,
   target = 'api.rawg.io:443',
 ): Promise<boolean> {
-  const u = safeParse(url);
-  if (!u) return Promise.resolve(false);
-  const port = Number(u.port || (u.protocol === 'https:' ? 443 : 80));
-  return connectProbe({ host: u.hostname, port, useTls: true, timeoutMs, target });
+  return probeProxy(url, true, timeoutMs, target);
 }
 
 function safeParse(url: string): URL | null {

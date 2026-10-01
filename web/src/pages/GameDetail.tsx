@@ -36,6 +36,7 @@ import {
 import { useT, type Translate } from "../i18n";
 import { formatDate } from "../lib/format";
 import { cn, metacriticTone, type MetacriticTone } from "../lib/utils";
+import { platformTags } from "../lib/platforms";
 import type {
   Achievement,
   AchievementCounts,
@@ -106,13 +107,6 @@ function detailPosters(game: GameDetailType): string[] {
     ...(game.screenshots ?? []),
   ].filter((u): u is string => typeof u === "string" && u.length > 0);
   return [...new Set(list)];
-}
-
-/** Platform tags for the detail header. */
-function detailPlatforms(game: GameDetailType): string[] {
-  const list = (game.platforms ?? []).filter(Boolean);
-  if (list.length) return list;
-  return game.platform ? [game.platform] : [];
 }
 
 const scoreTextColor: Record<MetacriticTone, string> = {
@@ -771,7 +765,7 @@ export default function GameDetail() {
                 <h1 className="text-2xl font-bold text-white">{game.name}</h1>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   {/* Feature 6: every user-set platform tag. */}
-                  {detailPlatforms(game).map((p) => (
+                  {platformTags(game).map((p) => (
                     <Badge key={p} variant="secondary" title={game.customPlatform ? t("detail.platform.manual") : t("detail.platform.auto")}>
                       {p}
                     </Badge>

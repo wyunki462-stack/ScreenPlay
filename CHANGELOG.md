@@ -7,9 +7,11 @@
 
 ## [0.6.5] — 2026-10-01
 
-**瘦身版。** 这一版**不改任何界面、接口与数据行为**（前端产物 `index-DZEuyZR6.js` 与 0.6.4
-哈希完全一致），目标只有一个：让仓库与镜像里不再有已经用不到的东西。逐项清单、体积对比与
-验收证据见 [`docs/SLIMMING.md`](docs/SLIMMING.md)。
+**瘦身版。** 目标只有一个：让仓库与镜像里不再有已经用不到的东西，顺带按用户要求清掉重复实现与
+一处海报归属缺陷。分两轮：第一轮动依赖、构建配置、文件与目录结构，**源码零行为改动**（前端产物
+`index-DZEuyZR6.js` 与 0.6.4 哈希完全一致）；第二轮合并 6 组重复逻辑并修掉那个缺陷，因此前端产物
+变为 `index-Ca5ByDzf.js`。**界面与接口没有变化**：第二轮唯一的数据行为变化就是缺陷修复本身。
+逐项清单、体积对比与验收证据见 [`docs/SLIMMING.md`](docs/SLIMMING.md)。
 
 ### 依赖
 
@@ -45,12 +47,46 @@
 - `docs/UPLOAD-0.6.4.md` → `docs/UPLOAD.md`（去掉版号，命令按 `package.json` 现版本自动取值）；
   `docs/VERIFY.md` 的跑法改写成「离线套件」与「已部署实例自检」两段。
 
+### 代码（去重，6 组）
+
+保留行为不变，只让每种实现各留一份：
+
+- **metacritic 关键词变体**：`backend/src/metadata/providers/metacritic-aliases.ts` 新增
+  `titleQueryCandidates()`（「别名 → 拉丁片段 → 原文」的顺序只写一次），`titleQueryVariants()` 与
+  `metacritic.provider.ts` 的 `searchVariants()` 都改为消费它 —— 过去这两个文件各写了一遍
+  「三步策略 + 长度阈值」。
+- **平台回退**：后端新增 `backend/src/common/game-row.ts`（`parseStringArray()` / `platformsOfRow()`），
+  删掉 `games.service.ts` 的私有 `platformsOf` + `displayPlatforms` + 本地 `parseArray`，
+  以及 `trophies.service.ts` 里同名的本地 `platformsOf`；前端新增 `web/src/lib/platforms.ts`
+  （`platformTags()`），`GameCard.tsx` 与 `GameDetail.tsx` 删掉各自的逐字相同副本。
+- **评分色调**：`RatingPickDialog.tsx` 不再自带 75/50 阈值，改用 `web/src/lib/utils.ts` 的
+  `metacriticTone()` + 本组件专属类名表。
+- **Escape 关闭 / 轮播定时器**：新增 `web/src/lib/hooks.ts`（`useEscapeClose()` / `useRotationTimer()`），
+  `PlatformDialog.tsx`、`PosterDialog.tsx`、`HeroPosterCarousel.tsx`、`PosterCarousel.tsx` 改为调用 ——
+  两个轮播的定时器过去各写一遍（含 hover 暂停与手动翻页后的冷却），已经漂移过一次。
+- **代理探针**：`backend/src/common/http/proxy-config.ts` 的 `probeHttpProxy` / `probeHttpsProxy`
+  改为共用 `probeProxy(url, useTls, …)`，对外签名不变。
+
+### 修复
+
+- **用户自己选的海报不再被元数据覆盖。** `MetadataService.persist()` 的注释一直写着「只有本地海报
+  还在时才用元数据填充海报」，但那条判断算出的变量从未被使用：UPDATE 的参数直接传了
+  `fragment.poster`，于是只要 provider 返回海报，用户手动填的外链海报（含 `/api/media/proxy`
+  包装的）就会被静默换掉。现在规则抽成纯函数 `mergePoster()`
+  （`backend/src/metadata/metadata-merge.ts`）并真正接进 SQL 参数，判定复用既有的
+  `isLocalFileUrl()`：自家下载的海报（`/api/media/…`、`/api/posters/…`）仍可被新抓取替换，
+  空白位仍由 provider 填充。
+- 新增离线套件 `backend/scripts/verify/poster-merge-unit.mjs`（10 项）：用 esbuild 打包真实源码断言
+  规则本身，并对编译产物做静态断言，确保 `persist()` 真的调用它、参数首位不再是 `fragment.poster`
+  （IGDB 的 base URL 写死、无法像 HLTB / Metacritic 那样指到桩服，这条链路没法离线端到端驱动）。
+
 ### 验证
 
 - `npm run build`、`npx tsc --noEmit -p backend/tsconfig.json`、`npx tsc --noEmit -p web/tsconfig.json`
   全部通过。
-- 9 个离线套件 / 372 条断言全绿：媒体评价抓取→解析→落库→接口、解析器纯函数、官方接口、
-  抓取编排、轮播归属、SSR、通关时长缓存（含真实浏览器）、媒体评价分页与搜索排序（真实 Chromium）。
+- 10 个离线套件 / 382 条断言全绿：媒体评价抓取→解析→落库→接口、解析器纯函数、官方接口、
+  抓取编排、轮播归属、SSR、通关时长缓存（含真实浏览器）、媒体评价分页与搜索排序（真实 Chromium）、
+  海报归属规则（`poster-merge-unit.mjs`）。
 - 另用「生产依赖子集」起了一次完整应用做冒烟：`/api/health` 返回 200 且 27 个 feature 标记齐全，
   `/`、`/api/games`、`/api/settings`、`/api/library/status` 均 200，数据目录与数据库建表正常。
 

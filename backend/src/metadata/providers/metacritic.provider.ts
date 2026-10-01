@@ -27,7 +27,7 @@ import {
 } from './metacritic-reviews';
 import type { ParsedMediaReview } from './metacritic-reviews';
 import { criticReviewsApiUrl, parseCriticReviewsApi } from './metacritic-reviews-api';
-import { latinFragment, resolveMetacriticAlias } from './metacritic-aliases';
+import { titleQueryCandidates } from './metacritic-aliases';
 
 /**
  * Site origin, overridable so the fetch/parse/store path can be verified against
@@ -211,8 +211,6 @@ export class MetacriticProvider implements MetadataProvider {
   }
 
   async search(name: string, platform: string | null): Promise<ProviderMatch | null> {
-    const slug = toSlug(name);
-
     // A CJK (or otherwise non-Latin) title yields an empty or degenerate slug —
     // "宇宙机器人" → "" and "女神异闻录5皇家版" → "5". Metacritic then either
     // 404s or returns a page of unrelated games, and no score is ever stored.
@@ -220,7 +218,7 @@ export class MetacriticProvider implements MetadataProvider {
     //
     // Fix: keep the Latin part of the name when there is one, and try the
     // original text as a fallback query before giving up.
-    const variants = this.searchVariants(name, slug);
+    const variants = this.searchVariants(name);
 
     for (const variant of variants) {
       // Compare against the query we actually searched with, not the original
@@ -234,17 +232,14 @@ export class MetacriticProvider implements MetadataProvider {
   }
 
   /**
-   * Build the ordered list of search queries to try for a title.
+   * Build the ordered list of search queries to try for a title, with the URL
+   * slug each one needs.
    *
-   * Latin titles are searched directly. Titles with a usable Latin fragment
-   * (e.g. "赛博朋克 2077" → "2077", "機戰傭兵™VI 境界天火™" → "VI") are searched
-   * by that fragment first, because Metacritic indexes English names. Purely
-   * non-Latin titles still get a last-resort original-text attempt.
+   * Which titles to try — and the thresholds that decide it — comes from the
+   * shared strategy in `titleQueryCandidates`; this only slugs each candidate
+   * and drops duplicates that collapse to the same slug.
    */
-  private searchVariants(
-    name: string,
-    slug: string,
-  ): { query: string; slug: string }[] {
+  private searchVariants(name: string): { query: string; slug: string }[] {
     const out: { query: string; slug: string }[] = [];
     const push = (query: string, s: string) => {
       const key = s.trim();
@@ -253,24 +248,7 @@ export class MetacriticProvider implements MetadataProvider {
       out.push({ query, slug: key });
     };
 
-    // 1) Best case: a known English title for a CJK name. Metacritic only
-    //    indexes Latin titles, so this is the difference between a score and
-    //    nothing for a Chinese/Japanese library.
-    const alias = resolveMetacriticAlias(name);
-    if (alias) push(alias, toSlug(alias));
-
-    // 2) A distinctive Latin fragment inside an otherwise CJK title
-    //    (e.g. "機戰傭兵™VI 境界天火™" → "VI" is too short, but
-    //    "賽博朋克 2077" → "2077" is usable). A lone "2" or "5" is not: it
-    //    matches random games far better than the intended one.
-    const latin = latinFragment(name);
-    if (latin && latin.length >= 4 && /\p{L}/u.test(latin)) {
-      push(latin, toSlug(latin));
-    }
-
-    // 3) Last resort: the original title (works for Latin names; harmless 404
-    //    for a pure-CJK name, which the alias/fragment steps above cover).
-    push(name, slug);
+    for (const query of titleQueryCandidates(name)) push(query, toSlug(query));
     return out;
   }
 
@@ -353,8 +331,7 @@ export class MetacriticProvider implements MetadataProvider {
    * titles could not be matched by hand.
    */
   async searchAll(name: string, platform: string | null): Promise<ProviderMatch[]> {
-    const slug = toSlug(name);
-    for (const variant of this.searchVariants(name, slug)) {
+    for (const variant of this.searchVariants(name)) {
       const html = await this.fetchHtml(`${SEARCH}${encodeURIComponent(variant.slug)}/`, {
         category: 13,
       });

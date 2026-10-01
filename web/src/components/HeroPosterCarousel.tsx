@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Images } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useT } from "../i18n";
+import { useRotationTimer } from "../lib/hooks";
 
 /**
  * 详情页大图区域的「官方海报轮播」。
@@ -81,14 +82,14 @@ export default function HeroPosterCarousel({
 
   // 自动轮播：只有 `slideshow` 模式且确实有多张时才启动。
   const rotating = mode === "slideshow" && count > 1;
-  useEffect(() => {
-    if (!rotating) return;
-    const timer = setInterval(() => {
-      if (paused || Date.now() < resumeAt.current) return;
-      setIndex((i) => (i + 1) % count);
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [rotating, count, intervalMs, paused]);
+  useRotationTimer({
+    active: rotating,
+    paused,
+    resumeAt,
+    intervalMs,
+    advance: () => setIndex((i) => (i + 1) % count),
+    restartKey: count,
+  });
 
   if (count === 0) {
     return (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useT } from "../i18n";
+import { useRotationTimer } from "../lib/hooks";
 
 /**
  * Cover renderer that supports both display modes (feature 5).
@@ -86,18 +87,19 @@ export default function PosterCarousel({
     [count, intervalMs],
   );
 
+  useRotationTimer({
+    active: rotating,
+    paused,
+    resumeAt,
+    intervalMs,
+    advance: () => setIndex((i) => (i + 1) % count),
+    restartKey: count,
+  });
+
   useEffect(() => {
-    if (!rotating) {
-      // A single image, or static mode: always show the cover.
-      if (!browsable) setIndex(0);
-      return;
-    }
-    const timer = setInterval(() => {
-      if (paused || Date.now() < resumeAt.current) return;
-      setIndex((i) => (i + 1) % count);
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [rotating, browsable, count, intervalMs, paused]);
+    // A single image, or static mode: always show the cover.
+    if (!rotating && !browsable) setIndex(0);
+  }, [rotating, browsable]);
 
   // Reset when the poster set itself changes (e.g. after an edit).
   useEffect(() => {

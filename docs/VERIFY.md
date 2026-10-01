@@ -20,6 +20,7 @@ node backend/scripts/verify/duration-cache-e2e.mjs       # 空时长不写缓存
 node backend/scripts/verify/poster-rotation-e2e.mjs      # 轮播归属（桩服）
 node backend/scripts/verify/poster-ui-ssr.mjs            # 海报 UI 的 SSR DOM 行为
 node backend/scripts/verify/requirements-ui.mjs          # 需求 1–4 交互（真实 Chromium，不启服务）
+node backend/scripts/verify/poster-merge-unit.mjs        # 海报归属规则（esbuild 打包真实源码 + 接线断言）
 
 # B. 已部署实例上的运行时自检（需要容器在跑；PORT 默认 3001）
 cd <仓库根目录>

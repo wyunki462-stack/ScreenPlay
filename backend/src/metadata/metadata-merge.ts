@@ -159,3 +159,26 @@ export function mergeDuration(
   if (contributed && !filled.duration_source) filled.duration_source = incomingSource;
   return filled;
 }
+
+/**
+ * Decide which poster URL to store after a metadata refresh.
+ *
+ * A stored poster the user picked by hand — an external link, raw or proxied through
+ * `/api/media/proxy` — must survive a provider refresh, otherwise matching metadata
+ * silently throws away the poster the user chose. A poster we downloaded ourselves is
+ * only a stale copy of an older scrape, so it may be replaced.
+ *
+ * `null` means "keep what is stored" (the UPDATE uses `COALESCE(?, poster_url)`);
+ * the caller decides what counts as "ours" via `isLocalFileUrl`.
+ *
+ * @param storedPosterIsUserChoice true when `poster_url` is non-empty and not our copy
+ * @param providerPoster freshly scraped poster URL, if the provider returned one
+ */
+export function mergePoster(
+  storedPosterIsUserChoice: boolean,
+  providerPoster: string | null | undefined,
+): string | null {
+  if (storedPosterIsUserChoice) return null;
+  const incoming = (providerPoster ?? '').trim();
+  return incoming || null;
+}

@@ -31,6 +31,7 @@ import {
   parseJson,
   mergeRatings,
   mergeDuration,
+  mergePoster,
   hasMetascore,
   DURATION_SOURCE_PRIORITY,
   DURATION_SOURCE_ORDER,
@@ -788,11 +789,12 @@ export class MetadataService {
     const names = (list: string[] | undefined) =>
       list && list.length ? JSON.stringify(uniq(list)) : null;
 
-    // Fill poster from metadata only when a local poster is still in place.
-    const poster =
-      game.poster_url && !game.poster_url.includes('/api/media/')
-        ? game.poster_url
-        : fragment.poster ?? game.poster_url;
+    // A poster the user picked by hand must survive a provider refresh; only a poster
+    // we downloaded ourselves may be replaced. `null` means "keep the stored value"
+    // because the UPDATE below uses COALESCE(?, poster_url).
+    const storedPoster = (game.poster_url ?? '').trim();
+    const posterIsUserChoice = storedPoster !== '' && !isLocalFileUrl(storedPoster);
+    const poster = mergePoster(posterIsUserChoice, fragment.poster);
 
     // Duration is merged by SOURCE PRIORITY rather than first-writer-wins.
     // Providers persist in parallel, so plain COALESCE let RAWG's average
@@ -829,7 +831,7 @@ export class MetadataService {
          updated_at = ?
        WHERE id = ?`,
       [
-        fragment.poster ?? null,
+        poster,
         fragment.summary ?? null,
         names(fragment.developers),
         names(fragment.publishers),

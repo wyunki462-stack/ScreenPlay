@@ -24,6 +24,7 @@ import {
 } from './trophy-source.interface';
 import { storeAchievements } from './achievement-store';
 import { AchievementTargetService } from './achievement-target.service';
+import { platformsOfRow } from '../common/game-row';
 
 /** Outcome of one trophy sync, mapped onto `games.achievements_*`. */
 export interface TrophySyncOutcome {
@@ -60,19 +61,6 @@ export function isPlayStation(platforms: string[]): boolean {
     // Short forms: ps3/ps4/ps5/psv/psp/vita, but not "psp" inside another word.
     return /^(ps[3-5]|psv|psp|vita)\b/.test(s) || /^(ps[3-5]|psv|psp)$/.test(s);
   });
-}
-
-/** Parse the JSON `platforms` column, falling back to the single `platform`. */
-function platformsOf(row: GameRow): string[] {
-  let list: string[] = [];
-  try {
-    const parsed = JSON.parse(row.platforms ?? '[]');
-    if (Array.isArray(parsed)) list = parsed.map((p) => String(p));
-  } catch {
-    /* malformed JSON — fall back to the scalar column */
-  }
-  if (list.length) return list;
-  return row.platform ? [row.platform] : [];
 }
 
 @Injectable()
@@ -112,7 +100,7 @@ export class TrophiesService {
       'SELECT id, name, platform, platforms, trophy_source, last_achievements_refresh FROM games WHERE id = ?',
       [gameId],
     );
-    return !!row && isPlayStation(platformsOf(row));
+    return !!row && isPlayStation(platformsOfRow(row));
   }
 
   /**
@@ -141,7 +129,7 @@ export class TrophiesService {
       return { status: 'unsupported', error: null, source: null, total: 0 };
     }
 
-    if (!trophyTarget && !isPlayStation(platformsOf(row))) {
+    if (!trophyTarget && !isPlayStation(platformsOfRow(row))) {
       // Not an error — a PC game legitimately has no trophies. The verdict is
       // returned rather than written: the caller may have Steam results for this
       // game, and writing 'unsupported' here used to overwrite a real Steam

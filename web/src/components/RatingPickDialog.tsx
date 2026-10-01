@@ -22,14 +22,15 @@ import {
   useSetRatingTarget,
 } from "../api/hooks";
 import type { RatingCandidate } from "../types";
+import { metacriticTone, type MetacriticTone } from "../lib/utils";
 
-/** 评分条目的颜色分档，与 Metacritic 自身的配色习惯一致。 */
-function scoreTone(score: number | null): string {
-  if (score == null) return "bg-zinc-800 text-zinc-400";
-  if (score >= 75) return "bg-emerald-600/90 text-white";
-  if (score >= 50) return "bg-amber-500/90 text-zinc-900";
-  return "bg-rose-600/90 text-white";
-}
+/** 评分条目的颜色分档，与 Metacritic 自身的配色习惯一致（阈值见 lib/utils 的 `metacriticTone`）。 */
+const SCORE_TONE_CLASS: Record<MetacriticTone, string> = {
+  green: "bg-emerald-600/90 text-white",
+  yellow: "bg-amber-500/90 text-zinc-900",
+  red: "bg-rose-600/90 text-white",
+  none: "bg-zinc-800 text-zinc-400",
+};
 
 export default function RatingPickDialog({
   gameId,
@@ -190,7 +191,7 @@ export default function RatingPickDialog({
                   </div>
                 </div>
                 <span
-                  className={`shrink-0 rounded px-2 py-1 text-sm font-semibold ${scoreTone(c.metascore)}`}
+                  className={`shrink-0 rounded px-2 py-1 text-sm font-semibold ${SCORE_TONE_CLASS[metacriticTone(c.metascore)]}`}
                   title={t("detail.rating.pick.metascore")}
                 >
                   {c.metascore}

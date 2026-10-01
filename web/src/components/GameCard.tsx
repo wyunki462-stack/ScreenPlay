@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Clock, Images, TriangleAlert } from "lucide-react";
 import type { GameSummary } from "../types";
 import { useT } from "../i18n";
+import { platformTags } from "../lib/platforms";
 import PosterCarousel from "./PosterCarousel";
 import { MetacriticBadge } from "./MetacriticBadge";
 import GameMenu from "./GameMenu";
@@ -16,11 +17,6 @@ function cardPosters(game: GameSummary): string[] {
 }
 
 /** Platform tags to display; falls back to the auto-detected value. */
-function platformTags(game: GameSummary): string[] {
-  const list = (game.platforms ?? []).filter(Boolean);
-  if (list.length) return list;
-  return game.platform ? [game.platform] : [];
-}
 
 /**
  * Drag-and-drop wiring handed down from the gallery.

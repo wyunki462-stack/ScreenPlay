@@ -16,6 +16,7 @@ import type { GameDetail, PosterMode } from "../types";
 import { Button } from "./ui/Button";
 import LazyImage from "./LazyImage";
 import { useT } from "../i18n";
+import { useEscapeClose } from "../lib/hooks";
 
 /** How many album tiles to mount at once, and how many more per "load more". */
 const ALBUM_PAGE = 60;
@@ -84,13 +85,7 @@ export default function PosterDialog({
     setAlbumLimit(ALBUM_PAGE);
   }, [albumFilter]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useEscapeClose(onClose);
 
   /**
    * Shared mutation options so every poster action surfaces its error inside

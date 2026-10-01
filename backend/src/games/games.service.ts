@@ -20,6 +20,7 @@ import { DURATION_SOURCE_ORDER } from '../metadata/metadata-merge';
 import { titleQueryVariants } from '../metadata/providers/metacritic-aliases';
 import { formatDurationText } from '../library/duration.service';
 import { toProxiedImageUrl } from '../common/image-url';
+import { parseStringArray, platformsOfRow } from '../common/game-row';
 import { PostersService } from './posters.service';
 import { MediaReviewsService } from './media-reviews.service';
 
@@ -186,18 +187,6 @@ export class GamesService {
     /** 媒体评价 storage — read for the detail payload, written by the backfill. */
     private readonly reviews: MediaReviewsService,
   ) {}
-
-  /** User-selected platforms for a row, falling back to the scraped value. */
-  private platformsOf(r: GameRow): string[] {
-    const list = parseArray(r.platforms ?? '[]');
-    if (list.length) return list;
-    return r.platform ? [r.platform] : [];
-  }
-
-  /** The platform list shown on cards/details (custom overrides scraped). */
-  private displayPlatforms(r: GameRow): string[] {
-    return this.platformsOf(r);
-  }
 
   /**
    * Every registered poster URL for a game — the **card / gallery** set.
@@ -982,9 +971,9 @@ export class GamesService {
     const scraped = {
       poster: !!fresh.poster_url,
       summary: !!fresh.summary && fresh.summary.trim().length > 0,
-      developers: parseArray(fresh.developers ?? '[]').length > 0,
-      rating: parseArray(fresh.ratings ?? '[]').length > 0,
-      screenshots: parseArray(fresh.screenshots ?? '[]').length > 0,
+      developers: parseStringArray(fresh.developers ?? '[]').length > 0,
+      rating: parseStringArray(fresh.ratings ?? '[]').length > 0,
+      screenshots: parseStringArray(fresh.screenshots ?? '[]').length > 0,
     };
     const missing = (Object.keys(scraped) as Array<keyof typeof scraped>).filter(
       (k) => !scraped[k],
@@ -1055,7 +1044,7 @@ export class GamesService {
     }
 
     const fresh = this.db.get<GameRow>('SELECT * FROM games WHERE id = ?', [id])!;
-    return { updated: true, platforms: this.displayPlatforms(fresh), posterMode: fresh.poster_mode };
+    return { updated: true, platforms: platformsOfRow(fresh), posterMode: fresh.poster_mode };
   }
 
   /** Platform list for the UI filter dropdown. */
@@ -1063,7 +1052,7 @@ export class GamesService {
     const rows = this.db.all<GameRow>('SELECT * FROM games');
     const counts = new Map<string, number>();
     for (const r of rows) {
-      const list = this.displayPlatforms(r);
+      const list = platformsOfRow(r);
       if (list.length === 0) {
         counts.set('未知', (counts.get('未知') ?? 0) + 1);
         continue;
@@ -1131,7 +1120,7 @@ export class GamesService {
     const rating = manualRating
       ? { metascore: manualRating.metascore, criticCount: manualRating.criticCount }
       : firstRating(r.ratings);
-    const platforms = this.displayPlatforms(r);
+    const platforms = platformsOfRow(r);
     return {
       customOrder,
       id: r.id,
@@ -1168,13 +1157,13 @@ export class GamesService {
       ...this.toSummary(r),
       folderName: r.folder_name,
       folderPath: r.folder_path,
-      aliases: parseArray(r.aliases),
+      aliases: parseStringArray(r.aliases),
       summary: r.summary,
-      developers: parseArray(r.developers),
-      publishers: parseArray(r.publishers),
+      developers: parseStringArray(r.developers),
+      publishers: parseStringArray(r.publishers),
       releaseDate: r.release_date,
-      voiceActors: parseArray(r.voice_actors),
-      screenshots: parseArray(r.screenshots).map((s) => this.proxyImage(s) ?? s),
+      voiceActors: parseStringArray(r.voice_actors),
+      screenshots: parseStringArray(r.screenshots).map((s) => this.proxyImage(s) ?? s),
       // Full poster set for the detail-page editor (features 4 & 5).
       //
       // Routed through the image proxy like every other remote picture. Scraped
@@ -1254,7 +1243,7 @@ export class GamesService {
   private matchesFilters(r: GameRow, f: GameFilters): boolean {
     if (f.search) {
       const q = f.search.toLowerCase();
-      const hay = `${r.name} ${parseArray(r.developers).join(' ')} ${parseArray(r.publishers).join(' ')}`.toLowerCase();
+      const hay = `${r.name} ${parseStringArray(r.developers).join(' ')} ${parseStringArray(r.publishers).join(' ')}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     if (f.platform) {
@@ -1262,7 +1251,7 @@ export class GamesService {
       // back to the scraped value. Matching is case-insensitive and loose so
       // "ps5" finds "PlayStation 5".
       const want = f.platform.toLowerCase().trim();
-      const list = this.platformsOf(r).map((p) => p.toLowerCase());
+      const list = platformsOfRow(r).map((p) => p.toLowerCase());
       const hit =
         list.some((p) => p.includes(want) || want.includes(p)) ||
         (r.platform ? r.platform.toLowerCase().includes(want) : false) ||
@@ -1420,15 +1409,6 @@ function parseJson<T = unknown>(json: string): T {
     return JSON.parse(json || '[]') as T;
   } catch {
     return [] as unknown as T;
-  }
-}
-
-function parseArray(json: string): string[] {
-  try {
-    const v = JSON.parse(json || '[]');
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
   }
 }
 

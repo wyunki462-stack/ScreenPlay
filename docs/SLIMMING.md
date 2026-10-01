@@ -3,9 +3,10 @@
 > 前提：**不改核心业务逻辑与接口定义**、不影响构建、保留核心文档与验证脚本。
 > 本文包含四件事：① 全量功能验收报告 ② 瘦身清单 ③ 瘦身前后体积对比 ④ 无回归证明。
 >
-> 源码树（`backend/src` + `web/src`，129 个文件）本轮结束后指纹 `cdafb82e0f15aa3f`
-> （0.6.4 为 `a7bb3e34a7c330c6`）；差异只来自 5 处死代码与错误注释清理，**没有行为改动** ——
-> 最直接的证据是前端产物 `dist/assets/index-DZEuyZR6.js` 的哈希与 0.6.4 完全相同。
+> 分两轮：**第一轮**只动依赖 / 构建配置 / 文件 / 目录结构，源码零行为改动（前端产物
+> `dist/assets/index-DZEuyZR6.js` 与 0.6.4 同哈希）。**第二轮**按用户要求合并 6 组重复逻辑并
+> 修掉一处海报归属缺陷（见 2.5），源码因此有改动，前端产物变为 `dist/assets/index-Ca5ByDzf.js`；
+> 这一轮的无回归由 10 个离线套件 / 382 条断言证明（见第四节），不再依赖哈希相同。
 
 ---
 
@@ -16,7 +17,7 @@
 | # | 功能项 | 验证方式 | 结果 |
 |---|---|---|---|
 | 1 | 后端编译 | `npm run build -w backend`（nest build） | ✅ exit 0 |
-| 2 | 前端编译 | `npm run build -w web`（tsc && vite build） | ✅ exit 0；`dist/assets/index-DZEuyZR6.js` 537.99 kB（gzip 157.27），**与 0.6.4 同哈希** |
+| 2 | 前端编译 | `npm run build -w web`（tsc && vite build） | ✅ exit 0；`dist/assets/index-Ca5ByDzf.js` 537.95 kB（gzip 157.34）+ `index-BCj6mJxQ.css` 73.34 kB（gzip 12.62）（第一轮的 `index-DZEuyZR6.js` 与 0.6.4 同哈希；第二轮源码有去重改动，哈希必然变化） |
 | 3 | 类型检查 | `npx tsc --noEmit -p backend/tsconfig.json --tsBuildInfoFile /tmp/.tsbi-backend.json`、`npx tsc --noEmit -p web/tsconfig.json` | ✅ 均 exit 0 |
 | 4 | 应用启动 | 用「生产依赖子集」起 `backend/dist/main.js`（`PORT=3100 DATA_DIR=/tmp/slim/data`） | ✅ `/api/health` → 200，日志 `Ready after 1.0s` |
 | 5 | 功能标记 | 上述 health 响应的 `features` | ✅ 27 个全在，含 `ratings-no-user-score`、`reviews-ui-search-sort`、`reviews-page-jump` |
@@ -112,7 +113,9 @@ peerDependency）。
   （被 `screenplay.yml`、README、docs、`scripts/package-image.sh`、`scripts/push-to-ghcr.sh` 以根相对路径引用）、
   `scripts/verify-image-fix.sh`（`docs/VERIFY.md` 入口 + `scripts/docker-build.sh` 提示）。
 
-### 2.5 代码清理（5 处，全部通过类型检查）
+### 2.5 代码清理与去重（第一轮 5 处死代码 + 第二轮 6 组去重 + 1 处缺陷修复，全部通过类型检查）
+
+**第一轮：死代码与错误注释**
 
 - `backend/src/media/media-processor.service.ts`：删未使用的 `decodeJxr` 导入。
 - `backend/src/media/streaming.service.ts`：删死字段 `chunkSize`（`1024 * 256`，从未被读取）。
@@ -126,23 +129,46 @@ peerDependency）。
 - 扫描结论（子代理，128 个 `.ts`/`.tsx`、24592 行、397 个导出符号）：`backend/src` 与 `web/src` 内没有
   `console.*`/`debugger` 调试残留，也没有零引用的导出符号。
 
-**发现但故意不改**（改了就是改业务逻辑，超出瘦身范围）：
+**第二轮：6 组重复逻辑（用户要求，逐组都保持行为等价）**
 
-1. `backend/src/metadata/metadata.service.ts:791-795` 有一段死代码 `poster`，其上方注释承诺
-   「本地已有海报时不覆盖」，但实际 SQL 是 `:814 poster_url = COALESCE(?, poster_url)` 且
-   `:832` 传 `fragment.poster ?? null` —— 只要 provider 给了海报，用户自定义的外链海报就会被覆盖。
-   **疑似真实缺陷，建议单独确认后再修。**
-2. 6 组重复逻辑只记录不重构：metacritic 关键词变体（`metacritic-aliases.ts:192` ↔
-   `metacritic.provider.ts:244`）、平台回退三连（`GameCard.tsx:19` ↔ `GameDetail.tsx:112` ↔
-   `games.service.ts:191`）、评分色调（`RatingPickDialog.tsx:27` ↔ `lib/utils.ts:7`）、Escape 关闭
-   （`PlatformDialog.tsx:28-34` ↔ `PosterDialog.tsx:87`）、轮播定时器（`HeroPosterCarousel.tsx:22` ↔
-   `PosterCarousel.tsx:21`）、代理探针（`proxy-config.ts:363-372` ↔ `:375-384`）。它们都在核心链路上，
-   重构收益低于风险。
+| # | 组 | 现在只有一份实现在 | 原来的副本 |
+|---|---|---|---|
+| G1 | metacritic 关键词变体 | `backend/src/metadata/providers/metacritic-aliases.ts` 的 `titleQueryCandidates()`（`titleQueryVariants()` 与 provider 的 `searchVariants()` 都消费它） | `metacritic.provider.ts` 里另写一遍三步策略与长度阈值 |
+| G2 | 平台回退 | 后端 `backend/src/common/game-row.ts` 的 `platformsOfRow()` / `parseStringArray()`；前端 `web/src/lib/platforms.ts` 的 `platformTags()` | `games.service.ts` 的 `platformsOf`+`displayPlatforms`+本地 `parseArray`（三份）、`trophies.service.ts` 的同名 `platformsOf`、`GameCard.tsx` 与 `GameDetail.tsx` 各一份逐字相同的前端副本 |
+| G3 | 评分色调阈值 | `web/src/lib/utils.ts` 的 `metacriticTone()`（`RatingPickDialog.tsx` 只保留自己的类名表） | `RatingPickDialog.tsx` 自带 75/50 阈值 |
+| G4 | Escape 关闭弹窗 | `web/src/lib/hooks.ts` 的 `useEscapeClose()` | `PlatformDialog.tsx`、`PosterDialog.tsx` 各一份 |
+| G5 | 轮播定时器 | `web/src/lib/hooks.ts` 的 `useRotationTimer()` | `HeroPosterCarousel.tsx`、`PosterCarousel.tsx` 各一份（hover 暂停 + 手动翻页冷却，已漂移过一次） |
+| G6 | 代理探针 | `backend/src/common/http/proxy-config.ts` 的 `probeProxy(url, useTls, …)` | `probeHttpProxy` / `probeHttpsProxy` 两份逐字相同 |
+
+新增文件：`backend/src/common/game-row.ts`、`web/src/lib/platforms.ts`、`web/src/lib/hooks.ts`。
+G4/G5 之外刻意不合并的相邻代码：`VideoPlayer.tsx:43-53`（另需锁 `body.overflow`）、
+`MediaGrid.tsx:72`（在 else-if 链里关闭照片浮层），行为不同，合并只会让两处都更难读。
+
+**第二轮：缺陷修复（`mergePoster`）**
+
+`backend/src/metadata/metadata.service.ts` 的 `persist()` 曾有一段死代码 `poster`：注释承诺
+「本地已有海报时才用元数据填充」，但 UPDATE 的参数传的是 `fragment.poster`，那句判断从未生效 ——
+provider 一给海报，用户手动填的外链海报就会被静默换掉。现在：
+
+- 规则抽成纯函数 `mergePoster(storedPosterIsUserChoice, providerPoster)`，放在
+  `backend/src/metadata/metadata-merge.ts`（与 `mergeDuration`/`mergeRatings` 同一处）；
+- 判定复用既有的 `isLocalFileUrl()`：用户外链（含 `/api/media/proxy` 包装，**不含**在「自家的」里）
+  → 返回 `null`，交给 SQL 的 `COALESCE(?, poster_url)` 保持原值；自家下载的 `/api/media/…`、
+  `/api/posters/…` 仍可被新抓取替换；空白位仍由 provider 填充；
+- `persist()` 的 SQL 参数首位改为 `poster`（`poster_url = COALESCE(?, poster_url)` 不变）。
+
+新增离线套件 `backend/scripts/verify/poster-merge-unit.mjs`（10 项）：用 esbuild 打包真实源码后
+直接断言规则（7 项），并对编译产物做静态断言（3 项）确保 `persist()` 真的调用它、参数首位不再是
+`fragment.poster` —— IGDB 的 base URL 写死在 `igdb.provider.ts`、无法像 HLTB/Metacritic 那样指到
+桩服，这条链路没法离线端到端驱动，所以「规则 + 接线」两层分开测。
 
 ### 2.6 明确没动的东西
 
 核心业务逻辑、接口定义、`userScore`/`userCount` 的后端解析（接口与离线测试仍在使用）、
 CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
+
+第二轮唯一的**数据行为**变化就是 2.5 节的海报归属缺陷修复（用户自选海报不再被覆盖），这是
+用户明确要求修的那一件事；其余 6 组去重都保持行为等价，界面与接口没有变化。
 
 ---
 
@@ -198,15 +224,26 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 
 ## 四、无回归证明
 
-1. **构建**：`npm run build` exit 0；前端产物 `index-DZEuyZR6.js` 与 0.6.4 **同哈希** ——
-   哈希相同即证明前端代码零改动。
+1. **构建**：`npm run build` exit 0；前端产物 `index-Ca5ByDzf.js` 537.95 kB（gzip 157.34）+
+   `index-BCj6mJxQ.css` 73.34 kB（gzip 12.62）。第一轮（只动依赖/构建/文件）的产物与 0.6.4
+   **同哈希**（`index-DZEuyZR6.js`），那一轮由此即可证明前端零改动；第二轮合并了 6 组重复逻辑，
+   产物必然变化 —— 这一轮的无回归靠下面的套件断言，而不是靠哈希。
 2. **类型**：后端、前端两个 `tsc --noEmit` 均 exit 0。
-3. **测试**：9 个离线套件 / 372 条断言 0 失败（逐套件数字见第一节）。
+3. **测试**：10 个离线套件 / 382 条断言 0 失败（逐套件数字见第一节）。新增的
+   `backend/scripts/verify/poster-merge-unit.mjs`（10 项）= 规则断言 7 项 + 「`persist()` 真的走了
+   这条规则」的编译产物断言 3 项。
 4. **运行**：用生产依赖子集启动完整应用 → `/api/health` 200 + 27 个 feature 标记齐全，
    静态前端 200，数据库建表与 schema 升级正常，媒体库扫描正常。
-5. **指纹**：`backend/src` + `web/src` 共 129 个文件 = `cdafb82e0f15aa3f`；与 0.6.4 的
-   `a7bb3e34a7c330c6` 的差异只来自 2.5 节的 5 处死代码/注释清理。
+5. **指纹**：`backend/src` + `web/src` 共 132 个文件 = `adfce1c8f2d77b6d`
+   （`node scripts/gen-source-hash.mjs --check` exit 0）；0.6.4 为 `a7bb3e34a7c330c6`，第一轮为
+   `cdafb82e0f15aa3f`（129 文件）。多出的 3 个文件就是第二轮新增的 `backend/src/common/game-row.ts`、
+   `web/src/lib/platforms.ts`、`web/src/lib/hooks.ts`。
 6. **镜像内自检**：Dockerfile 构建期跑构建产物断言 + 原生依赖读写自检，任一步失败即构建失败。
+7. **去重等价性**：后端共享解析器 `backend/dist/common/game-row.js` 直测 5 项通过（数组优先、单值
+   回退、两侧皆空、坏 JSON 回退、元素 `String()` 映射）；轮播（G5）由 `poster-ui-ssr.mjs` 与
+   `requirements-ui.mjs` 覆盖。**G3（评分色调）与 G4（Escape 关闭弹窗）没有自动化套件** —— 它们的
+   依据是「改动前的副本与保留的那份逐字相同」+ 两个 `tsc` 通过，界面验收时顺手点一下这两种弹窗与
+   评分选择弹窗即可。
 
 ---
 
@@ -215,9 +252,12 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 1. 镜像体积的**实测值**需你执行 `bash scripts/docker-build.sh` 后用 `docker image ls` 取（本环境无
    docker 权限）；第三节给出的是在同一份真实镜像层内容上做字节级核算的推算值 386.6 MiB（−32.4%）。
 2. 可选优化：把镜像层改成压缩推送（见第三节末的提醒），能再省一大截传输与 registry 存储量。
-3. `metadata.service.ts` 海报覆盖问题疑似缺陷（见 2.5），建议单独确认后修。
-4. 6 组重复逻辑只报告未重构（见 2.5）。
-5. `docs/VERIFY.md` 正文历史命令保留；新跑法在文件顶部。
+3. ~~`metadata.service.ts` 的海报覆盖疑似缺陷~~ **已按用户要求修复**（2.5），并用
+   `backend/scripts/verify/poster-merge-unit.mjs` 固定下来。
+4. ~~6 组重复逻辑只报告未重构~~ **已全部合并**（2.5 的 G1–G6）。
+5. **`logs/*.log`（264 KB）我删不掉**：目录与文件属 `wyunki-nas`，本环境身份是
+   `fn-deepseek-harness`（uid 973），`rm -f logs/*.log` 报 `Permission denied`。需要你在 NAS 上删。
+6. `docs/VERIFY.md` 正文历史命令保留；新跑法在文件顶部。
 6. 线上确认项：007《初露锋芒》页点「重新抓取媒体评价」应从 1 条变为约 99 条；
    详情页评分区去掉「用户评分」、评价面板的页码跳转、搜索与排序三项界面改动需用户验收。
 

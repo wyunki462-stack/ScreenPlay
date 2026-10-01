@@ -188,19 +188,31 @@ export function latinFragment(raw: string): string {
  *  1. the curated English alias, when one exists;
  *  2. a distinctive Latin fragment inside a CJK title (>= 4 chars);
  *  3. the original title — correct for Latin names, harmless otherwise.
+ *
+ * `titleQueryCandidates` is the raw ordered list; callers that need to
+ * de-duplicate (by alias key, by URL slug, …) key that list themselves, so the
+ * strategy above — the length/script thresholds in particular — lives in one place.
  */
-export function titleQueryVariants(raw: string): string[] {
+export function titleQueryCandidates(raw: string): string[] {
   const out: string[] = [];
   const push = (q: string) => {
     const t = (q || '').trim();
-    if (!t) return;
-    if (out.some((o) => aliasKey(o) === aliasKey(t))) return;
-    out.push(t);
+    if (t) out.push(t);
   };
 
   push(resolveMetacriticAlias(raw) ?? '');
   const latin = latinFragment(raw);
   if (latin && latin.length >= 4 && /\p{L}/u.test(latin)) push(latin);
   push(raw);
+  return out;
+}
+
+/** The same candidates, de-duplicated case/™-insensitively via `aliasKey`. */
+export function titleQueryVariants(raw: string): string[] {
+  const out: string[] = [];
+  for (const q of titleQueryCandidates(raw)) {
+    if (out.some((o) => aliasKey(o) === aliasKey(q))) continue;
+    out.push(q);
+  }
   return out;
 }

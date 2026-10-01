@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { useUpdateGame } from "../api/hooks";
 import type { GameDetail } from "../types";
 import { Button } from "./ui/Button";
 import { useT } from "../i18n";
+import { useEscapeClose } from "../lib/hooks";
 
 /**
  * "平台设置" dialog (feature 6).
@@ -25,13 +26,7 @@ export default function PlatformDialog({
   const update = useUpdateGame(game.id);
   const options = game.knownPlatforms ?? [];
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useEscapeClose(onClose);
 
   const toggle = (value: string) =>
     setSelected((prev) =>
