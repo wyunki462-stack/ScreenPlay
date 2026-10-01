@@ -25,6 +25,80 @@ bash scripts/verify-round-l.sh
 
 ---
 
+## 0.6.4 复核：评分区去列 + 评价面板搜索 / 排序 / 点页码跳页
+
+这一版只改界面，不碰抓取链路，复核两件事：
+
+1. **镜像是不是这一版**（一条命令）：
+
+   ```bash
+   curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' \
+     | grep -E '"version"|ratings-no-user-score|reviews-ui-search-sort|reviews-page-jump'
+   # version 0.6.4 + 三个标记都在 = 这一版
+   ```
+
+2. **浏览器里三处**（任一游戏的详情页）：
+   - **评分区**：Metascore 右侧**不再有**「用户评分」那一列（只剩 Metascore、评论数、
+     分级）。
+   - **页码**：「媒体评价」标签页底部是**可点的页码按钮**，点「2」直接跳到第 2 页且被
+     点中的页码高亮；纯文本「第 N / M 页」仍留在旁边。
+   - **搜索 / 排序**：面板左上多了搜索框与「排序方式」。搜索框输入 `IGN` → 只剩 IGN 的
+     评价；「排序方式」选「评分从低到高」→ 第一条是全场最低分那家；搜 `zzzz` → 出现
+     「没有名称含…的媒体」（**不是**「该平台暂无评价」）。
+
+这三处只影响显示，**不需要重新抓取**评价数据。
+
+**离线自动化**（无需 Docker；浏览器断言用仓库内已缓存的 Playwright/Chromium）：
+
+```bash
+cd <仓库根目录>
+node backend/scripts/verify/review-pagination-test.mjs   # 98 项（本轮 +33）
+node backend/scripts/verify/requirements-ui.mjs          # 58 项（本轮 +18，真实 Chromium）
+```
+
+---
+
+## 0.6.3 复核：媒体评价抓全 + 卡片箭头
+
+前两轮（0.6.1 / 0.6.2）都在「HTML 分页」上修，而真实站点的评价列表**已经不写在 HTML
+里了**（Nuxt 客户端调 `backend.metacritic.com` 的 JSON 接口），`?page=` / `?offset=` 在
+HTML 路由上也不再生效。所以 0.6.3 换成直接调那个接口。复核只做三件事：
+
+1. **镜像是不是这一版**（一条命令，看到两个标记就行）：
+
+   ```bash
+   curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' \
+     | grep -E '"version"|reviews-api-source|card-arrows-need-slideshow'
+   # version 0.6.3 + 两个标记都在 = 这一版
+   ```
+
+2. **媒体评价抓全**（后端行为，不依赖前端）：
+
+   ```bash
+   # 重新抓一款评价数较多的游戏，然后看总数是否接近站点自己的 totalResults
+   curl -s -X POST http://127.0.0.1:3001/api/games/<gameId>/media-reviews/refresh
+   curl -s http://127.0.0.1:3001/api/games/<gameId>/media-reviews | head -c 400
+   ```
+
+   浏览器里等价的操作：详情页 →「媒体评价」→「重新抓取媒体评价」。
+   判据是**总数从 1 条变成与 Metascore 上的评论数同量级**（`007 初露锋芒` 为 99，
+   面板一页 5 条、可翻页），并且最后一页的媒体确实是最早的那批（不是提前中断）。
+
+   > 后端日志里会有 `Metacritic 媒体评价：「<slug>」抓取至第 N 页，合并后 M 条`。
+   > 接口不可用时它会回落 HTML 解析（日志同样有这行，条数会少），不会清空已有数据。
+
+3. **卡片箭头跟随展现模式**（前端行为，真实 Chromium 已覆盖）：
+
+   ```bash
+   node backend/scripts/verify/requirements-ui.mjs   # 40 项通过 / 0 失败
+   ```
+
+   手工判据：未设轮播的游戏 → 首页卡片上**没有**上一张/下一张（计数器仍在，如 `1/14`）；
+   在「编辑海报」里改成「轮播（自动切换）」→ 卡片上出现两枚箭头。详情页大图区两种模式下
+   都保留箭头。
+
+---
+
 ## 需求 1：取消封面 / 默认封面标识
 
 **对应脚本组**：第 8 组（海报自选 / 轮播持久化）、第 9 组（取消封面恢复官方默认）、

@@ -101,12 +101,22 @@ const server = http.createServer((req, res) => {
   // 真实站点把绝大部分媒体评价挂在 `/game/<slug>/critic-reviews/?page=N`
   // 上，游戏首页只印出前几条 —— 这正是「65 家媒体只抓到 1 条」的根因。
   // 桩服必须能服务这条路径，否则「跟随分页」的逻辑在离线环境里测不到。
+  //
+  // 但**必须按 slug 分开**：只有 astro-bot 的列表页是分页的（64 条摊在 p2..p6），
+  // 其他 slug 的列表页没有分页器。这里曾经对任何 slug 都返回 astro-bot 的
+  // `paginated-pN.html`，于是 0.6.2 加上「落地页没有分页器就补探列表页」之后，
+  // 血源诅咒（期望 3 条）顺着别人的列表页一路翻到 p6，落库 69 条 —— 看起来像
+  // 抓取越界，其实只是夹具串了台。真实站点上每个 slug 的列表页当然是各自的。
+  const LISTING_PAGINATES = new Set(['astro-bot']);
+
   const listing = /^\/game\/([^/]+)\/critic-reviews\/?$/.exec(url.pathname);
   if (listing) {
     hits.reviewPages = (hits.reviewPages ?? 0) + 1;
     if (fail()) return;
     const page = Number(url.searchParams.get('page') || '1');
-    const file = path.join(FIXTURES, `paginated-p${page}.html`);
+    const file = LISTING_PAGINATES.has(listing[1])
+      ? path.join(FIXTURES, `paginated-p${page}.html`)
+      : path.join(FIXTURES, 'empty.html');
     const html = fs.existsSync(file)
       ? fs.readFileSync(file, 'utf8')
       : fs.readFileSync(path.join(FIXTURES, 'empty.html'), 'utf8');
@@ -141,6 +151,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 其余路径（含 `backend.metacritic.com` 的 `/reviews/...` 接口路径）一律 404。
+  //
+  // 接口路径**故意不实现**：只要它 404，抓取就会回落到 HTML 解析，于是这套 e2e
+  // 一直在验证「接口拿不到时，HTML 兜底路径仍能把 66 条抓全」—— 这是本轮换数据源
+  // 之后最容易被忽略、也最容易悄悄坏掉的一条路径。接口本身的解析与翻页由
+  // `metacritic-api-test.mjs`（存下来的真实响应）覆盖。
   res.writeHead(404, { 'content-type': 'text/plain' });
   res.end('not found');
 });

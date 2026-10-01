@@ -283,12 +283,27 @@ export function parseReviewsFromDom(html: string): ParsedMediaReview[] {
     'blockquote',
   ].join(',');
 
-  const SCORE_SEL = '[data-testid*="score"], [class*="score"]';
+  const SCORE_SEL = [
+    '[data-testid*="score"]',
+    // CSS attribute matching is case-sensitive, and the current site class is
+    // `c-siteReviewScore` (capital S) — `[class*="score"]` alone missed it, which
+    // is why a live parse reported `score: null` for a card that visibly shows
+    // "100". Both spellings, plus the accessible labels, are accepted.
+    '[class*="score"]',
+    '[class*="Score"]',
+    '[data-testid*="Score"]',
+    '[title*="Metascore"]',
+    '[aria-label*="Metascore"]',
+  ].join(',');
 
   const containers = $(
     [
       '[data-testid="critic-review"]',
       '[data-testid*="criticReview"]',
+      // Current (Nuxt) markup: one `data-testid="review-card"` element per review,
+      // on both the game page and the `/critic-reviews/` listing.
+      '[data-testid="review-card"]',
+      '[data-testid*="review-card"]',
       '[class*="criticReview"]',
       '[class*="critic-review"]',
       // Generic fallbacks for renamed markup.
@@ -318,7 +333,14 @@ export function parseReviewsFromDom(html: string): ParsedMediaReview[] {
     const node = $(el as never);
 
     const outletNode = node.find(OUTLET_SEL).first();
-    const outlet = cleanText(firstString(outletNode.text(), node.find('h4, h3').first().text()));
+    // The outlet anchor can *contain* the score badge — the current Nuxt header
+    // link does (`<a data-testid="review-card-header">… <div class="c-siteReviewScore">
+    // 100</div> Cultura Geek</a>`) — and a plain `text()` would then read
+    // "100 Cultura Geek". Stripping the badge from a *copy* keeps the name clean
+    // while still reading `href` off the original element below.
+    const outletOnly = outletNode.clone();
+    outletOnly.find(SCORE_SEL).remove();
+    const outlet = cleanText(firstString(outletOnly.text(), node.find('h4, h3').first().text()));
 
     const scoreRaw = firstString(
       node.find(SCORE_SEL).first().text(),
@@ -340,7 +362,26 @@ export function parseReviewsFromDom(html: string): ParsedMediaReview[] {
     // A card cannot claim to be one review while pointing at many publications.
     if (node.find(OUTLET_SEL).length > 2) return;
 
-    const href = outletNode.attr('href') ?? node.find('a[href*="/review/"]').first().attr('href');
+    // 「查看原文」 has to point at the outlet's own article. The current markup gives
+    // it a dedicated anchor (`data-testid="review-full-review-link"`, an off-site
+    // URL); the outlet anchor sitting right next to it points at the publication
+    // page on Metacritic, so it stays as the fallback for older markup.
+    const fullReviewHref = node
+      .find(
+        [
+          '[data-testid*="full-review"]',
+          '[data-testid*="fullReview"]',
+          '[class*="full-review"]',
+          '[class*="readFullReview"]',
+          '[class*="read-review"]',
+        ].join(','),
+      )
+      .first()
+      .attr('href');
+    const href =
+      fullReviewHref ??
+      outletNode.attr('href') ??
+      node.find('a[href*="/review/"]').first().attr('href');
 
     push({
       outlet,
@@ -353,7 +394,14 @@ export function parseReviewsFromDom(html: string): ParsedMediaReview[] {
       author: cleanText(node.find('[rel="author"], [class*="author"]').first().text()),
       platform: normalisePlatform(node.find('[class*="platform"]').first().text()),
       publishedAt: normaliseDate(
-        firstString(node.find('time').attr('datetime'), node.find('time').first().text()),
+        firstString(
+          node.find('time').attr('datetime'),
+          node.find('time').first().text(),
+          // The Nuxt card prints the date in a plain div — no `<time>` element —
+          // so the date has to be read by testid/class as well.
+          node.find('[data-testid*="date"]').first().text(),
+          node.find('[class*="review-date"], [class*="reviewDate"]').first().text(),
+        ),
       ),
     });
   };

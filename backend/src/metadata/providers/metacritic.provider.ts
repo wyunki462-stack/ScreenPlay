@@ -26,6 +26,7 @@ import {
   parseReviewsPagination,
 } from './metacritic-reviews';
 import type { ParsedMediaReview } from './metacritic-reviews';
+import { criticReviewsApiUrl, parseCriticReviewsApi } from './metacritic-reviews-api';
 import { latinFragment, resolveMetacriticAlias } from './metacritic-aliases';
 
 /**
@@ -155,16 +156,37 @@ export class MetacriticProvider implements MetadataProvider {
  * reason Metacritic silently returned nothing: it applies no proxy.
  */
   private async fetchHtml(url: string, params?: Record<string, unknown>): Promise<string | null> {
+    return this.fetchWithRetry<string>(url, 'text', params);
+  }
+
+  /**
+   * Fetch a JSON payload from Metacritic's own review API.
+   *
+   * Same proxy/retry treatment as the HTML path — the API host
+   * (`backend.metacritic.com`) is blocked from the same networks the site is -
+   * but a separate seam, because the offline tests stub the two independently:
+   * the HTML stub proves the fallback still works when the API is unreachable.
+   */
+  private async fetchJson(url: string): Promise<unknown | null> {
+    return this.fetchWithRetry<unknown>(url, 'json');
+  }
+
+  /** Shared fetch: proxy from Settings + retry policy, parameterised by body kind. */
+  private async fetchWithRetry<T>(
+    url: string,
+    kind: 'text' | 'json',
+    params?: Record<string, unknown>,
+  ): Promise<T | null> {
     const proxyUrl = this.settings.getApiKeys().rawgProxy;
     const proxy = parseProxyConfig(proxyUrl);
     const agents = createIpv4Agents();
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const res = await this.http.getOnce<string>(url, {
+        const res = await this.http.getOnce<T>(url, {
           params,
-          responseType: 'text',
-          headers: { Accept: 'text/html' },
+          responseType: kind,
+          headers: { Accept: kind === 'json' ? 'application/json' : 'text/html' },
           ...agents,
           proxy,
           timeout: TIMEOUT_MS,
@@ -476,22 +498,27 @@ export class MetacriticProvider implements MetadataProvider {
   }
 
   /**
-   * Collect **all** critic reviews for a game, following the pager.
+   * Collect **all** critic reviews for a game.
    *
-   * The landing page shows only the first slice of a game's critic reviews; the
-   * rest hang off the dedicated listing at `/game/<slug>/critic-reviews/?page=N`.
-   * A game with 65 publications therefore looked like it had 1.
+   * The landing page shows only the first slice of a game's critic reviews, so a
+   * game with 99 publications looked like it had 1. Three independent defects
+   * produced that symptom, in the order they were found:
    *
-   * Two independent defects produced that symptom, and both had to be fixed:
    *   1. the crawl never followed a pager at all — it read the game page once;
    *   2. after (1) was fixed, the walk still only ran when the **landing** page
-   *      exposed a pager. Where it did not, the crawl returned the first slice and
-   *      called it complete. See the comment at that branch for the detail.
+   *      exposed a pager, and when the listing it then fetched had no pager
+   *      either, the listing's reviews were parsed and thrown away;
+   *   3. and the reason neither fix showed on the live site: **there is no pager
+   *      to follow.** The listing is a Nuxt app that renders 10 cards and fetches
+   *      the rest over XHR, so `?page=N` / `?offset=N` return those same 10 cards
+   *      no matter what. That is why this method now asks the site's own review
+   *      API first (`fetchMediaReviewsViaApi`) and keeps the scrape only as a
+   *      fallback.
    *
    * Cost control, because Metacritic rate-limits and this runs during a refresh:
    *   - the landing page's own reviews are parsed first, so a failure later in the
    *     walk still leaves the user with what the first page showed;
-   *   - the walk is bounded by `MAX_REVIEW_PAGES`;
+   *   - every walk is bounded by `MAX_REVIEW_PAGES`;
    *   - visited URLs are remembered, so a pager that links back to itself cannot
    *     loop;
    *   - a small delay between requests keeps the crawl polite.
@@ -500,12 +527,43 @@ export class MetacriticProvider implements MetadataProvider {
    * review and the listing's copy collapse into one card instead of two.
    */
   private async fetchAllMediaReviews(html: string, externalId: string): Promise<ParsedMediaReview[]> {
+    // The landing page is already in hand, so its slice costs nothing extra and
+    // doubles as the safety net for every path below.
     const collected: ParsedMediaReview[] = parseMediaReviews(html);
 
+    const slug = externalId.replace(/^[a-z0-9-]+\//i, ''); // drop a legacy "pc/" prefix
+
+    // ── 1) The site's own review API — the only complete source ────────────────
+    //
+    // Rounds 1 and 2 of this bug taught the crawl to follow the listing's pager.
+    // Live inspection then showed there is no pager to follow: Metacritic is a
+    // Nuxt app, the listing ships 10 review cards in the HTML and fetches the
+    // rest from `backend.metacritic.com` (the page advertises 99 for
+    // `007-first-light`). `?page=2` and `?offset=20` on the HTML route return
+    // those same 10 cards, so no amount of HTML crawling can ever exceed them.
+    // The page's own XHR endpoint, however, returns everything and needs no key —
+    // see `metacritic-reviews-api.ts`.
+    const viaApi = await this.fetchMediaReviewsViaApi(slug);
+    if (viaApi.length) {
+      // The API is authoritative here, so its rows are used as-is: the landing
+      // page's own copy is the same listing one slice deep, and merging the two
+      // would show a publication twice whenever the API knows its score and the
+      // scraped copy does not.
+      this.logger.log(
+        `Metacritic 媒体评价：「${slug}」官方接口抓到 ${viaApi.length} 条` +
+          `（落地页 HTML 另有 ${collected.length} 条）`,
+      );
+      return viaApi;
+    }
+
+    // ── 2) HTML fallback ──────────────────────────────────────────────────────
+    //
+    // Kept deliberately: if Metacritic moves or closes the API, the scraped path
+    // still has to work, and the offline fixtures pin its behaviour.
+    //
     // Where the listing lives. The landing page's own pager is preferred (that is
     // the site telling us the real URL); otherwise the listing is derived from the
     // slug.
-    const slug = externalId.replace(/^[a-z0-9-]+\//i, ''); // drop a legacy "pc/" prefix
     const gameUrl = `${GAME}${slug}/`;
     const listingUrl = `${GAME}${slug}/critic-reviews/`;
 
@@ -551,8 +609,13 @@ export class MetacriticProvider implements MetadataProvider {
           currentUrl = listingUrl;
           collected.push(...parseMediaReviews(listingHtml));
         } else {
-          // Neither the landing page nor the listing paginates: the landing page
-          // really is the whole set. Keep its reviews and stop.
+          // Neither the landing page nor the listing offers a pager. That does
+          // NOT mean the landing page is the whole set (assuming it was is what
+          // left this at one card), but with no pager there is nothing left to
+          // follow — so keep everything the listing did carry instead of
+          // returning only the landing page's slice. Dropping it here was the
+          // second half of the original defect.
+          collected.push(...parseMediaReviews(listingHtml));
           return dedupeReviews(collected).slice(0, MAX_REVIEWS);
         }
       } else {
@@ -595,6 +658,65 @@ export class MetacriticProvider implements MetadataProvider {
     this.logger.log(
       `Metacritic 媒体评价：「${slug}」抓取至第 ${page} 页，合并后 ${merged.length} 条`,
     );
+    return merged;
+  }
+
+  /**
+   * Walk Metacritic's own critic-review API for one game slug.
+   *
+   * Returns `[]` — never throws — when the API is unreachable or empty, which is
+   * what hands control back to the HTML fallback in `fetchAllMediaReviews`.
+   *
+   * Page size is fixed at 10 by the service (`limit` is ignored), so this makes
+   * about one request per ten reviews: ~10 requests for a 99-review game.
+   * `MAX_REVIEW_PAGES` × 10 is exactly `MAX_REVIEWS`, so the bound cannot cut a
+   * realistic game short.
+   *
+   * The walk follows `links.next` verbatim rather than synthesising
+   * `?offset=N`. That is deliberate: the query string carries
+   * `componentName`/`componentType` that identify *which* list on the page is
+   * wanted, and a hand-built URL without them answers with a different payload
+   * instead of failing.
+   */
+  private async fetchMediaReviewsViaApi(slug: string): Promise<ParsedMediaReview[]> {
+    const collected: ParsedMediaReview[] = [];
+    const visited = new Set<string>();
+    let url: string | null = criticReviewsApiUrl(slug);
+    // The site's own count (`data.totalResults`). When present it is the stopping
+    // condition, so a service that keeps offering a `next` link past the end
+    // cannot make this walk re-request pages.
+    let total: number | null = null;
+    let requests = 0;
+
+    while (url && requests < MAX_REVIEW_PAGES && !visited.has(url)) {
+      visited.add(url);
+      requests += 1;
+
+      const payload = await this.fetchJson(url);
+      if (!payload) break; // network gave up — the caller falls back to HTML
+
+      const page = parseCriticReviewsApi(payload);
+      if (page.total != null) total = page.total;
+      collected.push(...page.reviews);
+
+      if (!page.reviews.length) break;
+      if (total != null && collected.length >= total) break;
+
+      url = page.next;
+      if (url && requests < MAX_REVIEW_PAGES) await sleep(REVIEW_PAGE_DELAY_MS);
+    }
+
+    if (!collected.length) return [];
+
+    const merged = dedupeReviews(collected).slice(0, MAX_REVIEWS);
+    if (total != null && merged.length < total) {
+      // Worth knowing: the panel will show fewer cards than the Metascore block
+      // advertises, and the reason is the service (rate limit / moved endpoint),
+      // not the parser.
+      this.logger.warn(
+        `Metacritic 媒体评价接口：「${slug}」应有 ${total} 条，仅取到 ${merged.length} 条`,
+      );
+    }
     return merged;
   }
 

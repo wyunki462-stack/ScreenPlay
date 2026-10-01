@@ -5,6 +5,130 @@
 
 ---
 
+## [0.6.4] — 2026-10-01
+
+**界面版。** 0.6.3 解决的是「媒体评价抓得全不全」，这一版动的全是**用户能看见的界面**，
+不涉及抓取链路。
+
+### 界面
+
+- **详情页评分区去掉「用户评分」列**。Metacritic 现在不再提供可用的用户分（旧解析器从
+  RSC 里捞到的那个数字其实是列索引），界面上却一直摆着一列「—/10」，看起来像抓取失败。
+  评分区现在只剩 Metascore、评论数与分级。
+  - 后端字段 `userScore` / `userCount` **保留**（接口与离线测试仍在使用），只是不再渲染。
+- **媒体评价页码可点**。原来是纯文本「第 N / M 页」，只能靠上一页/下一页一页页挪；现在
+  渲染成页码按钮：页数 ≤7 时全部铺开，更多时保留首页、末页与当前页相邻页，中间用省略号；
+  点了直接跳页，当前页带 `aria-current="page"`（读屏能听出在第几页）。
+- **媒体评价面板加搜索 + 排序**。
+  - 搜索按**媒体名**过滤，忽略大小写与首尾空白；**只有媒体名参与匹配** —— 正文匹配会让
+    「为什么这条会出现」难以解释（搜「PC」时正文里偶然提到 PC 的评价混进来，看着就像
+    筛选坏了）。
+  - 排序五种：站点顺序（默认，不擅自改动抓取结果）、评分从高到低 / 从低到高、时间从新到
+    旧 / 从旧到新。
+  - 两者都在**已经取回的那份列表**上本地生效，不再请求后端，且都排在平台筛选**之后**
+    （用户的心智顺序是「先选平台，再在这个平台里找某家媒体 / 换个排法」）。
+  - 缺值（没有分数 / 没有日期）的条目**一律垫底**，不跟着升降序翻转 —— 否则「评分从低到
+    高」会把没打分的排到最前，看起来像「这些是最差的一组」。排序不改动原数组，平台计数与
+    总条数仍按原列表算。
+  - 搜索无命中时给**专门的空态**，与「该平台暂无评价」分开说 —— 复用同一句话会让人以为
+    是平台变了。
+
+### 验证
+
+- `backend/scripts/verify/review-pagination-test.mjs`：为三个新纯函数 `filterByOutlet` /
+  `sortReviews` / `pagerPages` 增加 33 条断言（含「不原地排序」「缺值垫底」「省略号只在
+  必要处出现」），**65 → 98 项全通过**。
+- `backend/scripts/verify/requirements-ui.mjs`（真实 Chromium）：新增「需求 4」——搜 `ign`
+  只剩 IGN、五种排序各自的首条媒体正确、点页码「2」直接跳到第 2 页且 `aria-current`
+  跟着走、搜不到时出现专用空态，**40 → 58 项全通过**。
+- 测试数据：`backend/scripts/verify/ssr-hooks-stub.mjs` 的 13 条评价原先 `publishedAt`
+  全是 `2024-09-05`，现改为**互不相同**（序号越小日期越新）—— 否则「按时间排序」在界面上
+  看不出任何变化，浏览器断言分辨不出它是生效了还是压根没动。
+- health 新增三个标记：`ratings-no-user-score`、`reviews-ui-search-sort`、
+  `reviews-page-jump`，`scripts/rebuild-and-verify.sh` 的 `EXPECTED_FEATURES` 已同步。
+
+---
+
+## [0.6.3] — 2026-10-01
+
+**修复版（0.6.2 上线后的第二轮实测）。** 0.6.2 部署完成后，`007 初露锋芒` 的媒体评价
+仍然只有 **1 条**（Metascore 上写着 99 个评论），首页卡片的切换箭头也依旧常驻。定位后
+确认：前两轮「跟分页器」的思路建立在一个**已经不存在的前提**上。
+
+### 修复
+
+- **媒体评价只抓到 1 条（第三轮，这次换了数据源）**
+  - 真实原因：Metacritic 的游戏页与 `critic-reviews` 列表页**都不再包含评价列表的
+    HTML**。评价由 Nuxt 在客户端调一个 JSON 接口渲染，页面里只剩组件占位；旧的 DOM
+    选择器在新版 markup 上一条也匹配不到。而 `?page=` / `?offset=` 在 HTML 路由上也
+    不再生效：实测 `critic-reviews/?page=2` 与第 1 页字节数几乎相同（返回同样的 10 条），
+    `?offset=10` 返回 0 条。
+  - 于是前两轮的修复（跟随分页器、落地页没有分页器时补探列表页）**都抓不到东西**：
+    它们在 HTML 里找分页器，而 HTML 里已经没有分页器了。这也解释了为什么离线夹具一直
+    通过、线上一直只有 1 条 —— 夹具是按当时（已过时）的站点形态写的。
+  - 现在直接调用站点页面自己在用的那个接口（公开、无需 key）：
+    `https://backend.metacritic.com/reviews/metacritic/critic/games/<slug>/web?offset=N&limit=10&filterBySentiment=all&sort=score&componentName=critic-reviews&componentDisplayName=critic+Reviews&componentType=ReviewList`
+    - `offset=0` 实测返回 `totalResults: 99` + 10 条；翻页按返回体里的 `links.next.href`
+      走，`links.last.href` 是末页（`offset=90`）。
+    - `limit` 会被服务端忽略（传 100 仍只回 10 条），所以**按实际返回条数前进**，不按
+      `limit` 推导页码，否则会漏页。
+    - 兜底保留：接口拿不到时仍解析 HTML，并且这次把**列表页解析出的评价也并入**
+      （旧代码在这条分支上会直接把列表页的结果丢掉）。
+    - 新标记 `reviews-api-source`。
+  - 顺带把 HTML 解析器补上新版 markup（`data-testid="review-card"` / `review-quote-text`
+    / `review-card-date` / `review-platform` / `review-full-review-link`、评分徽章
+    `.c-siteReviewScore`），让兜底路径在真实页面上也能出东西而不是 0 条。
+
+- **首页卡片箭头改为跟随展现模式**
+  - `0.6.2` 的口径是「可浏览张数 > 1 就渲染箭头」，于是**没设轮播**的静态封面也常驻
+    两枚箭头（截图里就是这个现象）。本轮按实测反馈改成：**设为轮播才显示
+    上一张/下一张**，静态封面不显示；0 张 / 1 张图仍然不显示。计数器保留 —— 它说明
+    这个游戏有多张海报可看，是点进详情的理由。
+  - 详情页大图区**不受影响**：两种模式下都保留箭头（那里图大，翻页有意义）。
+  - 新标记 `card-arrows-need-slideshow`。
+
+### 变更
+
+- 版本号 `0.6.2` → `0.6.3`（`package.json` / `backend` / `web` 三处同步）。
+- 「编辑海报」弹窗里的说明文案补上「上面的展现模式也决定首页卡片封面是否显示箭头」
+  （`zh` / `en` 同步）。
+- `scripts/rebuild-and-verify.sh` 的 `EXPECTED_FEATURES` 增加本轮两个标记：部署后
+  只要 `curl …/api/health` 里能看到 `reviews-api-source`，就说明跑的是 0.6.3。
+
+### 验证
+
+全部离线可跑，**不访问任何真实站点**：
+
+| 脚本 | 覆盖 | 结果 |
+| --- | --- | --- |
+| `backend/scripts/verify/metacritic-api-test.mjs` | 官方接口解析 + 翻页 + **测试隔离**（**本轮新增**） | 38 项通过 / 0 失败 |
+| `backend/scripts/verify/metacritic-crawl-test.mjs` | 抓取编排（接口优先 / HTML 兜底） | 13 项通过 / 0 失败 |
+| `backend/scripts/verify/metacritic-reviews-test.mjs` | 评价解析（纯函数，含新版 markup） | 63 项通过 / 0 失败 |
+| `backend/scripts/verify/review-pagination-test.mjs` | 分页 + 平台筛选 | 65 项通过 / 0 失败 |
+| `backend/scripts/verify/media-reviews-e2e.mjs` | 抓取 → 落库 → 接口（**本轮修好**，见下） | 63 项通过 / 0 失败 |
+| `backend/scripts/verify/requirements-ui.mjs` | 三项需求（**真实 Chromium**，含静态封面不显示箭头） | 40 项通过 / 0 失败 |
+| `backend/scripts/verify/poster-ui-ssr.mjs` | 海报 UI（SSR 真实组件） | 10 项通过 / 0 失败 |
+
+`backend` `tsc` 0 错误；`web` `tsc` 0 错误；`vite build` 通过。
+
+本轮同时修掉两个**测试基建**的缺陷 —— 它们正是「离线全绿、线上没修好」的一部分原因：
+
+- 接口 origin 原先写死在 `backend.metacritic.com`，而离线套件只把 **HTML** 基址指向本地
+  桩服。于是 `media-reviews-e2e` 一边声称「只访问本地桩服」，一边真的从线上取回了 99 条
+  评价，断言以「期望 3 条、实际 10 条」这种莫名其妙的方式失败（数字还在两轮之间变来变
+  去）。现在：HTML 基址被改写时接口跟着走，`metacritic-api-test.mjs` 用**子进程**锁住这
+  条规则（模块在 require 时读环境变量，同进程改不回去）。
+- 桩服对**任何** slug 的 `/game/<slug>/critic-reviews/` 都返回 astro-bot 的分页夹具，
+  于是 0.6.2 加上「落地页没有分页器就补探列表页」之后，血源诅咒（期望 3 条）顺着别人的
+  列表页一路翻到 p6、落库 69 条 —— 看起来像抓取越界，其实是夹具串台。现在按 slug 分开：
+  只有 astro-bot 的列表页分页，其余 slug 的列表页是「没有评价也没有分页器」。
+  这两个缺陷与本轮改动无关，但在同一个套件里，所以一并修掉并写进这里。
+
+> 线上实测用的证据（本轮排查时抓的真实返回，已作为夹具固化）：
+> `/game/007-first-light/` 与 `/game/007-first-light/critic-reviews/` 的 HTML 里，
+> 新版卡片分别是 14 张 / 10 张，而旧选择器解析出的评价数分别是 1 / 0；
+> 同一个 slug 走接口拿到 `totalResults: 99`，按 `links.next` 翻页可拿到全部。
+
 ## [0.6.2] — 2026-10-01
 
 **修复版。** 针对 `0.6.1` 发布后实测暴露的三项问题：媒体评价仍然抓不全、媒体评价无法

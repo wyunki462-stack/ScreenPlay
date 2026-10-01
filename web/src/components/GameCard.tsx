@@ -140,6 +140,14 @@ export default function GameCard({
             className="transition-transform duration-300 group-hover:scale-105"
             // No dots on a card — see the `showDots` docblock in PosterCarousel.
             showDots={false}
+            // 卡片上的上一张/下一张只在**设为轮播**时出现。
+            //
+            // 静态模式下这张卡就是一张封面，真正的操作是「点开详情」；两枚浮在
+            // 300px 卡片上的箭头既挡画面，又暗示这里能就地翻图（不能——卡片比详情
+            // 大图小得多，翻起来看不见细节）。而「设为轮播」本身就是用户说「这张
+            // 封面是一组轮播」，那时箭头才有意义。详情页大图不受影响，两种模式都
+            // 保留箭头（见 PosterCarousel 的 showArrows 文档）。
+            showArrows={(game.posterMode ?? "static") === "slideshow"}
           />
         </div>
         <div className="flex flex-1 flex-col gap-2 p-3">

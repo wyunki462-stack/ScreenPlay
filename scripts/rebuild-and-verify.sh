@@ -42,6 +42,15 @@ EXPECTED_FEATURES=(
   # 0.6.2：评价抓全的第二层修复 + 平台切换。缺了这两条就说明镜像不是这一版。
   review-listing-fallback
   review-platform-filter
+  # 0.6.3：评价改走官方 JSON 接口（HTML 里已经没有可翻页的评价列表）+ 卡片箭头跟随
+  # 展现模式。缺了这两条，说明容器跑的仍是 0.6.2 —— 那个版本在这个站点形态下抓不到
+  # 完整评价（这正是「怎么修都只有一条」的原因）。
+  reviews-api-source
+  card-arrows-need-slideshow
+  # 0.6.4：详情页评分区与评价面板的三处界面改动（去掉用户评分列 / 搜索+排序 / 点页码跳页）。
+  ratings-no-user-score
+  reviews-ui-search-sort
+  reviews-page-jump
 )
 
 mkdir -p "$LOG_DIR" && chmod 755 "$LOG_DIR" 2>/dev/null

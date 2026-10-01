@@ -25,6 +25,7 @@ export default function PosterCarousel({
   className,
   intervalMs = 3500,
   showDots = true,
+  showArrows = true,
 }: {
   /** Ordered poster URLs; the first is the selected cover. */
   images: string[];
@@ -43,6 +44,21 @@ export default function PosterCarousel({
    * next to them, so there they stay useful.
    */
   showDots?: boolean;
+  /**
+   * Prev/next buttons. On by default; the **homepage card** turns them off unless
+   * that game is set to slideshow.
+   *
+   * Why: a gallery card is ~300px wide and its real affordance is "click me to
+   * open" — it is a still cover, not a viewer. Two arrows floating over it
+   * promise in-place browsing that the tile is too small to deliver, and they
+   * cover the artwork. Turning slideshow on is the user saying "this cover is a
+   * rotation", so that is exactly when the arrows become meaningful there.
+   *
+   * The detail hero keeps them in both modes: a large image the user is studying
+   * is where manual browsing belongs, and in `static` the arrows are the only way
+   * to reach the other posters at all.
+   */
+  showArrows?: boolean;
 }) {
   const t = useT();
   const list = images.filter(Boolean);
@@ -53,6 +69,9 @@ export default function PosterCarousel({
   // slideshow mode. Keeping those separate is the point: `static` must stay still.
   const browsable = count > 1;
   const rotating = mode === "slideshow" && browsable;
+  // Arrows are a *viewer* affordance, so they can be suppressed on a tile even
+  // when there is more than one poster (see `showArrows`).
+  const arrows = browsable && showArrows;
 
   // Pausing on hover/interaction stops the timer fighting the user's clicks.
   const [paused, setPaused] = useState(false);
@@ -104,7 +123,7 @@ export default function PosterCarousel({
         />
       ))}
 
-      {browsable && (
+      {arrows && (
         <>
           <button
             type="button"
@@ -124,7 +143,11 @@ export default function PosterCarousel({
           >
             <ChevronRight className="h-4 w-4" />
           </button>
+        </>
+      )}
 
+      {browsable && (
+        <>
           {/* Counter + dots: makes it obvious there are more posters than the one shown. */}
           <div className="absolute left-1.5 top-1.5 z-20 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white/90 backdrop-blur-sm">
             {index + 1}/{count}

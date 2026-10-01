@@ -47,6 +47,13 @@ export const usePosterSearch = noop;
 // （真实站点上部分评价没有平台归属），用来确认这些评价不会被任何平台筛掉、
 // 也不会被误算进某个平台。
 export function makeReviews() {
+  // 每条日期都不同，且序号 i 越小越新。
+  //
+  // 为什么要互不相同：本轮新增了「按时间排序」。如果 13 条全是同一天，切到
+  // 「时间从新到旧」后界面看起来什么都没变 —— 浏览器断言就分辨不出它是真的按
+  // 日期重排了、还是压根没生效。互不相同之后，newest 应等于原始顺序、oldest
+  // 应等于原始顺序的倒序，一眼可验。
+  const reviewDate = (i) => new Date(Date.UTC(2024, 8, 30) - i * 86_400_000).toISOString().slice(0, 10);
   const mk = (outlet, score, platform, i) => ({
     id: `r-${i}`,
     gameId: 'g-1',
@@ -58,7 +65,7 @@ export function makeReviews() {
     url: `https://www.metacritic.com/review/${i}`,
     author: null,
     platform,
-    publishedAt: '2024-09-05',
+    publishedAt: reviewDate(i),
     fetchedAt: 1,
   });
   const ps5 = ['IGN', 'GameSpot', 'Push Square', 'Eurogamer', 'The Guardian', 'Digital Trends']

@@ -6,14 +6,28 @@ import {
   ALL_PLATFORMS,
   FIRST_PAGE_COLLAPSED,
   PAGE_SIZE,
+  REVIEW_SORTS,
+  filterByOutlet,
   filterByPlatform,
   paginateReviews,
+  pagerPages,
   platformOptions,
   slicePage,
+  sortReviews,
+  type ReviewSort,
 } from "../lib/review-pagination";
 import { cn, metacriticTone } from "../lib/utils";
 import type { MediaReview, MediaReviewsSummary } from "../types";
 import { Button } from "./ui/Button";
+
+/** 排序下拉的文案键。放在模块作用域，避免每次渲染重建这个映射。 */
+const SORT_LABEL_KEYS: Record<ReviewSort, string> = {
+  default: "detail.reviews.sortDefault",
+  "score-desc": "detail.reviews.sortScoreDesc",
+  "score-asc": "detail.reviews.sortScoreAsc",
+  newest: "detail.reviews.sortNewest",
+  oldest: "detail.reviews.sortOldest",
+};
 
 /** Colours for the score chip, so a 90 and a 40 are distinguishable at a glance. */
 const scoreChipClass: Record<ReturnType<typeof metacriticTone>, string> = {
@@ -57,6 +71,10 @@ export default function MediaReviewsPanel({
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState(false);
   const [platform, setPlatform] = useState<string>(ALL_PLATFORMS);
+  // 媒体名搜索与排序都在**已经取回来的那份列表**上做，不再请求后端 —— 面板本来
+  // 就把该游戏的全部评价一次性拿回来了，分页只是显示层的事。
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<ReviewSort>("default");
   const query = useMediaReviews(gameId);
   const refresh = useRefreshMediaReviews(gameId);
 
@@ -71,6 +89,8 @@ export default function MediaReviewsPanel({
     setPage(1);
     setExpanded(false);
     setPlatform(ALL_PLATFORMS);
+    setSearch("");
+    setSort("default");
   }, [gameId]);
 
   // 可选平台取自「评价里真实出现过的平台」，不是游戏自身的平台列表 ——
@@ -85,14 +105,20 @@ export default function MediaReviewsPanel({
     [reviews, activePlatform],
   );
 
+  // 搜索与排序都排在平台筛选**之后**：用户的心智顺序是「先选平台，再在这个平台里
+  // 找某家媒体、或换个排法」。反过来的话，搜「IGN」只会搜当前平台，用户会以为
+  // 这个游戏只有这里几家 IGN。
+  const searched = useMemo(() => filterByOutlet(filtered, search), [filtered, search]);
+  const listed = useMemo(() => sortReviews(searched, sort), [searched, sort]);
+
   // 重新抓取后条数可能从 1 条涨到 60 条，也可能反过来变少；两种情况下停在
   // 越界的页码都会让面板空白，所以页码由 `paginateReviews` 夹回合法范围 ——
   // 渲染时一律用它返回的 `page`，不用本地那份可能越界的 state。
-  const paginate = paginateReviews(filtered.length, page, expanded);
+  const paginate = paginateReviews(listed.length, page, expanded);
   const safePage = paginate.page;
 
   const onFirstPage = safePage === 1;
-  const visible = slicePage(filtered, safePage).slice(
+  const visible = slicePage(listed, safePage).slice(
     0,
     onFirstPage && !expanded ? FIRST_PAGE_COLLAPSED : PAGE_SIZE,
   );
@@ -173,6 +199,58 @@ export default function MediaReviewsPanel({
         </div>
       )}
 
+      {/* 媒体名搜索 + 排序方式。两者都在本地列表上生效，所以只要有评价就显示 ——
+          不像平台下拉框要等到「真的有多个平台」才出现（那种情况下它没有可切的东西）。
+          同样用原生 <input type="search"> / <select>：自带键盘操作，手机上也唤起
+          系统控件，和平台下拉框保持一致。 */}
+      {reviews.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2" data-testid="media-reviews-toolbar">
+          <input
+            id="media-reviews-search"
+            data-testid="media-reviews-search"
+            type="search"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              // 换搜索词就回第一页：命中集变小后页码很可能越界，而且用户期待的
+              // 是「从头看这些命中项」。
+              setPage(1);
+              setExpanded(false);
+            }}
+            placeholder={t("detail.reviews.searchPlaceholder")}
+            className="w-44 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none transition-colors placeholder:text-zinc-600 hover:border-zinc-600 focus:border-cyan-700"
+          />
+          <label htmlFor="media-reviews-sort" className="text-xs text-zinc-500">
+            {t("detail.reviews.sort")}
+          </label>
+          <select
+            id="media-reviews-sort"
+            data-testid="media-reviews-sort"
+            value={sort}
+            onChange={(e) => {
+              setSort(e.target.value as ReviewSort);
+              // 换了排法也回第一页：原来的页码对应的是旧的顺序，留着没有意义。
+              setPage(1);
+              setExpanded(false);
+            }}
+            className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none transition-colors hover:border-zinc-600 focus:border-cyan-700"
+          >
+            {REVIEW_SORTS.map((mode) => (
+              <option key={mode} value={mode}>
+                {t(SORT_LABEL_KEYS[mode])}
+              </option>
+            ))}
+          </select>
+          {/* 命中条数：搜出来 0 条时下面的空态会说清原因，这里的数字则说明
+              「筛之前有多少条」的心智锚点。 */}
+          {search.trim() !== "" && (
+            <span className="text-xs text-zinc-600" data-testid="media-reviews-search-active">
+              {t("detail.reviews.searchActive", { query: search.trim(), count: listed.length })}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* 平台切换。只在真的有多个平台可选时才出现 —— 一个游戏只有单一平台的评价时，
           这个下拉框没有可切的东西，摆在那里只是噪音。
           这里用的是原生 <select> 而不是自绘下拉：它自带键盘操作、移动端会唤起系统
@@ -234,6 +312,18 @@ export default function MediaReviewsPanel({
           <div className="font-medium text-zinc-400">{t("detail.reviews.platformEmpty")}</div>
           <div className="mt-1 text-xs">{t("detail.reviews.platformEmptyHint")}</div>
         </div>
+      ) : listed.length === 0 ? (
+        // 有评价、平台里也有，但搜索没命中：必须和「该平台暂无」分开说 ——
+        // 复用同一句话会让人以为这个平台真的没有评价（其实只是搜索词不对）。
+        <div
+          data-testid="media-reviews-search-empty"
+          className="rounded-lg border border-dashed border-zinc-800 p-8 text-center text-sm text-zinc-500"
+        >
+          <div className="font-medium text-zinc-400">
+            {t("detail.reviews.searchEmpty", { query: search.trim() })}
+          </div>
+          <div className="mt-1 text-xs">{t("detail.reviews.searchEmptyHint")}</div>
+        </div>
       ) : (
         <>
           <ul className="space-y-3" data-testid="media-reviews-list">
@@ -269,6 +359,38 @@ export default function MediaReviewsPanel({
                 >
                   {t("detail.reviews.prevPage")}
                 </Button>
+                {/* 页码按钮：点一下就跳到那一页。原来的纯文本「第 N / M 页」只能靠
+                    上一页/下一页一页页挪，页数一多就要点很多次。
+                    数字之间的省略号是**不可点**的占位，表示「这里还隔着若干页」。 */}
+                <div className="flex items-center gap-1" data-testid="media-reviews-page-numbers">
+                  {pagerPages(safePage, pageCount).map((item, i) =>
+                    item === "gap" ? (
+                      <span key={`gap-${i}`} className="px-1 text-xs text-zinc-600">
+                        …
+                      </span>
+                    ) : (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => {
+                          setPage(item);
+                          setExpanded(false);
+                        }}
+                        aria-current={item === safePage ? "page" : undefined}
+                        aria-label={t("detail.reviews.goToPage", { page: item })}
+                        data-testid={`media-reviews-page-${item}`}
+                        className={cn(
+                          "min-w-[1.75rem] rounded-md border px-1.5 py-1 text-xs transition-colors",
+                          item === safePage
+                            ? "border-cyan-700 bg-cyan-950/40 text-cyan-200"
+                            : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600",
+                        )}
+                      >
+                        {item}
+                      </button>
+                    ),
+                  )}
+                </div>
                 <span
                   className="text-xs text-zinc-500"
                   data-testid="media-reviews-page"
@@ -293,13 +415,13 @@ export default function MediaReviewsPanel({
 
           {/* 告诉用户「当前显示了几条 / 一共几条」，否则翻页时看不出还剩多少。
               分页控件只在多于 1 页时出现，这条提示则始终显示。
-              数字取自 `filtered`：选了平台之后，用户关心的是**这个平台**有多少条，
+              数字取自 `listed`：选了平台、敲了搜索词之后，用户关心的是**这些**有多少条，
               而不是全部平台的总数（总数在上方的标题行里另有一处）。 */}
           <p
             className="text-center text-[11px] text-zinc-600"
             data-testid="media-reviews-shown"
           >
-            {t("detail.reviews.shown", { shown: visible.length, total: filtered.length })}
+            {t("detail.reviews.shown", { shown: visible.length, total: listed.length })}
           </p>
         </>
       )}

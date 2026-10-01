@@ -575,15 +575,6 @@ function RatingsPanel({ ratings }: { ratings: Rating[] }) {
             {r.criticCount != null && <div className="text-xs text-zinc-500">{t("detail.ratings.criticCount", { count: r.criticCount })}</div>}
             {r.ratingClass && <div className="text-xs text-zinc-400">{r.ratingClass}</div>}
           </div>
-          <div className="h-14 w-px bg-zinc-800" />
-          <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500">{t("detail.ratings.userScore")}</div>
-            <div className="text-4xl font-black text-cyan-400">
-              {r.userScore != null ? r.userScore : "—"}
-              <span className="text-base font-normal text-zinc-500"> / 10</span>
-            </div>
-            {r.userCount != null && <div className="text-xs text-zinc-500">{t("detail.ratings.userCount", { count: r.userCount })}</div>}
-          </div>
         </div>
       ))}
     </div>

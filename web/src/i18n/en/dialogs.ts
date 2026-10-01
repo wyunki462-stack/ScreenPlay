@@ -7,7 +7,7 @@ export const dialogsEn: Record<string, string> = {
   "dialogs.poster.modeSlideshow": "Slideshow (auto-switch)",
   "dialogs.poster.slideshowCount": "Selected {n} for the detail-page slideshow",
   "dialogs.poster.slideshowHint":
-    "The 「slideshow」 ticks below choose which images join the DETAIL-PAGE large-image rotation. The gallery card uses the full poster set and is unaffected. Album screenshots start unticked; only ones you tick join.",
+    "The 「slideshow」 ticks below choose which images join the DETAIL-PAGE large-image rotation. The gallery card uses the full poster set and is unaffected. Album screenshots start unticked; only ones you tick join. The display mode above also drives the gallery card: 「slideshow」 puts prev/next arrows on the card cover, while a static cover shows no arrows.",
   "dialogs.poster.slideshowItemHint": "Tick to include this image in the detail-page slideshow; untick to remove it — it will not be added back.",
   "dialogs.poster.tabUpload": "Upload image",
   "dialogs.poster.tabAlbum": "Choose from album",

@@ -126,3 +126,100 @@ export function filterByPlatform<T extends { platform: string | null }>(
   const want = platform.trim().toLowerCase();
   return reviews.filter((r) => (r.platform ?? '').trim().toLowerCase() === want);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 媒体名搜索 + 排序（在平台筛选之后再缩窄、再重排）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 按**媒体名称**模糊筛。
+ *
+ * 只匹配媒体名，不匹配评语正文：用户在这里敲的是「IGN」「PC Gamer」这类名字
+ * （列表里最显眼的字段就是它），而正文匹配会让「为什么这条会出现」难以解释 ——
+ * 搜「PC」时一条正文里偶然提到 PC 的评价混进来，看起来就像筛选坏了。
+ *
+ * 忽略大小写与首尾空白；空查询原样返回（不做无谓的复制，也就不会让引用变化
+ * 引发下游 `useMemo` 重算）。
+ */
+export function filterByOutlet<T extends { outlet: string | null }>(
+  reviews: T[],
+  query: string,
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return reviews;
+  return reviews.filter((r) => (r.outlet ?? '').toLowerCase().includes(q));
+}
+
+/** 排序方式。`default` = 站点自己的顺序（原样不动，便于对照抓取结果）。 */
+export type ReviewSort = 'default' | 'score-desc' | 'score-asc' | 'newest' | 'oldest';
+
+/** 下拉框的选项顺序（与 i18n 的键一一对应）。 */
+export const REVIEW_SORTS: ReviewSort[] = ['default', 'score-desc', 'score-asc', 'newest', 'oldest'];
+
+/** 把 `publishedAt` 变成可比较的数字；缺失或解析不了都算「没有日期」。 */
+function timeValue(publishedAt: string | null): number | null {
+  if (!publishedAt) return null;
+  const t = Date.parse(publishedAt);
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * 按分数或日期重排。
+ *
+ * 两个刻意的选择：
+ *
+ *   1. **缺值的条目一律排在最后**，不跟着升降序翻转。若跟着翻转，「评分从低到高」
+ *      会把没打分的排到最前面 —— 那看起来就是「这些是最差的一组」，而它们只是
+ *      没有分数（M 站上有大量只给评语不给分数的媒体）。
+ *   2. **不原地排序**。调用方还要用原列表算平台计数与「共 N 条」，原地打乱会让
+ *      这些数字与渲染顺序在不同请求间漂移。
+ *
+ * 同值时保持原有相对顺序（`Array.prototype.sort` 在现代 V8 上是稳定的），
+ * 所以同一份数据每次渲染出来的顺序都一样，不会抖。
+ */
+export function sortReviews<T extends { score: number | null; publishedAt: string | null }>(
+  reviews: T[],
+  mode: ReviewSort,
+): T[] {
+  if (mode === 'default') return reviews;
+  const byScore = mode === 'score-desc' || mode === 'score-asc';
+  const desc = mode === 'score-desc' || mode === 'newest';
+  const copy = [...reviews];
+  copy.sort((a, b) => {
+    const av = byScore ? a.score : timeValue(a.publishedAt);
+    const bv = byScore ? b.score : timeValue(b.publishedAt);
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (av === bv) return 0;
+    return (av > bv ? 1 : -1) * (desc ? -1 : 1);
+  });
+  return copy;
+}
+
+/** 页码条上的一项：数字是页码，`'gap'` 是省略号。 */
+export type PagerItem = number | 'gap';
+
+/**
+ * 算页码条要显示哪几个数字。
+ *
+ * 页数少（≤7）时全部铺开 —— 此时省略号比数字本身还占地方。页数多时只留首页、
+ * 末页、当前页及其相邻页，中间用 `'gap'` 表示「这里跳过了若干页」。`page` 由调用
+ * 方保证已在 `1..pageCount` 内（`paginateReviews` 已经夹过一次）。
+ */
+export function pagerPages(page: number, pageCount: number, span = 1): PagerItem[] {
+  const total = Math.max(1, Math.floor(pageCount));
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const wanted = new Set<number>([1, total]);
+  for (let p = page - span; p <= page + span; p += 1) {
+    if (p >= 1 && p <= total) wanted.add(p);
+  }
+  const out: PagerItem[] = [];
+  let prev = 0;
+  for (const p of [...wanted].sort((a, b) => a - b)) {
+    if (prev && p - prev > 1) out.push('gap');
+    out.push(p);
+    prev = p;
+  }
+  return out;
+}

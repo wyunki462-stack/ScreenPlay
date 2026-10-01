@@ -1,5 +1,5 @@
 /**
- * 本轮三项需求的浏览器行为验证（真实 Chromium）
+ * 本轮四项需求的浏览器行为验证（真实 Chromium）
  * ============================================================================
  *
  * 跑法：node backend/scripts/verify/requirements-ui.mjs
@@ -7,11 +7,15 @@
  * 覆盖：
  *   · 需求 1「媒体评价分页」：默认 5 条 / 展开 10 条 / 单页最多 10 条 / 标注总数 / 翻页
  *   · 需求 2「平台切换」：有多个平台时出现选择器；切到某平台只剩该平台的评价
- *   · 需求 3「卡片箭头」：无可浏览图片（0 张或 1 张）时**不渲染**箭头，多于 1 张才渲染
+ *   · 需求 3「卡片箭头」：**未设轮播**的静态封面不渲染箭头（0/1 张图本来也不渲染），
+ *     设为轮播且多于 1 张时才出现 —— 计数器在静态封面上照常显示
+ *   · 需求 4「媒体搜索 / 排序 / 点页码跳页」：搜「ign」只剩 IGN；五种排序各自的首条
+ *     媒体正确；点页码「2」直接跳到第 2 页；搜不到时给专门的空态
  *
- * 用真实浏览器而不是纯 SSR：需求 2 的核心动作是「用户切了下拉框」，静态渲染永远停在
- * 初始 state，断言不到切换结果；需求 3 的箭头本身是 opacity-0 + hover 才显形，
- * 「节点到底在不在 DOM 里」只有渲染之后才作数。esbuild 打包的是**真实源码组件**。
+ * 用真实浏览器而不是纯 SSR：需求 2 的核心动作是「用户切了下拉框」，需求 4 还要在
+ * 搜索框里打字、点页码按钮 —— 静态渲染永远停在初始 state，断言不到这些交互结果；
+ * 需求 3 的箭头本身是 opacity-0 + hover 才显形，「节点到底在不在 DOM 里」只有渲染
+ * 之后才作数。esbuild 打包的是**真实源码组件**。
  *
  * 浏览器来自仓库里已有的 Playwright 缓存（`.tmp-b/pw/`），不额外下载。
  * 页面用 file:// 直接打开自包含 bundle，因此**不启动任何服务、不监听端口**。
@@ -67,7 +71,7 @@ window.renderReviews = () => {
 };
 
 /** posters 就是首页卡片的轮播队列 —— 封面优先、已去重（后端 slideshowPosters 保证）。 */
-function makeGame(posterUrls) {
+function makeGame(posterUrls, posterMode) {
   return {
     id: "g-1",
     name: "测试游戏",
@@ -77,7 +81,7 @@ function makeGame(posterUrls) {
     customPlatform: false,
     posterUrl: posterUrls[0] ?? null,
     posters: posterUrls,
-    posterMode: "static",
+    posterMode: posterMode || "slideshow",
     mediaCount: 0,
     durationSeconds: 0,
     durationText: "",
@@ -105,9 +109,9 @@ const PIXELS = [
 ];
 window.PIXELS = PIXELS;
 
-window.renderCard = (targetId, posterUrls) => {
+window.renderCard = (targetId, posterUrls, posterMode) => {
   createRoot(document.getElementById(targetId)).render(
-    wrap(React.createElement(GameCard, { game: makeGame(posterUrls) })),
+    wrap(React.createElement(GameCard, { game: makeGame(posterUrls, posterMode) })),
   );
 };
 `;
@@ -167,6 +171,7 @@ const HTML = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <div id="reviews"></div>
 <div id="card0"></div><div id="card1"></div><div id="card2"></div>
 <div id="card5"></div><div id="carddup"></div>
+<div id="cardstatic"></div><div id="cardslide"></div>
 <script src="bundle.js"></script>
 </body></html>`;
 fs.writeFileSync(path.join(OUT, 'index.html'), HTML);
@@ -323,7 +328,7 @@ step('需求 2 · 平台切换');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-step('需求 3 · 首页卡片轮播箭头（无可浏览图片时隐藏）');
+step('需求 3 · 首页卡片轮播箭头（设为轮播才显示，否则隐藏）');
 
 /** 卡片里的上一张/下一张按钮 —— 由 aria-label 定位，与组件渲染一致。 */
 const arrowCount = (id) =>
@@ -332,10 +337,10 @@ const arrowCount = (id) =>
   );
 
 /** 渲染 n 张**必定可见**的图（data URI，不会 404）。 */
-const renderCardWith = (id, n) =>
+const renderCardWith = (id, n, mode = 'slideshow') =>
   page.evaluate(
-    ({ id, n }) => window.renderCard(id, window.PIXELS.slice(0, n)),
-    { id, n },
+    ({ id, n, mode }) => window.renderCard(id, window.PIXELS.slice(0, n), mode),
+    { id, n, mode },
   );
 
 {
@@ -418,6 +423,144 @@ const renderCardWith = (id, n) =>
   n = await arrowCount('carddup');
   if (n === 0) ok('重复的同一张图被当作 1 张，不渲染箭头');
   else bad(`重复图被误判为多张，渲染了 ${n} 个箭头`);
+
+  // ── 本轮补充：静态封面（未设轮播）的卡片不显示箭头 ──────────────────────────
+  //
+  // 用户的要求是「没设置轮播就把上一张/下一张隐藏，设置了再显示」。卡片在静态
+  // 模式下就是一张封面，真正的操作是点开详情：箭头既挡画面，又暗示这里能就地翻图。
+  // 计数器**不**跟着隐藏 —— 它说的是「这个游戏有 3 张海报可看」，是去详情页的理由。
+  await renderCardWith('cardstatic', 3, 'static');
+  await page.waitForTimeout(200);
+  n = await arrowCount('cardstatic');
+  if (n === 0) ok('静态封面（未设轮播）3 张图时不渲染箭头');
+  else bad(`静态封面却渲染了 ${n} 个箭头 —— 需求未达成`);
+
+  const staticText = (await page.locator('#cardstatic').textContent()) ?? '';
+  if (/1\/3/.test(staticText)) ok('静态封面仍显示计数器 1/3（仍能看出有多张海报）');
+  else bad(`静态封面没有显示计数器 1/3：${staticText.slice(0, 80)}`);
+
+  const staticImgs = await page.locator('#cardstatic img').count();
+  if (staticImgs >= 1) ok('静态封面照常渲染（隐藏箭头没有影响封面）');
+  else bad('静态封面没有渲染出图片');
+
+  // 同一组图，只把模式改成轮播 → 箭头应当回来。
+  await renderCardWith('cardslide', 3, 'slideshow');
+  await page.waitForTimeout(200);
+  n = await arrowCount('cardslide');
+  if (n === 2) ok('同一组图设为轮播后箭头出现（2 个）');
+  else bad(`设为轮播却没有箭头：${n} 个`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+step('需求 4 · 媒体搜索栏 / 排序方式 / 点页码直接跳页');
+
+{
+  const searchSel = '[data-testid="media-reviews-search"]';
+  const sortSel = '[data-testid="media-reviews-sort"]';
+  const firstOutlet = async () => ((await outlets())[0] ?? '').trim();
+  const trimmed = async () => (await outlets()).map((s) => s.trim());
+
+  if (await page.locator('[data-testid="media-reviews-toolbar"]').count()) {
+    ok('渲染出「媒体搜索 + 排序方式」工具栏');
+  } else {
+    bad('没有渲染出搜索/排序工具栏');
+  }
+
+  const sortOptions = await page.locator(`${sortSel} option`).allTextContents();
+  if (sortOptions.length === 5) ok(`排序选项 5 个：${sortOptions.map((s) => s.trim()).join(' / ')}`);
+  else bad(`排序选项应为 5 个，实际 ${sortOptions.length} 个`);
+
+  const sortValue = await page.locator(sortSel).inputValue();
+  if (sortValue === 'default') ok('默认排序是「站点顺序」，不擅自改变抓取结果');
+  else bad(`默认排序应为 default，实际 ${sortValue}`);
+
+  // ── 搜索：只留媒体名命中的评价 ─────────────────────────────────────────────
+  // 故意敲小写：真实用户不会在意大小写，而数据是大写的 IGN。
+  await page.fill(searchSel, 'ign');
+  await page.waitForTimeout(150);
+  let n = await cardCount();
+  let names = await trimmed();
+  if (n === 1 && names[0] === 'IGN') ok(`搜「ign」只剩 1 条：${names[0]}（大小写不敏感）`);
+  else bad(`搜「ign」应只剩 IGN 一条，实际 ${n} 条：${names.join(', ')}`);
+
+  const hit = await page.locator('[data-testid="media-reviews-search-active"]').textContent();
+  if (hit && /1/.test(hit) && /ign/i.test(hit)) ok(`命中条数提示正确：${hit.trim()}`);
+  else bad(`命中条数提示不对：${hit}`);
+
+  const shownAfterSearch = await page.locator('[data-testid="media-reviews-shown"]').textContent();
+  if (shownAfterSearch && !new RegExp(String(REVIEW_TOTAL)).test(shownAfterSearch)) {
+    ok(`总数跟着搜索结果走，不再谎报 ${REVIEW_TOTAL} 条：${shownAfterSearch.trim()}`);
+  } else {
+    bad(`搜索结果里的总条数不对：${shownAfterSearch}`);
+  }
+
+  // ── 排序：分数、时间各来一遍 ───────────────────────────────────────────────
+  await page.fill(searchSel, '');
+  await page.selectOption(sortSel, 'score-asc');
+  await page.waitForTimeout(150);
+  // 灌入的数据里最低分是 Unknown Outlet B(55)，最高分是 IGN(90)
+  if ((await firstOutlet()) === 'Unknown Outlet B') ok('「评分从低到高」首条是最低分的 Unknown Outlet B');
+  else bad(`评分升序首条应是最低分的 Unknown Outlet B，实际 ${await firstOutlet()}`);
+  n = await cardCount();
+  if (n === 5) ok('换排序后回到第 1 页的 5 条');
+  else bad(`换排序后应显示第 1 页 5 条，实际 ${n} 条`);
+
+  await page.selectOption(sortSel, 'score-desc');
+  await page.waitForTimeout(150);
+  if ((await firstOutlet()) === 'IGN') ok('「评分从高到低」首条是最高分的 IGN');
+  else bad(`评分降序首条应是 IGN，实际 ${await firstOutlet()}`);
+
+  // 日期随序号递减（序号越小越新），所以 newest 首条还是 IGN、oldest 首条是最旧的
+  await page.selectOption(sortSel, 'newest');
+  await page.waitForTimeout(150);
+  if ((await firstOutlet()) === 'IGN') ok('「时间从新到旧」首条是最新的 IGN');
+  else bad(`时间降序首条应是最新的 IGN，实际 ${await firstOutlet()}`);
+
+  await page.selectOption(sortSel, 'oldest');
+  await page.waitForTimeout(150);
+  if ((await firstOutlet()) === 'Unknown Outlet B') ok('「时间从旧到新」首条是最旧的 Unknown Outlet B');
+  else bad(`时间升序首条应是最旧的 Unknown Outlet B，实际 ${await firstOutlet()}`);
+
+  // ── 点页码直接跳页 ─────────────────────────────────────────────────────────
+  await page.selectOption(sortSel, 'default');
+  await page.waitForTimeout(150);
+  const pageBtns = await page.locator('[data-testid="media-reviews-page-numbers"] button').count();
+  if (pageBtns === 2) ok(`页码条渲染出 2 个可点页码（${REVIEW_TOTAL} 条 = 2 页）`);
+  else bad(`页码条应有 2 个页码按钮，实际 ${pageBtns} 个`);
+
+  await page.click('[data-testid="media-reviews-page-2"]');
+  await page.waitForTimeout(150);
+  n = await cardCount();
+  if (n === LAST_PAGE) ok(`点页码「2」直接跳到第 2 页（${LAST_PAGE} 条）`);
+  else bad(`点页码 2 后应显示 ${LAST_PAGE} 条，实际 ${n} 条`);
+
+  const label2 = await page.locator('[data-testid="media-reviews-page"]').textContent();
+  if (label2 && /2/.test(label2)) ok(`页码文本跟着跳到第 2 页：${label2.trim()}`);
+  else bad(`点页码后页码文本不对：${label2}`);
+
+  const aria = await page.locator('[data-testid="media-reviews-page-2"]').getAttribute('aria-current');
+  if (aria === 'page') ok('当前页按钮带 aria-current="page"（读屏能听出自己在第几页）');
+  else bad(`当前页按钮缺少 aria-current，实际 ${aria}`);
+
+  // ── 搜索无命中：必须是专门的空态 ────────────────────────────────────────────
+  await page.fill(searchSel, 'zzzz');
+  await page.waitForTimeout(150);
+  if (await page.locator('[data-testid="media-reviews-search-empty"]').count()) {
+    ok('搜索无命中 → 显示搜索空态');
+  } else {
+    bad('搜索无命中却没有搜索空态');
+  }
+  if ((await page.locator('[data-testid="media-reviews-platform-empty"]').count()) === 0) {
+    ok('搜索空态没有复用「该平台暂无评价」那块（否则会误导用户去换平台）');
+  } else {
+    bad('搜索无命中时错用了平台空态');
+  }
+
+  await page.fill(searchSel, '');
+  await page.waitForTimeout(150);
+  n = await cardCount();
+  if (n === 5) ok('清空搜索框后回到第 1 页的 5 条');
+  else bad(`清空搜索后应显示 5 条，实际 ${n} 条`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

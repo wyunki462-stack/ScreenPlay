@@ -48,6 +48,24 @@ export const BACKEND_FEATURES = [
   // 在 health 里就能读出来。
   'review-listing-fallback', // 落地页无分页器时补探 critic-reviews 列表页并翻页
   'review-platform-filter', // 媒体评价面板按平台筛选（选项取自评价里出现过的平台）
+
+  // 第八轮（0.6.3）。
+  //
+  // 上面两个标记都没有兑现「抓全」：它们只在 HTML 里翻页，而真实站点早已把评价列表
+  // 改成由 Nuxt 客户端调一个 JSON 接口渲染，HTML 里的旧选择器一条都匹配不上，而且
+  // `?page=` / `?offset=` 在 HTML 路由上不再生效（详见 CHANGELOG 0.6.3）。所以这一轮
+  // 直接改成调用站点自己的接口 —— 下面的标记就是「镜像里有没有这条新链路」的判据。
+  'reviews-api-source', // 媒体评价改从 Metacritic 官方 JSON 接口抓（HTML 解析退为兜底）
+  'card-arrows-need-slideshow', // 首页卡片只有设了轮播才显示上一张/下一张
+
+  // 第九轮（0.6.4）：详情页评分区与媒体评价面板的三处改动。
+  //
+  // 0.6.3 只改到「抓得全不全」，没动界面本身。这一轮动的是**看得见的东西**，
+  // 所以三个标记分开列：任何一个缺了，都说明镜像不是这一版 —— 前端产物在
+  // public/ 里、后端在 dist/ 里，各自都可能被旧镜像盖住。
+  'ratings-no-user-score', // 详情页评分区不再显示「用户评分」那一列（M 站没有可用的用户分）
+  'reviews-ui-search-sort', // 媒体评价面板支持按媒体名搜索 + 五种排序
+  'reviews-page-jump', // 媒体评价页码可点，直接跳到第 N 页（不再是纯文本）
 ] as const;
 
 @Controller()

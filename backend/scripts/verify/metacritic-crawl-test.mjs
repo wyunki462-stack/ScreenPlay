@@ -82,6 +82,11 @@ function makeProvider(opts = {}) {
   const config = { get: (key) => (key === 'cacheTtlRatingSeconds' ? 604800 : undefined) };
   const provider = new MetacriticProvider(config, {}, {}, settings);
 
+  // 本文件测的是 **HTML 兜底**路径，所以官方接口一律桩成「拿不到」：否则编排会先
+  // 去问 JSON 接口（那条路径由 `metacritic-api-test.mjs` 覆盖），这里的断言就测
+  // 不到分页逻辑了。
+  provider.fetchJson = async () => null;
+
   provider.fetchHtml = async (url) => {
     requested.push(url);
     const pathname = new URL(url).pathname;

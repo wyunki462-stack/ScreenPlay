@@ -1,6 +1,6 @@
 {
   "name": "@screenplay/backend",
-  "version": "0.6.2",
+  "version": "0.6.4",
   "private": true,
   "description": "ScreenPlay backend — NestJS core service (scan, metadata, media streaming)",
   "main": "dist/main.js",

@@ -83,9 +83,7 @@ export const detailZh: Record<string, string> = {
 
   "detail.ratings.empty": "暂无评分数据",
   "detail.ratings.metascore": "Metascore",
-  "detail.ratings.userScore": "用户评分",
   "detail.ratings.criticCount": "{count} 个评论",
-  "detail.ratings.userCount": "{count} 个评分",
 
   // 「媒体评价」标签页（媒体名称 / 媒体打分 / 媒体评价原文）
   "detail.reviews.title": "媒体评价",
@@ -121,6 +119,18 @@ export const detailZh: Record<string, string> = {
   "detail.reviews.platformCount": "{platform}（{count} 条）",
   "detail.reviews.platformEmpty": "该平台暂无媒体评价",
   "detail.reviews.platformEmptyHint": "换一个平台，或点「全部平台」查看所有评价。",
+  // 媒体名搜索 + 排序方式（都在已取回的列表上本地生效）
+  "detail.reviews.searchPlaceholder": "搜索媒体名称",
+  "detail.reviews.searchActive": "「{query}」命中 {count} 条",
+  "detail.reviews.searchEmpty": "没有名称含「{query}」的媒体",
+  "detail.reviews.searchEmptyHint": "换个关键词，或清空搜索框看全部评价。",
+  "detail.reviews.sort": "排序方式",
+  "detail.reviews.sortDefault": "默认（站点顺序）",
+  "detail.reviews.sortScoreDesc": "评分从高到低",
+  "detail.reviews.sortScoreAsc": "评分从低到高",
+  "detail.reviews.sortNewest": "时间从新到旧",
+  "detail.reviews.sortOldest": "时间从旧到新",
+  "detail.reviews.goToPage": "跳到第 {page} 页",
 
   "detail.metacritic.withCritics": "Metacritic {score} · 基于 {criticCount} 家媒体",
   "detail.metacritic.score": "Metacritic {score}",

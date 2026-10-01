@@ -59,6 +59,7 @@ try {
 const {
   PAGE_SIZE, FIRST_PAGE_COLLAPSED, paginateReviews, slicePage,
   ALL_PLATFORMS, platformOptions, filterByPlatform,
+  filterByOutlet, sortReviews, pagerPages, REVIEW_SORTS,
 } = await import(`file://${outfile}`);
 
 console.log("\n\x1b[1m媒体评价分页 · 离线测试\x1b[0m\n");
@@ -245,6 +246,83 @@ console.log("\n  \x1b[1m[展开态与翻页的组合]\x1b[0m");
     eq("全无平台时只有「全部」", platformOptions(noneHasPlatform).length, 1);
     eq("全无平台时「全部」仍有计数", platformOptions(noneHasPlatform)[0].count, 2);
   }
+
+// ---- 媒体名搜索 + 排序 + 页码条（本轮新增的三个纯函数） ---------------------
+const mk3 = (outlet, score, publishedAt) => ({ outlet, score, publishedAt });
+
+console.log("\n  \x1b[1m[媒体名搜索]\x1b[0m");
+{
+  const list = [
+    mk3("IGN", 90, "2024-09-05"),
+    mk3("IGN Japan", 80, "2024-09-06"),
+    mk3("PC Gamer", 70, "2024-09-07"),
+    mk3(null, 60, null),
+  ];
+  eq("空查询原样返回（同一个引用，不复制）", filterByOutlet(list, ""), list);
+  eq("纯空白也算空查询", filterByOutlet(list, "   "), list);
+  eq("按子串匹配（IGN 同时命中 IGN 与 IGN Japan）", filterByOutlet(list, "IGN").length, 2);
+  eq("大小写不敏感", filterByOutlet(list, "ign").length, 2);
+  eq("首尾空白不敏感", filterByOutlet(list, "  pc gamer ").length, 1);
+  eq("只匹配媒体名，不匹配其他字段", filterByOutlet(list, "2024").length, 0);
+  eq("outlet 为 null 不会被任何词命中", filterByOutlet(list, "null").length, 0);
+  eq("无命中返回空数组", filterByOutlet(list, "Eurogamer").length, 0);
+  eq("不原地改动原列表", list.length, 4);
+}
+
+console.log("\n  \x1b[1m[排序方式]\x1b[0m");
+{
+  const list = [
+    mk3("A", 80, "2024-09-01"),
+    mk3("B", null, "2024-09-05"),
+    mk3("C", 90, "2024-08-20"),
+    mk3("D", 70, null),
+  ];
+  const names = (rs) => rs.map((r) => r.outlet).join("");
+
+  eq("排序选项齐全（顺序即下拉框顺序）", REVIEW_SORTS.join(","), "default,score-desc,score-asc,newest,oldest");
+  eq("default 原样返回（同一个引用）", sortReviews(list, "default"), list);
+  eq("分数从高到低", names(sortReviews(list, "score-desc")), "CADB");
+  eq("分数从低到高", names(sortReviews(list, "score-asc")), "DACB");
+  eq("时间从新到旧", names(sortReviews(list, "newest")), "BACD");
+  eq("时间从旧到新", names(sortReviews(list, "oldest")), "CABD");
+
+  // 缺值一律垫底：不跟着升降序翻转。「评分从低到高」时若把没打分的排到最前，
+  // 看上去就像「这些是最差的一组」，而它们只是没有分数。
+  eq("降序时无分数的垫底", names(sortReviews(list, "score-desc")).slice(-1), "B");
+  eq("升序时无分数的同样垫底", names(sortReviews(list, "score-asc")).slice(-1), "B");
+  eq("降序时无日期的垫底", names(sortReviews(list, "newest")).slice(-1), "D");
+  eq("升序时无日期的同样垫底", names(sortReviews(list, "oldest")).slice(-1), "D");
+
+  // 解析不了的日期按「没有日期」处理，而不是当成 1970 年排到最旧
+  const weird = [mk3("A", 80, "不是日期"), mk3("B", 90, "2024-01-01")];
+  eq("解析不了的日期算缺值垫底", names(sortReviews(weird, "newest")), "BA");
+
+  // 不原地排序：调用方还要用原列表算平台计数与总数
+  const snapshot = names(list);
+  sortReviews(list, "score-asc");
+  eq("不原地排序（原列表顺序不变）", names(list), snapshot);
+
+  eq("空列表排序不炸", sortReviews([], "newest").length, 0);
+}
+
+console.log("\n  \x1b[1m[页码条]\x1b[0m");
+{
+  const p = (page, count, span) =>
+    (span === undefined ? pagerPages(page, count) : pagerPages(page, count, span)).join(",");
+
+  eq("1 页 → 只有 1", p(1, 1), "1");
+  eq("5 页全部铺开", p(3, 5), "1,2,3,4,5");
+  eq("7 页仍然全铺开，不出现省略号", p(4, 7), "1,2,3,4,5,6,7");
+  // 8 页起：首页与末页必留，中间的省略号说明「这里隔了若干页」
+  eq("8 页开始省略：首 + 当前及相邻 + 末", p(4, 8), "1,gap,3,4,5,gap,8");
+  eq("第 1 页（左侧不出现省略号）", p(1, 20), "1,2,gap,20");
+  eq("第 2 页（左侧仍不出现省略号）", p(2, 20), "1,2,3,gap,20");
+  eq("靠末页时右侧不出现省略号", p(19, 20), "1,gap,18,19,20");
+  eq("中间页两侧都有省略号", p(10, 20), "1,gap,9,10,11,gap,20");
+  eq("span=2 时相邻页更多", p(10, 20, 2), "1,gap,8,9,10,11,12,gap,20");
+  eq("页数非法（0）时兜底成 1 页", p(1, 0), "1");
+  eq("页码条里没有 undefined/NaN", pagerPages(6, 50).every((i) => i === "gap" || Number.isInteger(i)), true);
+}
 
 rmSync(tmp, { recursive: true, force: true });
 

@@ -7,7 +7,7 @@ export const dialogsZh: Record<string, string> = {
   "dialogs.poster.modeSlideshow": "轮播（自动切换）",
   "dialogs.poster.slideshowCount": "已勾选 {n} 张参与详情页大图轮播",
   "dialogs.poster.slideshowHint":
-    "下面「轮播」勾选决定哪些图进入**详情页大图区**的轮播（首页卡片用的是全部海报，不受这里影响）。相册截图默认不勾选，只有你主动勾选才会加入。",
+    "下面「轮播」勾选决定哪些图进入**详情页大图区**的轮播（首页卡片用的是全部海报，不受这里影响）。相册截图默认不勾选，只有你主动勾选才会加入。上面的展现模式也会影响首页卡片：选「轮播」才会在卡片封面上显示上一张/下一张，静态封面不显示这两枚箭头。",
   "dialogs.poster.slideshowItemHint": "勾选后这张进入详情页大图轮播；取消勾选即移出，不会被重新加回。",
   "dialogs.poster.tabUpload": "本地图片",
   "dialogs.poster.tabAlbum": "从相册选择",

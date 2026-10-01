@@ -66,12 +66,13 @@ step "A. 解析器离线自检（镜像内夹具，不联网）"
 # 夹具与测试脚本都在镜像的 /app/backend 下（Dockerfile 的 COPY backend backend 会
 # 把它们一起带进去）。跑在一次性容器里，用 /tmp 当数据目录，不碰真实卷。
 A_OUT="$(docker run --rm --entrypoint sh "$IMAGE_TAG" -c \
-  'cd /app/backend && node scripts/verify/metacritic-reviews-test.mjs 2>&1' 2>&1)"
+  'cd /app/backend && node scripts/verify/metacritic-reviews-test.mjs 2>&1 && echo "--- api ---" && node scripts/verify/metacritic-api-test.mjs 2>&1' 2>&1)"
 A_RC=$?
 A_TAIL="$(printf '%s' "$A_OUT" | grep -E '结果|失败|✗' | tail -6)"
 
 if [ "$A_RC" -eq 0 ]; then
   ok "解析器测试通过：$(printf '%s' "$A_OUT" | grep -oE '[0-9]+ 项通过 / [0-9]+ 项失败' | tail -1)"
+  ok "官方接口解析测试通过：$(printf '%s' "$A_OUT" | grep -oE '[0-9]+ 项通过 / [0-9]+ 项失败' | head -1)"
 else
   bad "解析器测试未通过（exit=$A_RC）"
   printf '%s\n' "$A_TAIL" | sed 's/^/     /'

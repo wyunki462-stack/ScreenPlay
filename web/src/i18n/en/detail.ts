@@ -84,9 +84,7 @@ export const detailEn: Record<string, string> = {
 
   "detail.ratings.empty": "No rating data yet",
   "detail.ratings.metascore": "Metascore",
-  "detail.ratings.userScore": "User score",
   "detail.ratings.criticCount": "{count} critic reviews",
-  "detail.ratings.userCount": "{count} user ratings",
 
   // 「媒体评价」 tab (outlet name / outlet score / review text)
   "detail.reviews.title": "Media Reviews",
@@ -120,6 +118,18 @@ export const detailEn: Record<string, string> = {
   "detail.reviews.platformCount": "{platform} ({count})",
   "detail.reviews.platformEmpty": "No critic reviews for this platform",
   "detail.reviews.platformEmptyHint": "Pick another platform, or choose All platforms to see everything.",
+  // Outlet-name search + sorting (both applied client-side, on the already-fetched list)
+  "detail.reviews.searchPlaceholder": "Search outlet",
+  "detail.reviews.searchActive": "“{query}”: {count} matches",
+  "detail.reviews.searchEmpty": "No outlet name contains “{query}”",
+  "detail.reviews.searchEmptyHint": "Try another keyword, or clear the box to see all reviews.",
+  "detail.reviews.sort": "Sort",
+  "detail.reviews.sortDefault": "Default (site order)",
+  "detail.reviews.sortScoreDesc": "Score: high to low",
+  "detail.reviews.sortScoreAsc": "Score: low to high",
+  "detail.reviews.sortNewest": "Date: newest first",
+  "detail.reviews.sortOldest": "Date: oldest first",
+  "detail.reviews.goToPage": "Go to page {page}",
   "detail.reviews.nextPage": "Next",
 
   "detail.metacritic.withCritics": "Metacritic {score} · based on {criticCount} critic reviews",
