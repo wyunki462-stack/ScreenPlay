@@ -301,7 +301,8 @@ ScreenPlay 镜像包 —— ${VERSION}（提交 ${SHORT_SHA}）
    ── 如果推送中断 ──
    docker push 是**按层**传的，重复推同一镜像时已传完的层会跳过。
    所以直接重跑上面的 docker push 即可逐层推进，不要从头再来。
-   （本仓库的 push-to-ghcr.sh 就是自动化这个重试的，在 Linux 上可以用；
+   （本仓库的 scripts/push-to-ghcr.sh 就是自动化这个重试的，在 Linux 上可以用：
+       bash scripts/push-to-ghcr.sh ${IMAGE} ${VERSION}
      Windows 上手动重跑几次通常就够了。）
 
 3) 推到 Docker Hub
