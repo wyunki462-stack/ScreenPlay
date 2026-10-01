@@ -15,7 +15,6 @@ import ffmpeg from 'fluent-ffmpeg';
 import { AppConfig } from '../config/configuration';
 import { MediaType } from './media-types';
 import {
-  decodeJxr,
   jxrToWebp,
   jxrToWebpVariants,
   isJxrPath,

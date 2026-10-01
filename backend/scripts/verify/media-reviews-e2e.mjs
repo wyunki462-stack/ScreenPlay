@@ -155,7 +155,7 @@ stub.stderr.on('data', (d) => process.stdout.write(`   [stub:err] ${d}`));
 const runJs = path.join(TMP, 'run.js');
 fs.writeFileSync(
   runJs,
-  `const Module=require('module');const SHIM='${ROOT}/backend/scripts/achievements/sqlite-shim.js';` +
+  `const Module=require('module');const SHIM='${ROOT}/backend/scripts/verify/sqlite-shim.js';` +
     `const o=Module._resolveFilename;Module._resolveFilename=function(r,...a){return r==='better-sqlite3'?SHIM:o.call(this,r,...a);};` +
     `require('${ROOT}/backend/dist/main.js');\n`,
 );

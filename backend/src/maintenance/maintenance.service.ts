@@ -30,15 +30,16 @@ import { GamesService } from '../games/games.service';
 const MARKER_PREFIX = 'maintenance.';
 
 /**
- * Bumped whenever a repair must run again on libraries that already ran the old
- * one (e.g. the rotation rule changes from "2 + album count" to "cover only").
- * A new key means every existing install runs it once more, which is exactly the
- * intent — the marker records "this specific rule has been applied".
+ * Version markers for repairs that must run ONCE per library.
+ *
+ * Bumped whenever such a repair must run again on installs that already ran the
+ * old one: a new key means every existing install runs it once more, which is
+ * exactly the intent — the marker records "this specific rule has been applied".
+ *
+ * Only `repairDurations` uses this scheme today: it hits rate-limited network
+ * sources, so it has to guard-and-skip. The poster-rotation repair (feature 21)
+ * deliberately runs on every boot instead — see `repairPosterRotation`.
  */
-// v3：规则从「相册截图不足就补齐」改为「只保证封面在轮播里」（需求 21）。
-// 换 key 是**必须的**，不只是好看：v2 的标记已经在现有库里写过一次，沿用同一个
-// key 会让启动期修复直接跳过 —— 那些还没跑过新规则的库就永远等不到它。
-const ROTATION_MARKER = `${MARKER_PREFIX}poster-rotation-cover-only.v3`;
 const DURATION_MARKER = `${MARKER_PREFIX}duration-backfill.v1`;
 
 @Injectable()
@@ -229,8 +230,9 @@ export class MaintenanceService implements OnApplicationBootstrap {
    * user adds games. The write is idempotent — a cover already in the rotation
    * reports 0.
    *
-   * A marker is still written, for diagnosability only (`docker compose exec` can
-   * read it to answer "did this image ever repair the rotation?").
+   * No version marker is written: unlike `repairDurations`, this repair is cheap,
+   * idempotent, and its target set grows as the user adds games — so it is not
+   * guarded by a "has this rule already run?" key.
    */
   private repairPosterRotation(): { games: number; added: number } {
     let candidates: { id: string; name: string }[] = [];

@@ -127,7 +127,7 @@ stub.stdout.on('data', (d) => process.stdout.write(`   [stub] ${d}`));
 const runJs = path.join(TMP, 'run.js');
 fs.writeFileSync(
   runJs,
-  `const Module=require('module');const SHIM='${ROOT}/backend/scripts/achievements/sqlite-shim.js';` +
+  `const Module=require('module');const SHIM='${ROOT}/backend/scripts/verify/sqlite-shim.js';` +
     `const o=Module._resolveFilename;Module._resolveFilename=function(r,...a){return r==='better-sqlite3'?SHIM:o.call(this,r,...a);};` +
     `require('${ROOT}/backend/dist/main.js');\n`,
 );
@@ -260,7 +260,7 @@ detailD.mainStoryHours != null ? ok('上游失败期间已有时长保持不变'
 step('场景 E · 页面确实把时长渲染出来（真实浏览器）');
 const { chromium } = await import('playwright');
 const browser = await chromium.launch({
-  executablePath: path.join(ROOT, '.tmp-b/pw/chromium-1134/chrome-linux/chrome'),
+  executablePath: path.join(ROOT, '.pw/chromium-1134/chrome-linux/chrome'),
   args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
 });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' });

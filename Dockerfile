@@ -178,6 +178,47 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
     NPM_MIRROR_REGISTRY="$NPM_MIRROR_REGISTRY" \
     sh /tmp/npm-run.sh run build
 
+# --- 瘦身：只把运行时真的会用到的依赖带进运行镜像 -----------------------------
+#
+# 运行阶段直接 COPY /app/node_modules（见下面的 run 阶段）。而这条线以上的
+# npm install 装的是**全量**依赖：仅开发用的包（@nestjs/cli、typescript、vite、
+# playwright…）在运行镜像里一次也不会被 require，实测占了镜像最大的一层。
+#
+# 两步清理：
+#   1. npm prune --omit=dev：按 package-lock 剔掉 devDependencies。
+#      用 prune 而不是「重新 install 一次 --omit=dev」，是为了不重新解析依赖树 ——
+#      运行的 node_modules 与构建时被验证过的那棵树完全同源，只有「多了谁」变了。
+#   2. 删掉 web 的运行时依赖（react / lucide-react / @tanstack / plyr…）：
+#      web/dist 是 Vite 打好的自包含产物，后端只做静态托管，运行时不会 require 它们。
+#      依据：backend/dist 里没有任何 require("react"|"lucide-react"|"@tanstack"|"plyr")。
+#      代价：在镜像里改前端本来就要重跑 npm install + build，没有额外损失。
+#
+# 保留 declaration（.d.ts）：产物自查脚本虽然只 grep *.js，但这些类型文件没有运行时
+# 开销；真正该砍的是 sourceMap —— 见 backend/tsconfig.build.json（生产构建不再产出
+# 73 个 .map，既省体积也不把源码带进镜像）。
+#
+#   3. 清完之后**自检原生依赖**：better-sqlite3 的编译产物（build/Release/
+#      better_sqlite3.node）如果不在，容器起来时才会炸，而且报错是「数据库打不开」，
+#      与瘦身动作看不出关联。所以这里就地重建 + 真跑一次 SQL，失败就让构建挂掉。
+#      注意**不能**给 prune 加 --ignore-scripts：prune 会 reify 整棵树，一旦它决定重装
+#      某个含原生代码的包，--ignore-scripts 会让它装完却没有编译产物（这个坑在本地
+#      复现过），而脚本开着时 npm 才会去取/编译出 binding。
+#
+# 只影响运行镜像：build 阶段自己的 node_modules 保持全量，后续步骤不受影响。
+RUN HTTP_PROXY="$HTTP_PROXY" \
+    HTTPS_PROXY="$HTTPS_PROXY" \
+    NO_PROXY="$NO_PROXY" \
+    npm prune --omit=dev --no-audit --no-fund \
+ && rm -rf node_modules/lucide-react node_modules/react node_modules/react-dom \
+           node_modules/react-router-dom node_modules/@tanstack node_modules/plyr \
+           node_modules/plyr-react node_modules/react-photo-view \
+ && printf '[slim] node_modules: %s\n' "$(du -sh node_modules | cut -f1)" \
+ && if [ ! -f node_modules/better-sqlite3/build/Release/better_sqlite3.node ]; then \
+      echo '[slim] better-sqlite3 编译产物缺失，就地重建'; \
+      npm rebuild better-sqlite3 --no-audit --no-fund; \
+    fi \
+ && node -e "const D=require('better-sqlite3');const db=new D(':memory:');db.exec('create table t(a)');db.prepare('insert into t values (?)').run(1);if(db.prepare('select count(*) c from t').get().c!==1)process.exit(3);db.close();require('sharp');console.log('[slim] 原生依赖自检通过（better-sqlite3 可读写 + sharp 可加载）')"
+
 # --- 产物自查：构建失败比部署失败便宜得多 -----------------------------------
 # 「镜像里还是旧代码」是最难排查的一类问题：容器起得来、健康检查也过、页面也
 # 打得开，只是少一个标签页。常见成因是构建缓存命中了旧的 COPY 层，或某个

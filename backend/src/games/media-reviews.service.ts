@@ -18,7 +18,7 @@
  * instead of piling up duplicates or reordering the panel.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { v5 as uuidv5 } from 'uuid';
 import { DatabaseService } from '../database/database.service';
 import type { MediaReviewData } from '../metadata/provider.interface';
@@ -77,8 +77,6 @@ export interface ReviewsSummary {
 
 @Injectable()
 export class MediaReviewsService {
-  private readonly logger = new Logger(MediaReviewsService.name);
-
   constructor(private readonly db: DatabaseService) {}
 
   /** Display order: highest score first, unscored last, then by outlet name. */

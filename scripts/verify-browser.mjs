@@ -32,7 +32,7 @@ const truthy = (v) => v === true;
 const CHROME =
   process.env.CHROME_PATH ||
   process.env.CHROME_BIN ||
-  process.env.CHROME_PATH || join(ROOT, '.tmp-b/pw/chromium-1134/chrome-linux/chrome');
+  process.env.CHROME_PATH || join(ROOT, '.pw/chromium-1134/chrome-linux/chrome');
 
 /**
  * Read an API resource with retries.

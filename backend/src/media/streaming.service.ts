@@ -15,7 +15,6 @@ import path from 'path';
 @Injectable()
 export class StreamingService {
   private readonly logger = new Logger(StreamingService.name);
-  private readonly chunkSize = 1024 * 256; // 256 KiB
 
   /**
    * Stream a file, honouring the Range header. Guarantees the path stays

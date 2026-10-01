@@ -9,7 +9,7 @@
  * de-duplicated title.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import Fuse from 'fuse.js';
 
 /** Well-known crack/repack groups and scene tags. */
@@ -38,8 +38,6 @@ const EDITION_TAGS = [
 
 @Injectable()
 export class GameRecognizerService {
-  private readonly logger = new Logger(GameRecognizerService.name);
-
   /**
    * Normalize a raw folder/file name into a clean display title.
    * Returns at most one canonical name; edge tokens are dropped (but stored as

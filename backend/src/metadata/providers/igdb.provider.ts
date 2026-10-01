@@ -7,7 +7,7 @@
  * memoized in-process).
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../../config/configuration';
 import { HttpService } from '../../common/http/http.service';
@@ -40,7 +40,6 @@ export class IgdbProvider implements MetadataProvider {
   readonly name = 'igdb' as const;
   readonly cacheTtlSeconds: number;
 
-  private readonly logger = new Logger(IgdbProvider.name);
   private token: { value: string; expiry: number; clientId: string } | null = null;
 
   constructor(

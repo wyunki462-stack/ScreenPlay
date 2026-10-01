@@ -180,7 +180,7 @@ else
   warn "以下标签没推成功（已推上去的层不会白费，重跑本脚本即可接着传）："
   printf '    %s\n' "${FAILED[@]}"
   printf '\n  若报的全是 EOF / TLS handshake timeout，说明链路太不稳，两条路选一条：\n'
-  printf '    ① 给 docker daemon 配代理（见 docs/UPLOAD-0.6.4.md 的 B5 段）后重跑\n'
+  printf '    ① 给 docker daemon 配代理（见 docs/UPLOAD.md 的 B5 段）后重跑\n'
   printf '    ② 走内网：bash scripts/package-image.sh 打包，或 bash transfer-image.sh 用户@目标设备IP\n'
   exit 1
 fi

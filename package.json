@@ -1,6 +1,6 @@
 {
   "name": "screenplay",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "private": true,
   "description": "ScreenPlay — personal game media album manager (backend + web frontend + flutter client)",
   "workspaces": [
@@ -19,7 +19,7 @@
     "node": ">=20.18.1"
   },
   "license": "MIT",
-  "dependencies": {
-    "playwright-core": "^1.47.0"
+  "devDependencies": {
+    "playwright": "^1.47.0"
   }
 }

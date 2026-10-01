@@ -5,6 +5,55 @@
 
 ---
 
+## [0.6.5] — 2026-10-01
+
+**瘦身版。** 这一版**不改任何界面、接口与数据行为**（前端产物 `index-DZEuyZR6.js` 与 0.6.4
+哈希完全一致），目标只有一个：让仓库与镜像里不再有已经用不到的东西。逐项清单、体积对比与
+验收证据见 [`docs/SLIMMING.md`](docs/SLIMMING.md)。
+
+### 依赖
+
+- 根 `package.json`：`playwright-core`（原本被误标成运行时依赖）删掉，改为 `devDependencies`
+  里的 `playwright`；`backend/package.json`：删掉 `@nestjs/serve-static`（静态资源走的是
+  `backend/src/main.ts:58 app.useStaticAssets(webDist)`，这个包从未被 import）；
+  `web/package.json`：删掉本不该出现在工作区里的 `playwright`。
+- 保留但已核实用途的依赖：`plyr`（`web/src/components/VideoPlayer.tsx:4` 引 `plyr/dist/plyr.css`）、
+  `prop-types`（`plyr-react` 的 esm 入口引用）、`reflect-metadata` / `rxjs`
+  （`@nestjs/core` 的 peerDependency）。
+
+### 构建与镜像
+
+- `backend/tsconfig.build.json`：`sourceMap: false`、`incremental: false` —— 镜像里不再带 73 个
+  `.map` 与 `tsconfig.build.tsbuildinfo`（构建产物断言只检查 `*.js`，运行时报错靠行号也读不到映射）。
+- `Dockerfile` 的 `run` 阶段不再整棵树照搬 `node_modules`，改为 `npm prune --omit=dev` 之后再删掉
+  只有前端运行时才需要的包（`react*`、`@tanstack`、`lucide-react`、`plyr*`、`react-photo-view`）；
+  `backend/dist` 的产物里没有任何 `require()` 指向它们。
+- 同一步里加了**原生依赖自检**：`better-sqlite3` 若缺编译产物就 `npm rebuild`，随后用 `node -e`
+  真开一个内存库写入读回，并 `require('sharp')`，任一步失败都让构建失败 —— 避免出现「镜像能构建、
+  一启动却打不开数据库」这类只在运行时才暴露的问题。
+
+### 文件
+
+- 删除 37 个只服务于一次性轮次验证的文件（`scripts/verify-round-{d,e,f,g,k,l}.sh`、
+  `scripts/verify-all-games.mjs`、`scripts/verify-media-reviews-ui.mjs`、
+  `scripts/verify-poster-config.mjs`、`backend/scripts/verify/round-*-backend.mjs` 等）与整套
+  `backend/scripts/achievements/` 工具包；它们原本断言的覆盖已由保留下来的离线套件承担，
+  对照关系写在 `docs/VERIFY.md` 顶部。
+- 归位而非删除：`sqlite-shim.js`（本机没有编译产物时给 `node:sqlite` 用的兼容垫片）移到
+  `backend/scripts/verify/`；Playwright 浏览器从 `.tmp-b/pw` 移到 `.pw/`（`.gitignore` 已忽略），
+  4 处引用路径同步更新。
+- `docs/UPLOAD-0.6.4.md` → `docs/UPLOAD.md`（去掉版号，命令按 `package.json` 现版本自动取值）；
+  `docs/VERIFY.md` 的跑法改写成「离线套件」与「已部署实例自检」两段。
+
+### 验证
+
+- `npm run build`、`npx tsc --noEmit -p backend/tsconfig.json`、`npx tsc --noEmit -p web/tsconfig.json`
+  全部通过。
+- 9 个离线套件 / 372 条断言全绿：媒体评价抓取→解析→落库→接口、解析器纯函数、官方接口、
+  抓取编排、轮播归属、SSR、通关时长缓存（含真实浏览器）、媒体评价分页与搜索排序（真实 Chromium）。
+- 另用「生产依赖子集」起了一次完整应用做冒烟：`/api/health` 返回 200 且 27 个 feature 标记齐全，
+  `/`、`/api/games`、`/api/settings`、`/api/library/status` 均 200，数据目录与数据库建表正常。
+
 ## [0.6.4] — 2026-10-01
 
 **界面版。** 0.6.3 解决的是「媒体评价抓得全不全」，这一版动的全是**用户能看见的界面**，

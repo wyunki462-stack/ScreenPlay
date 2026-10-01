@@ -1,6 +1,0 @@
-{
-  "name": "screenplay-ui-verify",
-  "private": true,
-  "type": "commonjs",
-  "description": "需求一/二/三的前端真实 DOM 验证；依赖装在本地，react 必须解析到仓库根目录。"
-}

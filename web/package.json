@@ -1,6 +1,6 @@
 {
   "name": "@screenplay/web",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "private": true,
   "type": "module",
   "description": "ScreenPlay web frontend — personal game media album manager",
@@ -26,7 +26,6 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
-    "playwright": "^1.47.0",
     "postcss": "^8.4.40",
     "tailwindcss": "^3.4.7",
     "typescript": "^5.5.4",

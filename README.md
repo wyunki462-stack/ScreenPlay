@@ -382,10 +382,10 @@ curl -X POST http://<主机>:3001/api/games/backfill-durations
 不受影响，仍然按各自规则排列。
 
 验证步骤见 [`docs/VERIFY.md`](docs/VERIFY.md) 的「需求 4 ~ 需求 21」；
-本轮三项改动可一键复验：
+在已部署的环境上复验（重建镜像 + 重启容器 + 体检）：
 
 ```bash
-bash scripts/verify-round-d.sh
+bash scripts/rebuild-and-verify.sh
 ```
 
 ---
@@ -577,7 +577,7 @@ CI 只是多一条会失败、且报错信息残缺的链路（build-push-action
 `docker/build-push-action`，并**显式传 `NPM_MIRROR_REGISTRY`**（国内默认是
 registry.npmmirror.com，会让海外 runner 跨太平洋取包）。
 
-### 本轮（0.6.4：评分区去掉用户评分 + 评价面板搜索/排序/点页码跳页）的部署与验收
+### 本轮（0.6.4 / 0.6.5：评分区去掉用户评分 + 评价面板搜索/排序/点页码跳页）的部署与验收
 
 **这一版改的全是界面**，不碰抓取链路 —— 数据侧要做的仍是 0.6.3 那件事（媒体评价改走
 站点自己的 JSON 接口）。**如果你还没部署过 0.6.3，直接部署 0.6.4 就行**，两轮内容都在
@@ -591,8 +591,11 @@ bash scripts/rebuild-and-verify.sh
 
 ```bash
 curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' | grep -E 'ratings-no-user-score|reviews-ui-search-sort|reviews-page-jump|"version"'
-# 期望：version 0.6.4，三个标记都在
+# 期望：version 0.6.5（或仍在跑的 0.6.4），三个标记都在
 ```
+
+> **0.6.5 是瘦身版**：界面、接口、数据行为与 0.6.4 **完全一致**（连构建出的前端
+> bundle 哈希都相同），区别只在镜像体积 —— 明细见 `docs/SLIMMING.md`。
 
 浏览器里三处肉眼验收（都在某个游戏的详情页）：
 

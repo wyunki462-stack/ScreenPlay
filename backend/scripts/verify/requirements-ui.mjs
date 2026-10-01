@@ -17,7 +17,7 @@
  * 需求 3 的箭头本身是 opacity-0 + hover 才显形，「节点到底在不在 DOM 里」只有渲染
  * 之后才作数。esbuild 打包的是**真实源码组件**。
  *
- * 浏览器来自仓库里已有的 Playwright 缓存（`.tmp-b/pw/`），不额外下载。
+ * 浏览器来自仓库里已有的 Playwright 缓存（`.pw/`），不额外下载。
  * 页面用 file:// 直接打开自包含 bundle，因此**不启动任何服务、不监听端口**。
  */
 
@@ -179,7 +179,7 @@ fs.writeFileSync(path.join(OUT, 'index.html'), HTML);
 // ─────────────────────────────────────────────────────────────────────────────
 // 启动 Chromium
 // ─────────────────────────────────────────────────────────────────────────────
-const EXE = path.join(ROOT, '.tmp-b/pw/chromium-1134/chrome-linux/chrome');
+const EXE = path.join(ROOT, '.pw/chromium-1134/chrome-linux/chrome');
 if (!fs.existsSync(EXE)) {
   console.error(`找不到 Chromium：${EXE}\n（本脚本用仓库里已有的 Playwright 缓存，不联网下载）`);
   process.exit(1);

@@ -2,26 +2,41 @@
 
 本文给出各项功能的**可复现验证步骤**。每项都分两层：
 
-- **自动化**：`scripts/verify-image-fix.sh` 中的对应检查组，会打印 ✓/✗ 并计入通过数；
+- **自动化（离线）**：`backend/scripts/verify/*.mjs` 里的对应套件 —— 零网络、不需要
+  Docker，跑完打印 `ok / bad` 计数，**bad 不为 0 时退出码非 0**；
+- **自动化（已部署实例）**：`scripts/verify-image-fix.sh` 的对应检查组，会打印 ✓/✗ 并计入通过数；
 - **手工**：在浏览器里用眼睛确认的步骤，专门覆盖脚本测不到的交互细节。
 
 ```bash
-# 一次性跑完 16 组（含本文涉及的全部自动化检查）
+# A. 离线套件（零网络；只需先构建一次后端编译产物）
+cd <仓库根目录>
+npm run build                                            # 套件测的是 backend/dist
+node backend/scripts/verify/review-pagination-test.mjs   # 评价分页纯函数
+node backend/scripts/verify/metacritic-reviews-test.mjs  # 站点 HTML 解析器
+node backend/scripts/verify/metacritic-api-test.mjs      # 官方 JSON 接口（provider 层）
+node backend/scripts/verify/metacritic-crawl-test.mjs    # 抓取编排（分页/合并去重）
+node backend/scripts/verify/media-reviews-e2e.mjs        # 抓取→解析→落库→接口（本地桩服）
+node backend/scripts/verify/duration-cache-e2e.mjs       # 空时长不写缓存 + 重试（桩服）
+node backend/scripts/verify/poster-rotation-e2e.mjs      # 轮播归属（桩服）
+node backend/scripts/verify/poster-ui-ssr.mjs            # 海报 UI 的 SSR DOM 行为
+node backend/scripts/verify/requirements-ui.mjs          # 需求 1–4 交互（真实 Chromium，不启服务）
+
+# B. 已部署实例上的运行时自检（需要容器在跑；PORT 默认 3001）
 cd <仓库根目录>
 AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.sh
-
-# 需求 6 / 7 / 8（卡片比例 / 成就手动选择 / 失败提示）：自建隔离实例，可重复执行
-cd <仓库根目录>
-bash scripts/verify-round-d.sh
-
-# 大图区海报轮播 + 全量游戏遍历（自建隔离实例，含真实 Chromium）
-cd <仓库根目录>
-bash scripts/verify-round-l.sh
 ```
 
 > 开启认证后所有 `/api/*` 都需要会话，脚本会自动登录并携带 Cookie。
 > 用本地账户时改为 `AUTH_ADMIN_PASSWORD=密码 bash scripts/verify-image-fix.sh`。
 > 未提供凭据时脚本不会失败退出，而是提示"未登录成功，多数接口返回 401 属预期结果"。
+
+> **关于下文按轮次记录的「轮次脚本」**：`scripts/verify-round-{d,e,f,g,k,l}.sh`、
+> `scripts/verify-media-reviews-ui.mjs`、`scripts/verify-all-games.mjs` 等一次性轮次脚本
+> 已在 **0.6.5 瘦身**中删除（它们各自只跑一次、且与需求编号强耦合）。它们覆盖的行为
+> 现由上面那组离线套件承担：需求 1–4 的浏览器交互 → `requirements-ui.mjs`；评价分页
+> 纯函数与抓取链路 → `review-pagination-test.mjs` / `metacritic-*.mjs` / `media-reviews-e2e.mjs`；
+> 轮播归属 → `poster-rotation-e2e.mjs` / `poster-ui-ssr.mjs`；时长缓存 → `duration-cache-e2e.mjs`。
+> 下文的具体命令与数字作为**历史记录**保留，复现入口以上面 A/B 两段为准。
 
 ---
 
