@@ -17,7 +17,7 @@
 | # | 功能项 | 验证方式 | 结果 |
 |---|---|---|---|
 | 1 | 后端编译 | `npm run build -w backend`（nest build） | ✅ exit 0 |
-| 2 | 前端编译 | `npm run build -w web`（tsc && vite build） | ✅ exit 0；`dist/assets/index-Ca5ByDzf.js` 537.95 kB（gzip 157.34）+ `index-BCj6mJxQ.css` 73.34 kB（gzip 12.62）（第一轮的 `index-DZEuyZR6.js` 与 0.6.4 同哈希；第二轮源码有去重改动，哈希必然变化） |
+| 2 | 前端编译 | `npm run build -w web`（tsc && vite build） | ✅ exit 0；`dist/assets/index-Ca5ByDzf.js` 磁盘 **545,789 B**（Vite 控制台报 537.95 kB —— 它统计的是 JS 字符串长度，包内 3,941 个中文字符按 1 个计、实际占 3 字节；gzip -6 157,343 B）+ `index-BCj6mJxQ.css` **73,345 B**（gzip -6 12,624 B）。重跑一次哈希与字节都不变。（第一轮的 `index-DZEuyZR6.js` 与 0.6.4 同哈希；第二轮源码有去重改动，哈希必然变化） |
 | 3 | 类型检查 | `npx tsc --noEmit -p backend/tsconfig.json --tsBuildInfoFile /tmp/.tsbi-backend.json`、`npx tsc --noEmit -p web/tsconfig.json` | ✅ 均 exit 0 |
 | 4 | 应用启动 | 用「生产依赖子集」起 `backend/dist/main.js`（`PORT=3100 DATA_DIR=/tmp/slim/data`） | ✅ `/api/health` → 200，日志 `Ready after 1.0s` |
 | 5 | 功能标记 | 上述 health 响应的 `features` | ✅ 27 个全在，含 `ratings-no-user-score`、`reviews-ui-search-sort`、`reviews-page-jump` |
@@ -34,12 +34,13 @@
 | 16 | 海报轮播归属（封面/截图、用户选择） | `node backend/scripts/verify/poster-rotation-e2e.mjs` | ✅ 16/16 |
 | 17 | SSR DOM 行为 | `node backend/scripts/verify/poster-ui-ssr.mjs` | ✅ 10/10 |
 | 18 | 通关时长缓存（空值不写缓存 + 重试） | `node backend/scripts/verify/duration-cache-e2e.mjs`（桩服 + 真实浏览器渲染） | ✅ 13/13 |
-| 19 | 构建产物完整性 | `scripts/verify-build-artifacts.sh`（构建期在 Dockerfile 内执行） | ✅ 检查 `*.js` 齐全 |
-| 20 | 镜像内原生依赖可加载 | Dockerfile 的 `node -e` 自检（better-sqlite3 内存库读写 + `require('sharp')`） | ⏳ 随用户的镜像构建执行；本地已用同一段断言复现「缺 binding 会失败」，证明它有效 |
-| 21 | 已部署实例运行时/代理/图片自检 | `bash scripts/verify-image-fix.sh`（需要一个在跑的实例） | ⏳ 需在部署实例上执行，本次未跑 |
-| 22 | 镜像构建与上传 | `bash scripts/docker-build.sh`、`bash scripts/push-to-ghcr.sh screenplay:latest 0.6.5` | ⏳ 本环境无 docker 权限，由用户执行 |
+| 19 | 海报归属规则（用户自选海报不被覆盖） | `node backend/scripts/verify/poster-merge-unit.mjs`（esbuild 打包真实源码 + 编译产物接线断言） | ✅ 10/10 |
+| 20 | 构建产物完整性 | `scripts/verify-build-artifacts.sh`（构建期在 Dockerfile 内执行） | ✅ 检查 `*.js` 齐全 |
+| 21 | 镜像内原生依赖可加载 | Dockerfile 的 `node -e` 自检（better-sqlite3 内存库读写 + `require('sharp')`） | ⏳ 随用户的镜像构建执行；本地已用同一段断言复现「缺 binding 会失败」，证明它有效 |
+| 22 | 已部署实例运行时/代理/图片自检 | `bash scripts/verify-image-fix.sh`（需要一个在跑的实例） | ⏳ 需在部署实例上执行，本次未跑 |
+| 23 | 镜像构建与上传 | `bash scripts/docker-build.sh`、`bash scripts/push-to-ghcr.sh screenplay:latest 0.6.5` | ⏳ 本环境无 docker 权限，由用户执行 |
 
-离线套件断言合计 **372 条，0 失败**（38+13+63+13+63+16+10+58+98）。
+离线套件断言合计 **382 条，0 失败**（38+13+63+13+63+16+10+58+98+10）。
 
 ---
 
@@ -174,16 +175,17 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 
 ## 三、体积对比
 
-| 口径 | 瘦身前 | 瘦身后 | 变化 |
+| 口径 | 瘦身前（0.6.4） | 瘦身后（当前 HEAD） | 变化 |
 |---|---|---|---|
-| 跟踪文件数 | 269 | **232** | −37 |
-| 跟踪文件改动量 | — | — | `57 files changed, 112 insertions(+), 5350 deletions(-)` |
-| 仓库内容（排除 `.git`/`node_modules`/`.pw`/`dist-image`） | 7.5 MB | **5.1 MB** | −2.4 MB |
-| `backend/dist` | 73 `.js` + 73 `.map` + `tsbuildinfo` | 73 `.js` + 73 `.d.ts` | −0.4 MB（源映射） −198 KB（增量信息） |
-| `node_modules` 生产子集 | 266 MB（表观）/ 359 MB（占用） | **97 MB（表观）** | ≈ −64% |
+| 跟踪文件数 | 269 | **234**（瘦身提交）→ **238**（第二轮 +4） | −35，再 +4 |
+| 跟踪文件改动量 | — | — | 瘦身提交 `57 files changed, 112 insertions(+), 5350 deletions(-)` |
+| 跟踪文件字节和（`git ls-tree -r -l` 求和） | 2,527,023 B = 2.41 MB | **2,328,151 B = 2.22 MB** | −0.19 MB（−8%） |
+| 工作区内容（排除 `.git`/`node_modules`/`.pw`/`dist-image`/`.tmp-*`） | — | **4,125,962 B = 3.93 MB** | 含 `backend/dist` 0.84 MB 与 `web/dist` 0.59 MB |
+| `backend/dist` | 73 `.js` + 73 `.map` + `tsbuildinfo` | 74 `.js` + 74 `.d.ts`（**0 个 `.map`**），148 文件共 **0.84 MB** | −0.4 MB（源映射） −198 KB（增量信息） |
+| `node_modules` 生产子集 | 266 MB（表观）/ 359 MB（占用）/ 231 个顶层包 | **101,576,720 B = 96.9 MiB（表观）/ 222 个顶层包** | ≈ −64% |
 | 同口径 `node_modules` tar.gz（gzip -6） | 61 MB | **25,570,655 B（≈25 MB）** | ≈ −58% |
-| 顶层包数（生产子集） | 231 | 222 | −9 |
-| 镜像体积 | **571.9 MiB**（实测） | **386.6 MiB**（推算，待本机构建复核） | **−32.4%** |
+| 前端产物（磁盘字节） | `index-DZEuyZR6.js` + `index-DnrcYEYQ.css` | `index-Ca5ByDzf.js` **545,789 B** + `index-BCj6mJxQ.css` **73,345 B** | 与 Vite 报的 537.95 kB 差值 = 中文多字节（见第一节第 2 行） |
+| 镜像体积 | **571.9 MiB**（实测） | **386.6 MiB**（层核算）/ **≈394 MiB**（本地 tar 口径） | **−32% ~ −33%** |
 
 ### 镜像体积：实测 vs 推算
 
@@ -201,19 +203,34 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 
 **瘦身后（推算，方法可复核）**：不再猜比例，而是直接在这层真实内容上做字节级核算 —— 逐条统计
 「层内条目 512 B 头 + 文件按 512 B 对齐」的费用，减去不属于生产子集的包。核算模型自检：按同一模型
-重算整个层得到 295,956,992 B，与真实值只差 1,536 B。再按平台差异修正（层里是 musl 的
-`@img/sharp-libvips-linuxmusl-x64` + `@img/sharp-linuxmusl-x64` 共 16.06 MiB，是 sharp 的运行时
-二进制，必须保留；被误判的 `@esbuild/linux-x64` 9.26 MiB 与 `@rollup/rollup-linux-x64-musl` 2.08 MiB
-确属开发工具链，照删）：
+重算整个层得到 295,956,992 B，与真实值只差 1,536 B（0.0005%）。用 GHCR 拉下来的真实层 +
+现生产子集重跑一次（脚本 `/tmp/compute-after.js`）：待删 **18,330 文件 + 1,678 目录 =
+211,126,784 B（201.3 MiB）**，层余 84,831,744 B（80.9 MiB）。
 
-- `node_modules` 层：295,958,528 B → **101,669,376 B（97.0 MiB）**，降幅 65.7%
-- 镜像总量：599,668,224 B → **405,379,072 B（386.6 MiB）**，**降幅 32.4%**
+再按平台差异修正（层里是 musl 的 `@img/sharp-libvips-linuxmusl-x64` 15.77 MiB +
+`@img/sharp-linuxmusl-x64` 0.29 MiB = 16.06 MiB，是 sharp 的运行时二进制，必须保留；被误判的
+`@esbuild/linux-x64` 9.26 MiB 与 `@rollup/rollup-linux-x64-musl` 2.08 MiB 确属开发工具链，照删）：
+
+- `node_modules` 层：295,958,528 B → 84,831,744 + 16,855,040 = **101,686,784 B（97.0 MiB）**，
+  降幅 65.7%
+- 镜像总量：599,668,224 − 211,126,784 + 16,855,040 = **405,396,480 B（386.6 MiB）**，**降幅 32.4%**
 
 被删掉的 201 MiB 主要是开发工具链与只给前端用的包：`lucide-react` 25.9、`typescript` 22.6、
 `@nestjs/cli` 22.2、`@angular-devkit/{core,schematics}` 12.9、`@esbuild/linux-x64` 9.3、
 `playwright-core` 7.4、`tailwindcss` 5.6、`webpack` 5.5、`plyr` 5.2、`@tanstack/*` 5.3、
-`react-dom` 4.3 MiB 等。本地独立复核方向一致：同格式 tar 打出的生产子集 103.8 MiB（比推算略大，
-因为本地树含 glibc 版 sharp 二进制，镜像里是 musl 版）。
+`react-dom` 4.3 MiB 等。
+
+**第二种口径（本地复现）**：在本机把生产子集照同格式打包，tar 口径 **108,633,600 B（103.6 MiB）**
+（`tar` 实产 108,800,000 B），比层核算的 97.0 MiB 大 6.7 MiB。差额已逐项定位：
+
+- `better-sqlite3`：本地 19.25 MiB vs 层内 11.91 MiB（**+7.33 MiB**）—— 本地树带 node-gyp 构建
+  残留，而镜像是它自己那一次安装 / `npm rebuild` 的产物，这项差值是本机特有的，不该算进镜像；
+- sharp 平台版：本地是 glibc（`@img/sharp-libvips-linux-x64` 15.49 + `@img/sharp-linux-x64`
+  0.27 MiB），镜像是 musl（15.77 + 0.29 MiB），几乎抵消（−0.3 MiB）；
+- 其余同名包逐一核对，本地比层内大的条目只有上述两项。
+
+所以镜像实测值应落在 **386.6 MiB（沿用 0.6.4 层的 better-sqlite3 构建状态）～ 394 MiB（本地 tar
+口径）** 之间，最终以 `bash scripts/docker-build.sh` 的实测为准。
 
 > 一句提醒：0.6.4 的层是**未压缩**推上去的，所以 registry 的存储/拉取量就是 572 MB。若把推送改成压缩层
 > （`docker buildx build --push --compression=gzip`，或推完用 skopeo/crane 转换），同内容的传输量会降到
@@ -224,10 +241,11 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 
 ## 四、无回归证明
 
-1. **构建**：`npm run build` exit 0；前端产物 `index-Ca5ByDzf.js` 537.95 kB（gzip 157.34）+
-   `index-BCj6mJxQ.css` 73.34 kB（gzip 12.62）。第一轮（只动依赖/构建/文件）的产物与 0.6.4
-   **同哈希**（`index-DZEuyZR6.js`），那一轮由此即可证明前端零改动；第二轮合并了 6 组重复逻辑，
-   产物必然变化 —— 这一轮的无回归靠下面的套件断言，而不是靠哈希。
+1. **构建**：`npm run build` exit 0；前端产物 `index-Ca5ByDzf.js` 磁盘 545,789 B（Vite 控制台报
+   537.95 kB，差值来自包内 3,941 个中文多字节字符）+ `index-BCj6mJxQ.css` 73,345 B。第一轮
+   （只动依赖/构建/文件）的产物与 0.6.4 **同哈希**（`index-DZEuyZR6.js`），那一轮由此即可证明
+   前端零改动；第二轮合并了 6 组重复逻辑，产物必然变化 —— 这一轮的无回归靠下面的套件断言，
+   而不是靠哈希。构建可复现：重跑一次，哈希与字节都不变。
 2. **类型**：后端、前端两个 `tsc --noEmit` 均 exit 0。
 3. **测试**：10 个离线套件 / 382 条断言 0 失败（逐套件数字见第一节）。新增的
    `backend/scripts/verify/poster-merge-unit.mjs`（10 项）= 规则断言 7 项 + 「`persist()` 真的走了
@@ -250,7 +268,8 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 ## 五、遗留与后续
 
 1. 镜像体积的**实测值**需你执行 `bash scripts/docker-build.sh` 后用 `docker image ls` 取（本环境无
-   docker 权限）；第三节给出的是在同一份真实镜像层内容上做字节级核算的推算值 386.6 MiB（−32.4%）。
+   docker 权限）；第三节给出的是在同一份真实镜像层内容上做字节级核算的推算值 386.6 MiB（−32.4%），
+   本机 tar 口径为 394 MiB，实测应落在这两者之间。
 2. 可选优化：把镜像层改成压缩推送（见第三节末的提醒），能再省一大截传输与 registry 存储量。
 3. ~~`metadata.service.ts` 的海报覆盖疑似缺陷~~ **已按用户要求修复**（2.5），并用
    `backend/scripts/verify/poster-merge-unit.mjs` 固定下来。
@@ -258,7 +277,7 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 5. **`logs/*.log`（264 KB）我删不掉**：目录与文件属 `wyunki-nas`，本环境身份是
    `fn-deepseek-harness`（uid 973），`rm -f logs/*.log` 报 `Permission denied`。需要你在 NAS 上删。
 6. `docs/VERIFY.md` 正文历史命令保留；新跑法在文件顶部。
-6. 线上确认项：007《初露锋芒》页点「重新抓取媒体评价」应从 1 条变为约 99 条；
+7. 线上确认项：007《初露锋芒》页点「重新抓取媒体评价」应从 1 条变为约 99 条；
    详情页评分区去掉「用户评分」、评价面板的页码跳转、搜索与排序三项界面改动需用户验收。
 
 **回滚**：本轮改动都在 git 工作区，`git revert`/`git checkout HEAD -- <path>` 即可还原；
