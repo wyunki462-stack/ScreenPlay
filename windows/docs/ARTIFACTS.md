@@ -127,18 +127,20 @@ ScreenPlay_<version>_x64-portable/
 > 下表**解压后一列已按实测填写**（`node scripts/prepare-backend.mjs` / `prepare-frontend.mjs` 的真跑结果，
 > 2026-10-02，Node 运行时 v22.20.0）；**zip 内一列只给合计**——逐项压缩体积没有单独称重，
 > 不编数字，合计来自真跑 `make-portable.mjs` / `make-webapp-bundle.mjs` 的产物。
+> `node_modules` 的体积与文件数会随 npm 解析结果小幅浮动（同一台机器两次装机差过 ~2 MiB），
+> 以你本机 `prepare-backend.mjs` 的输出为准即可，量级不会变。
 
 | 组成项 | 路径 | 解压后（实测） | zip 内 |
 | --- | --- | --- | --- |
 | Node 运行时 | `resources/node/node.exe` | **81.62 MiB** / 1 文件 | — |
-| 后端生产依赖 | `resources/backend/node_modules/**` | **79.49 MiB** / 10,307 文件（18 个依赖，230 packages 装机） | — |
+| 后端生产依赖 | `resources/backend/node_modules/**` | **81.44 MiB** / 10,300 文件（18 个依赖，230 packages 装机） | — |
 | ffmpeg + ffprobe | `resources/bin/{ffmpeg,ffprobe}.exe` | **138.72 MiB**（61.47 + 77.24）/ 2 文件 | — |
 | Web 产物（精简版） | `resources/web/**` | **0.60 MiB** / 5 文件（`index.html` 443 B、CSS 71.56 KB、JS 532.92 KB、`assets/plyr.svg`、`assets/blank.mp4`） | — |
 | 后端 JS / 清单 | `resources/backend/dist/**` + `package.json`、`build-info.json` | **0.84 MiB** / 148 文件（`dist` 无 `.map`） | — |
-| **`resources/` 合计** | 上五项 | **302.90 MiB = 317,610,872 B** / 10,458 文件 | — |
+| **`resources/` 合计** | 上五项 | **303.22 MiB = 317,945,062 B** / 10,456 文件 | — |
 | 桌面壳 | `ScreenPlay.exe`（Tauri v2 release，`strip=true`+`lto`） | 需在 Windows 上编译后称重（预期 5–15 MiB） | — |
 | **便携包合计** | `resources/` + `ScreenPlay.exe` + 标记文件 + 说明 | **≈303 MiB + 壳** | **zip 106.90 MiB = 112,088,975 B**（用占位 exe 真跑 `make-portable.mjs` 实测，条目 11,417；压缩率 35.3%） |
-| **零工具链包**（备用方案，无需 Rust） | `resources/` + `launcher/` + `ScreenPlay.cmd` | **302.90 MiB + 0.1 MiB** / 10,463 文件 | **zip 106.89 MiB**（真跑 `make-webapp-bundle.mjs` 实测，条目 11,420） |
+| **零工具链包**（备用方案，无需 Rust） | `resources/` + `launcher/` + `ScreenPlay.cmd` | **303.22 MiB + 0.1 MiB** / 10,463 文件（staging 计数） | **zip 106.89 MiB**（真跑 `make-webapp-bundle.mjs` 实测，条目 11,420） |
 | 安装包 | `ScreenPlay_<ver>_x64-setup.exe` | — | 与便携包同量级（内容相同，仅多一层自解压） |
 
 * `windows/DESIGN.md` §10 的**硬指标**是「便携包压缩后 ≤ 200 MB」。实测 **106.9 MiB（约 112 MB）**，
