@@ -1,12 +1,13 @@
 {
   "name": "@screenplay/web",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "ScreenPlay web frontend — personal game media album manager",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:desktop": "tsc && vite build --mode desktop",
     "preview": "vite preview"
   },
   "dependencies": {

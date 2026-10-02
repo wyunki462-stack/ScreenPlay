@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useT } from "../i18n";
@@ -98,6 +98,18 @@ export default function PosterCarousel({
     restartKey: count,
   });
 
+  // 修复「卡片上开启轮播后上一张/下一张点不动」：图库把整张卡片（含这块封面）
+  // 包在 `<Link to={/game/...}>` 里，箭头按钮是它的后代 —— 点击会冒泡到链接并把
+  // 用户直接送进详情页，封面自然「换不了」。
+  //
+  // 两个动作都要：`stopPropagation()` 拦住 React 里上层 `<Link>` 的 onClick，
+  // `preventDefault()` 取消浏览器对「`<a>` 后代被点击」的默认跳转。别只留一个。
+  const onControlClick = (e: ReactMouseEvent, action: () => void) => {
+    e.preventDefault();
+    e.stopPropagation();
+    action();
+  };
+
   useEffect(() => {
     // A single image, or static mode: always show the cover.
     if (!rotating && !browsable) setIndex(0);
@@ -133,7 +145,7 @@ export default function PosterCarousel({
             type="button"
             aria-label={t("detail.poster.prev")}
             title={t("detail.poster.prev")}
-            onClick={() => step(-1)}
+            onClick={(e) => onControlClick(e, () => step(-1))}
             className="absolute left-1 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/80 focus:opacity-100 group-hover/carousel:opacity-100"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -142,7 +154,7 @@ export default function PosterCarousel({
             type="button"
             aria-label={t("detail.poster.next")}
             title={t("detail.poster.next")}
-            onClick={() => step(1)}
+            onClick={(e) => onControlClick(e, () => step(1))}
             className="absolute right-1 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/80 focus:opacity-100 group-hover/carousel:opacity-100"
           >
             <ChevronRight className="h-4 w-4" />
@@ -163,10 +175,12 @@ export default function PosterCarousel({
                   key={i}
                   type="button"
                   aria-label={t("detail.poster.goto", { index: i + 1 })}
-                  onClick={() => {
-                    setIndex(i);
-                    resumeAt.current = Date.now() + intervalMs * 2;
-                  }}
+                  onClick={(e) =>
+                    onControlClick(e, () => {
+                      setIndex(i);
+                      resumeAt.current = Date.now() + intervalMs * 2;
+                    })
+                  }
                   className={cn(
                     "h-1.5 w-1.5 rounded-full transition-colors",
                     i === index ? "bg-white/90" : "bg-white/40 hover:bg-white/70",

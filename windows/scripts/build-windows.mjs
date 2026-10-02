@@ -478,7 +478,7 @@ async function main() {
     log('  说明: prepare:frontend 生成桌面精简版 web 资源；prepare:backend 组装 Windows 版后端。');
 
     const okFront = await runStep('前端精简（npm run prepare:frontend）', 'npm', ['run', 'prepare:frontend'],
-      { hint: 'prepare:frontend 失败：先在仓库根执行 npm install / npm run build:web，确认 web 能独立构建成功后再重试。' });
+      { hint: 'prepare:frontend 失败：先在仓库根执行 npm install / npm run build:web:desktop，确认 web 的桌面模式构建成功后再重试（无 dist-desktop 时加 --force-build）。' });
     if (!okFront) failBanner(1);
 
     const okBack = await runStep('后端组装（npm run prepare:backend）', 'npm', ['run', 'prepare:backend'],

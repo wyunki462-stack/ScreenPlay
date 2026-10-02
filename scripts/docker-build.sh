@@ -38,6 +38,9 @@
 #   REGISTRY                 镜像仓库前缀（覆盖 Docker Hub）
 #   SKIP_PROXY_INJECT=1      等同于 --no-proxy
 #   NPM_MIRROR_REGISTRY      构建期 npm 国内兜底源（默认 https://registry.npmmirror.com/）
+#   NPM_BINARY_MIRROR        better-sqlite3 预编译包（GitHub Releases 资产）的镜像源
+#                            （默认 https://registry.npmmirror.com/-/binary/better-sqlite3；
+#                             留空 = 保持上游默认 GitHub Releases）
 #   PROXY_TEST_URL           代理探测用的测试地址
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -511,6 +514,17 @@ main() {
   # npm 国内镜像源：所有代理方案失败时兜底直连安装（仅构建期生效）
   build_args+=(--build-arg "NPM_MIRROR_REGISTRY=${NPM_MIRROR_REGISTRY:-https://registry.npmmirror.com/}")
 
+  # better-sqlite3 预编译包换源（GitHub Releases 资产，npmmirror 有完整镜像）。
+  #
+  # 为什么必须有：npm 只能保证 registry 可达，而 better-sqlite3 的原生包走
+  # prebuild-install → GitHub Releases；取不到就退化成 node-gyp 源码编译，再去
+  # unofficial-builds.nodejs.org 下 node 头文件 —— 构建容器这两处通常都不通
+  # （实测直连超时），整条 npm install 就挂在 better-sqlite3 上。
+  # 指向 npmmirror 的 binary 镜像后，直接用「镜像 + ABI + libc」拼出的 URL 取
+  # 预编译包（node:22-alpine 对应 linuxmusl-x64，见 Dockerfile 的同名注释）。
+  # 置为空串 = 保持上游默认（GitHub Releases）。
+  build_args+=(--build-arg "NPM_BINARY_MIRROR=${NPM_BINARY_MIRROR:-https://registry.npmmirror.com/-/binary/better-sqlite3}")
+
   # apk-setup.sh 的内容要参与 Docker 层缓存键。
   #
   # 原因：Docker 对 `COPY <单个文件>` 的缓存键只含文件名（文件名已编码在指令里），
@@ -529,6 +543,7 @@ main() {
     build_args+=(--build-arg "APK_SETUP_VERSION=$apk_setup_hash")
   fi
   ok "  npm 兜底源    : ${NPM_MIRROR_REGISTRY:-https://registry.npmmirror.com/}"
+  ok "  npm 原生包源  : ${NPM_BINARY_MIRROR:-https://registry.npmmirror.com/-/binary/better-sqlite3}"
 
   # 版本号：从根 package.json 读，避免版本在多个地方各写一遍。
   # 它最终变成镜像里的 BUILD_VERSION 环境变量，/api/health 会返回它 ——

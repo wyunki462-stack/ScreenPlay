@@ -1,6 +1,6 @@
 # ScreenPlay
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-release-brightgreen)](#版本说明)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -10,19 +10,25 @@
 > 架构：**后端统一服务 + 多端前端展示**。核心业务全部沉淀在后端，Web / Flutter
 > 客户端通过同一套 REST API 复用。
 
-> ✅ **当前版本 `1.0.0` —— 首个正式版**。功能完整可用，核心路径有自动化验证覆盖
-> （10 个离线套件 / 382 条断言，见 [`docs/VERIFY.md`](docs/VERIFY.md)）；接口与数据表结构
-> 自本版起按语义化版本保持兼容。从 `0.x` 升级上来仍建议先备份 `data/` 目录。
-> 详见下方 [版本说明](#版本说明)。
+> ✅ **当前版本 `1.2.0` —— 新增 Windows 桌面端，三端图标统一**。核心路径有自动化验证覆盖
+> （**11 个离线套件 / 422 条断言** + 三端产物自检，见 [`docs/VERIFY.md`](docs/VERIFY.md)）；
+> 接口与数据表结构自 `1.0.0` 起按语义化版本保持兼容。从 `0.x` 升级上来仍建议先备份
+> `data/` 目录。详见下方 [版本说明](#版本说明)。
 
 ---
 
 ## 版本说明
 
-### 当前版本：`1.0.0`（首个正式版）
+### 当前版本：`1.2.0`（Windows 桌面端 + 三端图标统一）
 
-`1.0.0` 表示接口（`/api/*`）与数据表结构进入稳定状态：此后只按语义化版本递增，不再做
+`1.0.0` 已让接口（`/api/*`）与数据表结构进入稳定状态：此后只按语义化版本递增，不再做
 破坏性调整。此前 9 轮功能迭代与全部修补版的内容，都已经包含在这一个镜像里。
+
+`1.2.0` **没有改动后端接口与数据表结构**，新增的是桌面端与界面一致性：Windows 桌面端
+（`windows/`，Tauri v2 壳 + 内置后端的源码与构建方案）、三端左上角图标统一为首页顶栏那枚
+品牌 mark、设置页改密（**Windows 桌面端不提供该入口**），并修掉「首页卡片开启轮播后
+上一张/下一张点不动」。另外修掉一处**构建期**缺陷（构建机没有外网时镜像构建会失败），
+明细见 [`CHANGELOG.md`](CHANGELOG.md) 的「构建与镜像」一节。
 
 | 版号段 | 含义 |
 | --- | --- |
@@ -51,8 +57,9 @@
 | 8 | `0.6.3`：媒体评价改走站点官方 JSON 接口、卡片箭头跟随展现模式 | 同上 |
 | 9 | `0.6.4`：详情页评分区去掉「用户评分」、评价面板搜索 / 排序 / 点页码跳页 | 同上 |
 | — | **`1.0.0`**：瘦身（依赖 / 构建 / 文件）+ 6 组重复实现合并 + 海报归属缺陷修复，无新功能 | 10 个离线套件 / 382 条断言 |
+| 10 | **`1.2.0`**：Windows 桌面端（Tauri v2 壳 + 内置后端）、三端品牌图标统一、设置页改密（桌面端按平台剔除）、首页卡片箭头修复、构建期原生包换源 | 11 个离线套件 / 422 条断言 + 三端产物自检 |
 
-累计约 **21 项编号需求**的落地与回归，外加第 7～9 轮的修复项。每轮的完整验收记录
+累计约 **21 项编号需求**的落地与回归，外加第 7～10 轮的修复项与 `1.2.0` 的桌面端 / 三端图标统一。每轮的完整验收记录
 （含实测输出）保留在 [`docs/VERIFY.md`](docs/VERIFY.md)。
 
 > 上表里的一次性轮次脚本（`scripts/verify-round-*.sh`、`scripts/verify-*.mjs` 等 37 个文件）
@@ -608,7 +615,46 @@ CI 只是多一条会失败、且报错信息残缺的链路（build-push-action
 `docker/build-push-action`，并**显式传 `NPM_MIRROR_REGISTRY`**（国内默认是
 registry.npmmirror.com，会让海外 runner 跨太平洋取包）。
 
-### 本轮（`1.0.0`：瘦身 + 去重 + 海报归属修复，界面同 `0.6.4`）的部署与验收
+### 本轮（`1.2.0`：Windows 桌面端 + 三端图标统一 + 去改密 + 卡片箭头修复）的部署与验收
+
+**后端接口与数据表结构没有任何变化**，新增的是桌面端与界面一致性：三端左上角图标统一为
+首页顶栏那枚品牌 mark（紫青渐变方块 + 白色手柄），设置页改密卡片在 **Windows 桌面端**不出现，
+首页卡片开启轮播后上一张/下一张可以点了。直接覆盖部署即可（数据在 `screenplay-data` 卷里，
+重建镜像不会丢）。
+
+```bash
+bash scripts/rebuild-and-verify.sh            # 重建镜像 + 重启容器 + 体检（需 docker 组权限）
+SKIP_BUILD=1 bash scripts/package-image.sh    # 复用刚建好的镜像，导出可搬运的镜像包
+```
+
+本轮**没有新增 feature 标记**（15 条标记与 `1.0.0` 相同），所以判据是 `version`：
+
+```bash
+curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' | grep -E '"version"'
+# 期望：version 1.2.0
+```
+
+> **构建期修复（随 `1.2.0` 一起）**：`better-sqlite3` 的原生预编译包不在 npm registry 上，
+> 要从 GitHub Releases 取；取不到时还会退化成源码编译、再去 `unofficial-builds.nodejs.org`
+> 下 Node 头文件 —— 构建容器这两处都没有出口，`npm install` 会在这里连环超时。现在构建期改用
+> npmmirror 的原生包镜像（`scripts/docker-build.sh` 默认传 `NPM_BINARY_MIRROR`），零编译、
+> 不需要头文件、也不需要代理。可先自检：
+> `SKIP_PROXY_INJECT=1 bash scripts/docker-build.sh --dry-run`（输出里应有
+> `--build-arg NPM_BINARY_MIRROR=https://registry.npmmirror.com/-/binary/better-sqlite3`）。
+
+浏览器里三处肉眼验收：
+
+1. **图标**：浏览器标签页显示**紫青渐变方块 + 白色手柄**，与首页顶栏左上角的品牌块同一枚图形。
+2. **卡片箭头**：某张卡片在「编辑海报」里勾选海报并打开「首页卡片轮播」后，卡片上的
+   **上一张/下一张可点**（点击只换图、不跳进详情页）；点卡片其它区域仍正常进详情页。
+3. **改密的平台差别**：Web / Linux 端设置页**保留**「修改密码」卡片；Windows 桌面端**没有**
+   这个入口（`web/dist-desktop` 产物里连相关文案与代码都不存在，见 `windows/docs/PARITY.md` 差异 ⑦）。
+
+Windows 桌面端要**重新打包**才带得上新图标（exe / 安装包内嵌图标）：`windows/build-windows.ps1`，
+或在 Linux 上用 `windows/scripts/cross/cross-build.sh` 交叉编译；打包与验收见
+[`windows/README.md`](windows/README.md) 与 [`windows/docs/BUILD-WINDOWS.md`](windows/docs/BUILD-WINDOWS.md)。
+
+### 上一轮（`1.0.0`：瘦身 + 去重 + 海报归属修复，界面同 `0.6.4`）的部署与验收
 
 **这一版不改界面、不改接口**：把仓库与镜像瘦身、合并 6 组重复实现，并修掉「用户自选海报
 被元数据覆盖」。数据侧要做的仍是 `0.6.3` 那件事（媒体评价改走站点自己的 JSON 接口）。

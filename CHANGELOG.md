@@ -6,7 +6,13 @@
 
 ---
 
-## 未发布
+## [1.2.0] — 2026-10-02
+
+新增 **Windows 桌面端**（Tauri v2 壳 + 内置后端的完整源码与构建方案）、**三端左上角品牌图标统一**、
+设置页改密（桌面端按平台剔除），并修掉「首页卡片开启轮播后上一张/下一张点不动」。
+后端接口与 `web/src` 源码不分叉；本轮**没有新增后端 feature 标记**，所以「跑的是不是这一版」只看
+`version`（`/api/health`）。另修掉一处**构建期**缺陷：构建机没有外网出口时镜像构建会失败，见
+[构建与镜像](#构建与镜像)。
  
 ### Windows 桌面端（`windows/`）
 
@@ -29,6 +35,19 @@
   不需要 Rust/编译，解压双击 `ScreenPlay.cmd` 就用同一份 `resources/`（内置后端 + Edge `--app` 窗口），
   用于目标机器上装不了构建工具链时的兜底。
 
+### 品牌图标统一（Web / Linux / Windows 桌面端）
+
+- 三处左上角图标统一为同一枚品牌 mark：**紫青对角渐变圆角方块 + 白色手柄**
+  （`#7c3aed → #06b6d4`，圆角 8/36，lucide `Gamepad2` 按 20/36 缩放、描边 2），
+  与首页顶栏左上角品牌块同源。矢量真源是 `web/public/favicon.svg`（Web 端标签页
+  `<link rel="icon">` 与 Windows 启动画面 `windows/src-tauri/splash/index.html` 的内联 SVG
+  逐字镜像同一段几何）。
+- Windows 侧 4 个栅格图标（`windows/src-tauri/icons/{32x32.png,128x128.png,icon.png,icon.ico}`）
+  由 `windows/scripts/gen-icons.mjs` 按同一几何重新绘制（零依赖、自带 PNG/ICO 编码器与自检）；
+  新增 `windows/scripts/verify-icons.mjs` 做像素级校验（渐变方向、圆角透明、白色字形、无旧版深色底）
+  并接入 `windows/scripts/verify-desktop.mjs`；三端几何由 `gen-icons.mjs` 的 `assertBrandSvg()` 逐字断言防漂移。
+- exe/安装包内嵌的图标要在 Windows 上（或交叉编译）重新打包后才生效。
+
 ### 修改密码（设置页）
 
 - 设置页新增「修改密码」卡片：填**原密码 + 新密码 + 确认新密码**，前端先本地校验（原密码非空、
@@ -42,6 +61,11 @@
   新密码 4~128 位、不能与原密码相同；NAS 系统账户明确提示「请在 NAS 上修改」而不是报 401。
 - Web 端按 `code` 取本地化文案（中文/英文各 21 个 `settings.password.*` 键），
   未知 `code` 才回落后端 message，英文页面不会蹦中文。
+- **Windows 桌面端不提供「修改密码」入口**（唯一的按平台界面裁剪）：桌面产物由 `web/dist-desktop`
+  （`npm run build:web:desktop`）生成，构建期把改密卡片模块换成空实现
+  （`web/.env.desktop` 的 `VITE_SCREENPLAY_TARGET=desktop` → `web/vite.config.ts` 的 `resolve.alias` →
+  `ChangePasswordCard.desktop-stub.tsx`），所以桌面安装包里**既没有入口也没有相应文案与前端代码**；
+  Web/Linux 端照旧保留。后端接口与 `web/src` 源码不分叉，详情见 `windows/docs/PARITY.md` 差异 ⑦。
 
 ### 轮播职责拆分：首页卡片 vs 详情页大图
 
@@ -59,7 +83,28 @@
   不再强制把封面写进轮播集合（封面已是集合的结构性一员）。
 - 前端：详情页大图组件去掉 `mode`/`data-mode`，只看张数（`count > 1` 即自动轮播）；
   「编辑海报」面板与卡片注释、中英文案改口为「首页卡片轮播」。
+- 修复：**开启卡片轮播后，首页卡片的上一张/下一张点不动** —— 箭头位于整张卡片的详情页链接内，
+  点击冒泡后被外层 `<Link>` 吞掉，表现为「点一下就跳进详情页」。现在箭头与圆点的点击先
+  `preventDefault()` + `stopPropagation()` 再翻页（`web/src/components/PosterCarousel.tsx` 的
+  `onControlClick`），并补了离线断言：点箭头后计数前进且路径不变，点卡片其它区域仍正常跳详情页。
 - 功能标记（`/api/health` 的 `features`）随语义更新；`docs/API.md`、`docs/VERIFY.md`、`README.md` 同步。
+
+### 构建与镜像
+
+- 修掉「构建机没有外网出口时镜像构建失败」：`better-sqlite3` 的预编译包**不在 npm registry 上**，
+  它随 GitHub Releases 发布（由 `prebuild-install` 下载）；取不到时 npm 会退化成 node-gyp 源码
+  编译，再去 `unofficial-builds.nodejs.org` 下 Node 头文件 —— 构建容器的这两处都没有出口，于是
+  `npm install` 连环超时（`ETIMEDOUT` / `ECONNRESET`），报错停在与真正原因无关的位置。
+  现在构建期把 `prebuild-install` 指向 npmmirror 的原生包镜像：`Dockerfile` 的
+  `ARG NPM_BINARY_MIRROR` → `ENV npm_config_better_sqlite3_binary_host_mirror`（**只针对
+  `better-sqlite3`**；不全局设 `npm_config_build_from_source`，那会把 `sharp` 一起拖进源码编译），
+  `scripts/docker-build.sh` 默认传
+  `NPM_BINARY_MIRROR=https://registry.npmmirror.com/-/binary/better-sqlite3`（显式传空 = 回退上游
+  默认）。musl 目标（Alpine）会正确取到 `…-linuxmusl-x64.tar.gz`，零编译、不碰头文件下载。
+- `scripts/build/npm-run.sh` 补 `npm_config_proxy` / `npm_config_https_proxy`：此前只导出
+  `http_proxy` / `https_proxy`，而 `prebuild-install` 与 `node-gyp` 只认 npm 配置里的代理
+  （`npm_config_*`，见 `node-gyp/lib/download.js`），所以明明注入了代理，这两个原生安装步骤
+  实际仍在直连 —— 这正是上面那条失败链路的另一半原因。
 
 ---
 
@@ -485,6 +530,7 @@ Docker 化构建与启动期存量数据修复，并完成面向公开发布的�
 
 ---
 
+[1.2.0]: https://github.com/wyunki462-stack/ScreenPlay/releases/tag/v1.2.0
 [1.0.0]: https://github.com/wyunki462-stack/ScreenPlay/releases/tag/v1.0.0
 [0.6.0-beta.1]: https://github.com/wyunki462-stack/ScreenPlay/releases/tag/v0.6.0-beta.1
 [0.6.1]: https://github.com/wyunki462-stack/ScreenPlay/releases/tag/v0.6.1

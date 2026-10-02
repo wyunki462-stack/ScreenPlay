@@ -5,13 +5,18 @@
  * 契约：windows/DESIGN.md §6（前端「桌面精简」）
  * 原则：绝不修改 web/ 源码；所有精简都在副本（windows/src-tauri/resources/web）上做。
  *
+ * 产物来源：`npm run build:web:desktop`（= `vite build --mode desktop`）→ web/dist-desktop。
+ * 它与 Web/Linux 用的 web/dist 不是同一份：桌面模式会按平台把「只有服务端才有意义」的
+ * 模块换成替身（web/src/lib/platform.ts、web/vite.config.ts），例如修改密码卡片；
+ * 因此本脚本第 6 步会断言桌面产物里**没有** change-password / settings.password.*。
+ *
  * 用法：
  *   node windows/scripts/prepare-frontend.mjs [--reduce-motion] [--force-build]
  *
  *   --reduce-motion  在产物 CSS 末尾追加一小段动画/过渡归零的覆盖规则。
  *                    **默认关闭**：默认开启会改变与 Web 端 1:1 的观感，仅为满足
  *                    「移除非必要装饰性动画」提供显式开关。
- *   --force-build    忽略已有的 web/dist，强制先执行 `npm --prefix web run build`。
+ *   --force-build    忽略已有的 web/dist-desktop，强制先执行 `npm --prefix web run build:desktop`。
  *
  * 只使用 Node 内置模块 + 系统命令，不新增 npm 依赖。
  */
@@ -28,7 +33,7 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const WIN_DIR = path.resolve(__dirname, '..');
 const WEB_SRC = path.join(REPO_ROOT, 'web');
-const WEB_DIST = path.join(WEB_SRC, 'dist');
+const WEB_DIST = path.join(WEB_SRC, 'dist-desktop');
 const RESOURCES = path.join(WIN_DIR, 'src-tauri', 'resources');
 const OUT_WEB = path.join(RESOURCES, 'web');
 const PLYR_SVG_SRC = path.join(REPO_ROOT, 'node_modules', 'plyr', 'dist', 'plyr.svg');
@@ -37,6 +42,9 @@ const PLYR_SVG_REMOTE = 'https://cdn.plyr.io/3.8.4/plyr.svg';
 const PLYR_BLANK_REMOTE = 'https://cdn.plyr.io/static/blank.mp4';
 const PLYR_SVG_LOCAL = 'assets/plyr.svg';
 const PLYR_BLANK_LOCAL = 'assets/blank.mp4';
+
+/** 桌面产物里绝不允许出现的字符串：远端 CDN 依赖，以及服务端专属 UI（改密卡片）。 */
+const FORBIDDEN = ['cdn.plyr.io', 'change-password', 'settings.password.'];
 
 const LOG_PREFIX = '[prepare-frontend]';
 
@@ -145,33 +153,33 @@ function main() {
 
   // ---------------------------------------------------------------- 0. 可选重新构建
   if (FORCE_BUILD) {
-    log('step 0: --force-build，先执行 `npm --prefix web run build`');
+    log('step 0: --force-build，先执行 `npm --prefix web run build:desktop`');
     try {
-      execFileSync('npm', ['--prefix', WEB_SRC, 'run', 'build'], {
+      execFileSync('npm', ['--prefix', WEB_SRC, 'run', 'build:desktop'], {
         cwd: REPO_ROOT, stdio: 'inherit', env: process.env,
       });
     } catch (err) {
-      fail('npm --prefix web run build', `web=${WEB_SRC}`, err);
+      fail('npm --prefix web run build:desktop', `web=${WEB_SRC}`, err);
     }
   }
 
-  // ---------------------------------------------------------------- 1. 校验 web/dist
+  // ---------------------------------------------------------------- 1. 校验 web/dist-desktop
   const srcIndexHtml = path.join(WEB_DIST, 'index.html');
   const srcAssets = path.join(WEB_DIST, 'assets');
   if (!fs.existsSync(srcIndexHtml)) {
-    fail('校验 web/dist', `缺少构建产物 ${srcIndexHtml}（可加 --force-build 或先跑 npm --prefix web run build）`);
+    fail('校验 web/dist-desktop', `缺少构建产物 ${srcIndexHtml}（可加 --force-build 或先跑 npm --prefix web run build:desktop）`);
   }
   if (!fs.existsSync(srcAssets)) {
-    fail('校验 web/dist', `缺少 ${srcAssets}`);
+    fail('校验 web/dist-desktop', `缺少 ${srcAssets}`);
   }
   const assetFiles = fs.readdirSync(srcAssets);
   const jsFiles = assetFiles.filter((f) => f.endsWith('.js'));
   const cssFiles = assetFiles.filter((f) => f.endsWith('.css'));
   if (jsFiles.length === 0 || cssFiles.length === 0) {
-    fail('校验 web/dist/assets', `需要同时存在 .js 与 .css，实际 js=[${jsFiles}] css=[${cssFiles}]`);
+    fail('校验 web/dist-desktop/assets', `需要同时存在 .js 与 .css，实际 js=[${jsFiles}] css=[${cssFiles}]`);
   }
 
-  log(`step 1: web/dist 校验通过（${jsFiles.length} 个 js / ${cssFiles.length} 个 css）`);
+  log(`step 1: web/dist-desktop 校验通过（${jsFiles.length} 个 js / ${cssFiles.length} 个 css）`);
   const beforeEntries = [];
   for (const rel of ['index.html', ...assetFiles.map((f) => path.join('assets', f))]) {
     const p = path.join(WEB_DIST, rel);
@@ -184,7 +192,7 @@ function main() {
     beforeTotal += e.bytes;
     console.log(`    ${e.rel.padEnd(34)} ${String(e.bytes).padStart(9)} B  sha256=${e.sha256}`);
   }
-  console.log(`    ${'（web/dist 源合计）'.padEnd(34)} ${String(beforeTotal).padStart(9)} B  (${human(beforeTotal)})`);
+  console.log(`    ${'（web/dist-desktop 源合计）'.padEnd(34)} ${String(beforeTotal).padStart(9)} B  (${human(beforeTotal)})`);
 
   // ---------------------------------------------------------------- 2. 复制到 resources/web
   try {
@@ -192,7 +200,7 @@ function main() {
     fs.mkdirSync(OUT_WEB, { recursive: true });
     fs.cpSync(WEB_DIST, OUT_WEB, { recursive: true, dereference: true });
   } catch (err) {
-    fail('复制 web/dist → resources/web', `${WEB_DIST} → ${OUT_WEB}`, err);
+    fail('复制 web/dist-desktop → resources/web', `${WEB_DIST} → ${OUT_WEB}`, err);
   }
   log(`step 2: 已复制 ${WEB_DIST} → ${OUT_WEB}`);
 
@@ -291,15 +299,18 @@ function main() {
   for (const f of allFiles) {
     if (!/\.(js|css|html|svg|mp4|json|map)$/i.test(f)) continue;
     const txt = fs.readFileSync(f, 'utf8');
-    for (const needle of ['cdn.plyr.io']) {
+    for (const needle of FORBIDDEN) {
       const n = txt.split(needle).length - 1;
       if (n > 0) offenders.push({ f: path.relative(OUT_WEB, f), needle, n });
     }
   }
   if (offenders.length > 0) {
-    fail('校验 cdn.plyr.io 命中数', `必须为 0，实际命中：${offenders.map((o) => `${o.f}×${o.n}`).join(', ')}`);
+    fail(
+      '校验桌面产物禁入字符串',
+      `必须为 0，实际命中：${offenders.map((o) => `${o.f} × "${o.needle}" × ${o.n}`).join(', ')}`,
+    );
   }
-  console.log('    grep "cdn.plyr.io" resources/web -r → 命中数 0  ✓');
+  console.log(`    grep ${FORBIDDEN.map((n) => `"${n}"`).join(' / ')} resources/web -r → 命中数 0  ✓`);
 
   // 官方 sprite 与 blank 视频就位
   for (const rel of [PLYR_SVG_LOCAL, PLYR_BLANK_LOCAL]) {

@@ -107,7 +107,7 @@ cd <项目>\windows
 npm install --ignore-scripts --no-audit --no-fund
 #    产物：windows\node_modules\@tauri-apps\cli\  （及 napi 平台包 @tauri-apps\cli-win32-x64-msvc）
 
-# ② 前端精简：由 web/dist 生成 resources\web\
+# ② 前端精简：由 web/dist-desktop 生成 resources\web\
 npm run prepare:frontend
 #    产物：windows\src-tauri\resources\web\index.html + web\assets\**
 
@@ -153,7 +153,7 @@ zig version                              # 需要 zig 0.13+：同时充当 cc / 
 ```bash
 cd <项目>/windows
 npm install --ignore-scripts --no-audit --no-fund
-npm run prepare:frontend      # 由 web/dist 生成 resources/web/
+npm run prepare:frontend      # 由 web/dist-desktop 生成 resources/web/
 npm run prepare:backend       # 下载 Windows 版 node.exe / ffmpeg / ffprobe / better-sqlite3 预编译包
 ```
 

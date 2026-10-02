@@ -193,14 +193,14 @@ else
   fi
 fi
 
-# 版本号：1.0.0 与 0.6.4 的 features 列表完全相同（这一版没有新增界面能力），
-# 所以「跑的是不是 1.0.0」只能看 version 字段，标记查不出来。
+# 版本号：1.2.0 的 features 列表与 1.0.0 完全相同（本轮改动全在前端产物与桌面端，
+# 后端没有新增标记），所以「跑的是不是 1.2.0」只能看 version 字段，标记查不出来。
 VERSION_OUT="$(printf '%s' "$HEALTH" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
 if [ -n "$VERSION_OUT" ]; then
-  if [ "$VERSION_OUT" = "1.0.0" ]; then
+  if [ "$VERSION_OUT" = "1.2.0" ]; then
     ok "版本号：$VERSION_OUT"
   else
-    info "版本号是 $VERSION_OUT（期望 1.0.0）—— 若这是旧镜像请重建；若你刻意跑的是别的版本可忽略"
+    info "版本号是 $VERSION_OUT（期望 1.2.0）—— 若这是旧镜像请重建；若你刻意跑的是别的版本可忽略"
   fi
 else
   info "读不到 version 字段（health 返回异常？）"

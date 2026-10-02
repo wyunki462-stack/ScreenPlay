@@ -196,7 +196,7 @@ async function main() {
     MEDIA_DIRS: mediaDirs,
     WEB_DIST: webDist,
     MAINTENANCE_ON_BOOT: '0',
-    BUILD_VERSION: '1.0.0-desktop-portable',
+    BUILD_VERSION: '1.2.0-desktop-portable',
     ...(auth === 'off' ? { AUTH_DISABLED: '1' } : { AUTH_MODE: auth }),
     ...(auth === 'local' && cfg.adminPassword ? { AUTH_ADMIN_PASSWORD: String(cfg.adminPassword) } : {}),
     ...(fs.existsSync(ffmpeg) ? { FFMPEG_PATH: ffmpeg } : {}),

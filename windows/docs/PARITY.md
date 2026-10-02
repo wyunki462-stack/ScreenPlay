@@ -2,9 +2,10 @@
 
 本文档回答一个问题：**Web 端能做的，Windows 桌面端是不是 1:1 都能做？**
 
-结论：**是**。桌面端不是另一套实现，而是「**同一份 Web 产物 + 同一套后端 REST API**」装进
-Tauri v2 外壳里。前端源码一行都不改，后端源码也不改，因此不存在“功能重新实现”这件事，
-也就不存在实现漂移。
+结论：**除一处刻意的界面裁剪（桌面端不提供「修改密码」入口，见差异说明 ⑦）外，是**。桌面端不是另一套实现，
+而是「**同一份 Web 源码的桌面模式产物 + 同一套后端 REST API**」装进 Tauri v2 外壳里。
+前端源码不为桌面端分叉（唯一差别是一次构建期的模块替换，见差异 ⑦），后端源码也不改，
+因此不存在“功能重新实现”这件事，也就不存在实现漂移。
 
 * 架构与契约：`windows/DESIGN.md`（§2 前端零改动的原理、§6 前端精简、§7 配置）
 * 构建与产物：`windows/docs/BUILD-WINDOWS.md`、`windows/docs/ARTIFACTS.md`
@@ -15,7 +16,7 @@ Tauri v2 外壳里。前端源码一行都不改，后端源码也不改，因�
 
 **桌面端实现方式（本文档所有功能统一适用）：**
 
-> **复用后端 REST API + 同一份 web 产物（后端同源托管，见 `windows/DESIGN.md` §2）。**
+> **复用后端 REST API + 同一份 web 源码的桌面模式产物 `web/dist-desktop`（后端同源托管，见 `windows/DESIGN.md` §2、§6）。**
 
 具体机制：
 
@@ -76,10 +77,19 @@ Tauri v2 外壳里。前端源码一行都不改，后端源码也不改，因�
 | 媒体库管理（增删目录、触发扫描） | 复用后端 REST API + 同一份 web 产物（后端同源托管，见 DESIGN §2） | 添加一个媒体目录 → 触发扫描 → 图库出现该目录下的游戏；删除目录后不再扫描（本地文件不被删除） |
 | 数据源配置（第三方元数据源开关/密钥等） | 同上 | 修改数据源配置并保存 → 重开应用配置仍在；抓取时按新配置走 |
 | 界面语言 | 同上 | 切换语言 → 界面文案立即切换；重开应用后语言保持 |
-| 账户相关全部功能（开启鉴权后的登录 / 改密码 / 会话等） | 同上；桌面端默认 `AUTH_MODE=off`，开启 `local`/`system` 后这些功能与 Web 端完全一致（见差异说明 ⑥） | `config.json` 里把 `auth` 设为 `local` 重启 → 出现登录页；用 `<DATA_DIR>\初始密码.txt` 里的密码登录成功；登录后账户相关页面全部可用 |
+| 账户相关功能（开启鉴权后的登录 / 会话 / 退出等；**不含修改密码**） | 同上；桌面端默认 `AUTH_MODE=off`，开启 `local`/`system` 后登录与会话行为与 Web 端完全一致（见差异说明 ⑥）。**「修改密码」卡片是唯一被裁掉的界面入口**：单机版密码由首启生成并写在 `<DATA_DIR>\初始密码.txt`，界面上不需要改密（见差异说明 ⑦） | `config.json` 里把 `auth` 设为 `local` 重启 → 出现登录页；用 `<DATA_DIR>\初始密码.txt` 里的密码登录成功；登录后账户相关页面可用，且**设置页没有「修改密码」卡片**；退出登录后可用同一密码重新登录 |
 
-> 「设置页」在桌面端**没有任何被裁剪的入口**：壳只改了后端启动时的两个环境变量（差异 ⑥），
-> 不改任何页面代码。
+> 「设置页」在桌面端只被裁掉一个入口：「修改密码」卡片（构建期整模块替换，见差异 ⑦）；
+> 其余入口与 Web 端逐字相同。壳另改了后端启动时的两个环境变量（差异 ⑥）。
+
+### 1.5 品牌图标（Web / Linux / Windows 三端同源）
+
+| Web 端表现 | 桌面端实现方式 | 验收证据 |
+| --- | --- | --- |
+| 标签页图标与页眉左上角品牌块是同一枚品牌 mark：紫青对角渐变圆角方块（`#7c3aed → #06b6d4`，圆角 8/36）+ 白色 lucide `Gamepad2`（按 `20/36` 缩放、描边 2） | 同一段几何镜像三处：Web 标签页 `<link rel="icon" href="/favicon.svg">`（真源 `web/public/favicon.svg`）、桌面启动画面内联 SVG（`src-tauri/splash/index.html`）、exe/安装包图标（`src-tauri/icons/{32x32.png,128x128.png,icon.png,icon.ico}`，由 `windows/scripts/gen-icons.mjs` 生成） | `node windows/scripts/verify-icons.mjs` → 32 项像素断言；`node windows/scripts/verify-desktop.mjs --smoke` → 68 项，含 `GET /favicon.svg` 200；肉眼应与页眉品牌块一致 |
+
+> 生成与校验只用 Node 标准库（自写 PNG/ICO 编码器与 PNG 解码器），不引入 sharp/canvas/Playwright。
+> **exe 内嵌图标要在 Windows 上重新打包后才会变成新图标**（PNG/ICO 已是 git 跟踪的产物文件）。
 
 ---
 
@@ -92,6 +102,7 @@ Tauri v2 外壳里。前端源码一行都不改，后端源码也不改，因�
 | 非 API 路径放行 | `backend/src/auth/auth.guard.ts:29`（`if (!path.startsWith('/api/')) return true;`） | 开启鉴权后页面与静态资源仍可访问 |
 | Plyr 控件图标 CDN | `web/src/components/VideoPlayer.tsx:24-41`（Plyr `options` 块） | 其默认图标指向 `https://cdn.plyr.io/3.8.4/plyr.svg`，桌面端产物里被替换（差异 ②） |
 | 后端监听 | `backend/src/main.ts` 末尾 `await app.listen(port, host)`，`host = process.env.HOST \|\| '0.0.0.0'` | 桌面端传入 `HOST=127.0.0.1` 仅本机监听 |
+| 品牌图标 | 真源 `web/public/favicon.svg`；镜像 `windows/src-tauri/splash/index.html`（内联 SVG）与 `windows/src-tauri/icons/*`（由 `windows/scripts/gen-icons.mjs` 生成，其 `assertBrandSvg()` 对前两处逐字断言） | 三端同一枚图标；改几何必须三处同步，否则 `gen-icons.mjs` 直接报错 |
 
 ---
 
@@ -111,8 +122,8 @@ Tauri v2 外壳里。前端源码一行都不改，后端源码也不改，因�
 * **情况**：`web/src/components/VideoPlayer.tsx:24-41` 的 Plyr `options` 里，图标默认从
   `https://cdn.plyr.io/3.8.4/plyr.svg` 加载。桌面端**不应依赖外网**，否则离线时播放器控件会缺图标。
 * **处理**：在**构建产物**里替换为本地 `assets/plyr.svg`（由 `scripts/prepare-frontend.mjs` 完成，见 `windows/DESIGN.md` §6）。
-  `resources/web/` 内不得再出现 `cdn.plyr.io`，构建时会校验：
-  `grep -c "cdn.plyr.io" resources/web -r` 必须为 `0`。
+  `resources/web/` 内不得再出现 `cdn.plyr.io`，构建时会校验 `scripts/prepare-frontend.mjs` 第 6 步的
+  `FORBIDDEN` 列表（`cdn.plyr.io`、`change-password`、`settings.password.`）命中数必须为 `0`。
   **不改动 `web/src` 源码**。
 
 ### ③ 视频播放依赖后端 HTTP Range
@@ -131,7 +142,7 @@ Tauri v2 外壳里。前端源码一行都不改，后端源码也不改，因�
 
 * **情况**：桌面窗口不做手机适配，Web 产物里大量 `@media (max-width: …)` 是死代码。
 * **处理**：`scripts/prepare-frontend.mjs` 在**副本**上整块删除这些规则（`windows/DESIGN.md` §6）。
-  **逻辑与桌面视觉不变**，只减体积；`web/src` 源码与仓库内 `web/dist` 不受影响。
+  **逻辑与桌面视觉不变**，只减体积；`web/src` 源码、服务端产物 `web/dist` 与桌面产物 `web/dist-desktop` 互不影响。
 
 ### ⑥ 打包时用环境变量代替两个默认行为
 
@@ -143,6 +154,21 @@ Tauri v2 外壳里。前端源码一行都不改，后端源码也不改，因�
 > 其余环境变量（`PORT`、`HOST=127.0.0.1`、`DATA_DIR`、`MEDIA_DIRS`、`WEB_DIST`、`FFMPEG_PATH`、`FFPROBE_PATH`、
 > `BUILD_VERSION`、`BUILD_TIME`）只是把路径指到随包资源与用户数据目录，不改变任何业务默认值。
 > 详见 `windows/DESIGN.md` §2 与 §7。
+
+### ⑦ 桌面端不提供「修改密码」入口（唯一的界面裁剪）
+
+* **情况**：Web/Linux 的设置页有「修改密码」卡片（本地账户改本机 SQLite 里的密码）。桌面端是单人单机应用：
+  鉴权默认关闭；开启后密码由首次启动随机生成并写在 `<DATA_DIR>\初始密码.txt`，界面上不存在改密的场景。
+* **处理**：**构建期整模块替换**（不是运行时隐藏）。`web/.env.desktop` 提供 `VITE_SCREENPLAY_TARGET=desktop`，
+  `npm run build:web:desktop`（`vite build --mode desktop`）时 `web/vite.config.ts` 用 `resolve.alias`
+  把 `web/src/components/ChangePasswordCard.tsx` 换成空实现
+  `web/src/components/ChangePasswordCard.desktop-stub.tsx`；卡片文案随卡片搬到
+  `web/src/components/ChangePasswordCard.i18n.ts`，所以桌面产物里 `change-password`、`settings.password.`
+  命中数都是 `0`（构建时断言，见 `scripts/prepare-frontend.mjs` 第 6 步）。Web/Linux 构建（`web/dist`）与
+  后端接口 `POST /api/auth/password` 完全不受影响，改密功能照旧（两端共用同一份后端）。
+* **怎么改回来**：服务端/容器部署照旧用 `web/dist`；桌面端如需该卡片，删掉 `web/vite.config.ts` 里的 alias 分支重建即可。
+* **源码锚点**：`web/src/lib/platform.ts`（`SCREENPLAY_TARGET` / `IS_DESKTOP_TARGET`）、`web/vite.config.ts`、
+  `web/.env.desktop`、`web/src/pages/Settings.tsx`（`{IS_DESKTOP_TARGET ? null : <ChangePasswordCard session={session} />}`）。
 
 ---
 
@@ -156,8 +182,8 @@ Tauri v2 外壳里。前端源码一行都不改，后端源码也不改，因�
 4. 海报管理：打开编辑海报 → 本地上传一张图 → 设为封面 → 勾选/取消若干张参与**首页卡片轮播**（完成后卡片封面随之自动切换，详情页大图仍是全部官方海报）→ 重启确认保持。〔§1.3 五行〕
 5. 设置页：添加一个媒体目录 → 触发扫描 → 图库出现新游戏 → 切界面语言 → 打开数据源配置。〔§1.4 前三条〕
 6. 账户：把 `config.json` 的 `auth` 改成 `local` → 重启 → 用 `<DATA_DIR>\初始密码.txt` 登录 →
-   **在设置页改一次密码**（无需重启即生效）→ 退出后用新密码重新登录成功、旧密码失败 →
-   账户相关页面可用 → 改回 `off`。〔§1.4 第四条 + 差异 ⑥〕
+   账户相关页面可用、**设置页没有「修改密码」卡片**（验证差异 ⑦）→ 退出登录 → 同一密码重新登录成功 →
+   改回 `off`。〔§1.4 第四条 + 差异 ⑥⑦；改密流程本身在 Web/Linux 端验收〕
 7. 播一个视频：能播放、能拖进度（验证差异 ③）、控件图标正常且**断网也不缺图标**（验证差异 ②）。
 8. 排障入口：设置页 → 日志 能打开日志；`<DATA_DIR>\logs\` 下有当天文件。
 
@@ -173,6 +199,7 @@ Tauri v2 外壳里。前端源码一行都不改，后端源码也不改，因�
 | 浏览器专属能力 | Web 端若有依赖浏览器下载动作/F12 的流程，桌面端表现为 WebView2 内行为（不影响既有功能） |
 | 多屏 / 缩放 | 由 WebView2 与系统 DPI 处理；1.0.0 未做桌面端专属适配 |
 | 首次启动略慢 | 需要拉起 Node 后端并等 `GET /api/health` 就绪（最长 90 秒超时保护）；已用 `MAINTENANCE_ON_BOOT=0` 提速（差异 ⑥） |
+| 修改密码入口 | 桌面端不提供「修改密码」卡片：单机版密码写在 `<DATA_DIR>\初始密码.txt`（差异 ⑦）；Web/Linux 端功能不变 |
 
 ---
 

@@ -175,7 +175,8 @@ if [ -n "$MISSING" ]; then
     不要把这样的包传出去 —— 装上去会发现界面没变化。"
 fi
 
-# 版本号：1.0.0 的 features 与 0.6.4 相同，光查标记分不出这两版，所以直接读镜像内的
+# 版本号：1.2.0 的 features 与 1.0.0 相同（本轮没有新增后端标记），光查标记分不出这两版，
+# 所以直接读镜像内的
 # package.json（Dockerfile 把 backend/package.json 拷成了 /app/backend/package.json）。
 say "校验镜像版本号"
 IMG_VERSION="$(docker run --rm --entrypoint cat "$IMAGE" /app/backend/package.json 2>/dev/null \

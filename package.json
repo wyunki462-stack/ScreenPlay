@@ -1,6 +1,6 @@
 {
   "name": "screenplay",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "description": "ScreenPlay — personal game media album manager (backend + web frontend + flutter client)",
   "workspaces": [
@@ -11,6 +11,7 @@
     "build": "npm run build -w backend && npm run build -w web",
     "build:backend": "npm run build -w backend",
     "build:web": "npm run build -w web",
+    "build:web:desktop": "npm run build:desktop -w web",
     "dev:backend": "npm run start:dev -w backend",
     "dev:web": "npm run dev -w web",
     "start": "npm run start:prod -w backend"

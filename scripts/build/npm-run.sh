@@ -120,10 +120,19 @@ run_npm() {
 
   if [ "$_proxy" = none ] || [ -z "$_proxy" ]; then
     unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY 2>/dev/null || true
+    unset npm_config_proxy npm_config_https_proxy 2>/dev/null || true
   else
     http_proxy="$_proxy"; https_proxy="$_proxy"; all_proxy="$_proxy"
     HTTP_PROXY="$_proxy"; HTTPS_PROXY="$_proxy"; ALL_PROXY="$_proxy"
     export http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+    # 原生依赖的取包工具不认 http_proxy/https_proxy 这套环境变量：
+    #   · prebuild-install 读 npm_config_proxy / npm_config_https_proxy（rc.js）
+    #   · node-gyp 只认 npm 配置里的 proxy / https-proxy（npm 再以 --proxy 转发给 gyp）
+    # 不补这两行，代理阶段对它们等于不存在，仍然直连并超时 —— 那正是
+    # better-sqlite3 安装失败时看到的现象。代理只随环境变量传给子进程，
+    # 不写进镜像，也不改动运行容器的 npm 配置。
+    npm_config_proxy="$_proxy"; npm_config_https_proxy="$_proxy"
+    export npm_config_proxy npm_config_https_proxy
   fi
   export no_proxy NO_PROXY 2>/dev/null || true
 

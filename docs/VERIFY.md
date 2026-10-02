@@ -23,6 +23,13 @@ node backend/scripts/verify/requirements-ui.mjs          # 需求 1–4 交互�
 node backend/scripts/verify/poster-merge-unit.mjs        # 海报归属规则（esbuild 打包真实源码 + 接线断言）
 node backend/scripts/verify/password-change.mjs          # 设置页「修改密码」（本地账户，27 项）
 
+# C. Windows 桌面端产物自检（不需要 Rust；先准备产物）
+cd <仓库根目录>
+node windows/scripts/gen-icons.mjs                       # 按品牌几何重建 4 个图标（零依赖）
+node windows/scripts/verify-icons.mjs                    # 图标像素自检（32 项）
+node windows/scripts/prepare-frontend.mjs                # 由 web/dist-desktop 生成 resources/web
+node windows/scripts/verify-desktop.mjs                  # 桌面产物自检（57 项，含品牌图标小节）
+
 # B. 已部署实例上的运行时自检（需要容器在跑；PORT 默认 3001）
 cd <仓库根目录>
 AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.sh
@@ -40,6 +47,96 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 > 轮播归属 → `poster-rotation-e2e.mjs` / `poster-ui-ssr.mjs`；时长缓存 → `duration-cache-e2e.mjs`；
 > 设置页改密 → `password-change.mjs`（本轮新增）。
 > 下文的具体命令与数字作为**历史记录**保留，复现入口以上面 A/B 两段为准。
+
+---
+
+## 1.2.0：Windows 桌面端 / 三端品牌图标统一 / 桌面端去改密 / 卡片箭头修复
+
+本轮**没有新增后端 feature 标记**（15 条标记与 `1.0.0` 相同），所以判据是 `version`：
+
+```bash
+curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' | grep -E '"version"'
+# 期望：version 1.2.0
+```
+
+离线回归：**11 个离线套件 / 422 条断言全绿**（就是本文顶部 A 段那 11 个套件；
+逐套件数字 = 98 + 63 + 38 + 13 + 63 + 13 + 22 + 11 + 64 + 10 + 27），另加三端产物自检：
+`windows/scripts/verify-icons.mjs` 32 项、`windows/scripts/verify-desktop.mjs` 静态 57 项
+（`--smoke` 68 项）、`APP_DIR=$PWD sh scripts/verify-build-artifacts.sh` 38 命中 / 0 缺失。
+分项见下面 ①～④（④ 是构建期缺陷，与界面无关）。
+
+### ① 三端左上角图标统一（紫青渐变方块 + 白色手柄）
+
+```bash
+node windows/scripts/gen-icons.mjs      # 重建 4 个图标：先 assertBrandSvg() 逐字比对
+                                        # web/public/favicon.svg 与 splash 内联 SVG，再打印 ASCII 预览
+node windows/scripts/verify-icons.mjs   # 32 项通过 / 0 失败
+node windows/scripts/verify-desktop.mjs # 含「品牌图标」小节（合计 57 项通过）
+```
+
+- 几何真源 `web/public/favicon.svg`：`<rect width="36" height="36" rx="8">` + `#7c3aed → #06b6d4`
+  对角渐变 + 白色 lucide `Gamepad2`（`transform="translate(11.33333 11.33333) scale(0.555556)"`、
+  `stroke-width="2"`、round cap/join）。
+- 三处镜像：Web 标签页 `<link rel="icon">`（`web/index.html`）、Windows 启动画面内联 SVG
+  （`windows/src-tauri/splash/index.html`）、Windows 4 个栅格图标
+  （`windows/src-tauri/icons/{32x32.png,128x128.png,icon.png,icon.ico}`）。
+- 像素自检项（`verify-icons.mjs`，零依赖自写 PNG 解码）：尺寸、圆角外 `(0,0)` 透明、
+  左上/右下角接近对角线算出的期望色、渐变方向（左上更紫、右下更青）、白色字形像素数、
+  无旧版深色底（近黑不透明像素必须为 0）。
+- 手工：浏览器标签页应显示渐变方块手柄；`windows/src-tauri/resources/web/favicon.svg` 应存在且可读
+  （`prepare-frontend.mjs` 会复制）。**exe/安装包内嵌图标需在 Windows 上重新打包后才生效。**
+
+### ② Windows 桌面端不提供「修改密码」入口
+
+```bash
+cd web && npm run build && npm run build:desktop
+grep -c 'change-password' web/dist/assets/index-*.js           # 1（服务端产物保留）
+grep -c 'change-password' web/dist-desktop/assets/index-*.js   # 0（桌面产物剔除）
+node windows/scripts/prepare-frontend.mjs    # 第 6 步：resources/web 对 cdn.plyr.io / change-password /
+                                             # settings.password. 三项禁入校验 → 命中数 0
+node windows/scripts/verify-desktop.mjs      # 断言 assets/*.js 内无 change-password / settings.password.
+APP_DIR=$PWD sh scripts/verify-build-artifacts.sh   # 38 项命中 / 0 缺失（服务端仍必须含改密锚点）
+```
+
+手工（Windows 真机）：设置页应看不到改密卡片；退出后用同一密码能重新登录。
+
+### ③ 首页卡片开启轮播后上一张/下一张可点
+
+```bash
+node backend/scripts/verify/requirements-ui.mjs   # 64 项通过 / 0 失败
+```
+
+其中「本轮修复 · 卡片箭头点击不能被外层链接吞掉」一步：点「下一张」计数前进且路径仍为 `/`，
+点卡片其它区域（标题）仍跳 `/game/g-1`。把 `web/src/components/PosterCarousel.tsx` 的
+`onControlClick` 两行拦截去掉会退化为 **58 / 6**（含「点「下一张」把用户送去了 /game/g-1」），
+断言非空。手工：首页卡片轮播开启后点左右箭头能换图且页面不跳转。
+
+### ④ 构建期：`better-sqlite3` 改走 npmmirror 原生包镜像
+
+```bash
+node scripts/gen-source-hash.mjs --check        # ✓ .source-hash 是最新的（6b491bd5f07e46ea，137 个文件）
+SKIP_PROXY_INJECT=1 bash scripts/docker-build.sh --dry-run \
+  | grep -o -- '--build-arg NPM_BINARY_MIRROR=[^ ]*'   # 期望 …/-/binary/better-sqlite3
+```
+
+- 修复前的失败现象（日志 `logs/rebuild-*.log`）：`RUN … sh /tmp/npm-run.sh install` 里
+  `npm error path /app/node_modules/better-sqlite3` → `prebuild-install` 去 GitHub Releases
+  超时（`Request timed out` / `Client network socket disconnected before secure TLS connection was established`）
+  → 退化成 `node-gyp rebuild --release` → `gyp http GET https://unofficial-builds.nodejs.org/download/release/v22.23.3/node-v22.23.3-headers.tar.gz`
+  → `ETIMEDOUT` / `ECONNRESET` → `gyp ERR! configure error`。触发条件：`package.json` /
+  `web/package.json`（被 Dockerfile 早期 COPY）一变，`npm install` 层缓存失效、真正重跑 ——
+  此前该层一直命中缓存，所以「没外网」这件事一直没有暴露。
+- 修复：`Dockerfile:160-161` 的 `ARG NPM_BINARY_MIRROR` + `ENV npm_config_better_sqlite3_binary_host_mirror`
+  （**只针对 `better-sqlite3`**；不全局设 `npm_config_build_from_source`，那会把 `sharp`
+  一起拖进源码编译），`scripts/docker-build.sh` 默认传 npmmirror 镜像；`scripts/build/npm-run.sh`
+  的 `run_npm()` 同时补 `npm_config_proxy` / `npm_config_https_proxy`（此前只有
+  `http_proxy`/`https_proxy`，而 `prebuild-install` 与 `node-gyp` 只认 `npm_config_*`）。
+- 本地等价证明（没有 docker 也能验）：在空目录里用**仓库自己的包装器**安装 ——
+  `npm_config_target=22.23.3 npm_config_libc=musl npm_config_better_sqlite3_binary_host_mirror=https://registry.npmmirror.com/-/binary/better-sqlite3 sh scripts/build/npm-run.sh install --no-audit --no-fund`，
+  日志出现 `looking for local prebuild @ …-node-v127-linuxmusl-x64.tar.gz` → `http 200` →
+  `Successfully installed prebuilt binary!`，产物 `build/Release/better_sqlite3.node` = **2,313,376 B**，
+  全程零编译、不下载 Node 头文件（ABI 127 = Node 22，`linuxmusl` = Alpine）。
+- 端到端仍以 `bash scripts/rebuild-and-verify.sh` 为准（需要 docker 组权限）。
 
 ---
 
@@ -2698,11 +2795,12 @@ Boot maintenance finished in 13.0s — nothing to repair.
 
 ---
 
-# 验收报告 · 未发布轮次（设置页「修改密码」 · 两套轮播职责拆分）
+# 验收报告 · 1.2.0（设置页「修改密码」 · 两套轮播职责拆分）
 
-本轮两处行为变更：**A. 设置页新增「修改密码」**（本地账户）；**B. 两套轮播职责拆分**
-（首页卡片轮播 vs 详情页官方海报大图）。以下为**未发布**版本的验收记录，追加在此，
-不改动上方任何一轮的历史记录。
+两处行为变更：**A. 设置页新增「修改密码」**（本地账户，桌面端按平台剔除）；**B. 两套轮播职责拆分**
+（首页卡片轮播 vs 详情页官方海报大图）。以下为 `1.2.0` 这两项的验收记录，追加在此，
+不改动上方任何一轮的历史记录；三端品牌图标统一 / 卡片箭头修复 / 构建期原生包换源见本文上方
+「1.2.0」一节。
 
 ## 0. 结论速览
 

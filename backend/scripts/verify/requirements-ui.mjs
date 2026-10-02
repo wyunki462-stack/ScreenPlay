@@ -45,7 +45,7 @@ const step = (m) => console.log(`\n\x1b[1m== ${m}\x1b[0m`);
 const ENTRY = `
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import MediaReviewsPanel from "${WEB}/src/components/MediaReviewsPanel.tsx";
 import GameCard from "${WEB}/src/components/GameCard.tsx";
@@ -54,11 +54,26 @@ import { SSR_REVIEWS } from "${ROOT}/backend/scripts/verify/ssr-hooks-stub.mjs";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
 
+/**
+ * 路径探针：卡片整块被 <Link to={/game/g-1}> 包住，轮播箭头是它的后代。
+ * 「点箭头到底有没有跳走」只能靠当前路径来判断 —— 这个测试页里没有 <Routes>，
+ * 所以真跳转了 DOM 也不会卸载，光看计数变化是看不出这个缺陷的（旧断言就是这样
+ * 漏掉了用户报的问题）。
+ */
+function Loc() {
+  const loc = useLocation();
+  return React.createElement("div", { "data-testid": "loc" }, loc.pathname);
+}
+
 function wrap(node) {
   return React.createElement(
     QueryClientProvider,
     { client: qc },
-    React.createElement(I18nProvider, null, React.createElement(MemoryRouter, null, node)),
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(MemoryRouter, null, React.createElement(Loc), node),
+    ),
   );
 }
 
@@ -172,6 +187,7 @@ const HTML = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <div id="card0"></div><div id="card1"></div><div id="card2"></div>
 <div id="card5"></div><div id="carddup"></div>
 <div id="cardstatic"></div><div id="cardslide"></div>
+<div id="cardclick"></div>
 <script src="bundle.js"></script>
 </body></html>`;
 fs.writeFileSync(path.join(OUT, 'index.html'), HTML);
@@ -561,6 +577,61 @@ step('需求 4 · 媒体搜索栏 / 排序方式 / 点页码直接跳页');
   n = await cardCount();
   if (n === 5) ok('清空搜索框后回到第 1 页的 5 条');
   else bad(`清空搜索后应显示 5 条，实际 ${n} 条`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+step('本轮修复 · 卡片箭头点击不能被外层链接吞掉（点了跳详情页 = 用户报的「上一张/下一张失效」）');
+
+{
+  // 首页图库把整张卡片（含封面上的箭头）包在 <Link to={/game/<id>}> 里，箭头按钮是
+  // 它的后代：旧实现的 onClick 只调 step()，没有拦事件，于是点击冒泡到链接 → 直接
+  // 进详情页，封面看着「换不了」。修复后箭头先 preventDefault + stopPropagation 再动 index。
+  await renderCardWith('cardclick', 3, 'slideshow');
+  await page.waitForTimeout(200);
+
+  const pathNow = async () =>
+    ((await page.locator('#cardclick [data-testid="loc"]').textContent()) ?? '').trim();
+  const countNow = async () => {
+    // 只读卡片锚点内部的文本：路径探针在锚点外面，混进来会把「1」和「2/3」粘成「12/3」。
+    const m = ((await page.locator('#cardclick a').first().textContent()) ?? '').match(/(\d+)\/(\d+)/);
+    return m ? m[0] : null;
+  };
+  const nextBtn = page.locator('#cardclick a button[aria-label]').nth(1);
+  const prevBtn = page.locator('#cardclick a button[aria-label]').nth(0);
+
+  const arrows = await page.locator('#cardclick a button[aria-label]').count();
+  if (arrows === 2) ok('轮播卡片上渲染出上一张/下一张两个箭头');
+  else bad(`轮播卡片上应有 2 个箭头，实际 ${arrows} 个`);
+
+  const p0 = await pathNow();
+  if (p0 === '/') ok(`测试卡片挂在首页路径上（起始路径 ${p0}）`);
+  else bad(`起始路径应为 /，实际 ${p0}`);
+
+  await nextBtn.click();
+  await page.waitForTimeout(300);
+  const c1 = await countNow();
+  const p1 = await pathNow();
+  if (c1 === '2/3') ok('点「下一张」封面确实换到第 2 张（计数 1/3 → 2/3）');
+  else bad(`点「下一张」应显示 2/3，实际 ${c1}`);
+  if (p1 === '/') ok('点「下一张」没有跳走（路径仍是 /）—— 本轮修的「按钮失效」');
+  else bad(`点「下一张」把用户送去了 ${p1}：箭头点击仍被外层链接吞掉`);
+
+  await prevBtn.click();
+  await page.waitForTimeout(300);
+  const c2 = await countNow();
+  const p2 = await pathNow();
+  if (c2 === '1/3' && p2 === '/') ok('点「上一张」回到 1/3 且仍停在首页（路径 /）');
+  else bad(`点「上一张」后计数 ${c2} / 路径 ${p2}，期望 1/3 与 /`);
+
+  // 正对照：卡片正文（链接本身）必须照常跳转。否则「路径没变」也可能只是因为链接坏了。
+  //
+  // 点标题而不是点坐标：这个测试页只注入 JS，不加载 Tailwind 产物，布局是未样式化的，
+  // 实测 (8,8) 这个坐标落在**箭头按钮**上（elementFromPoint 验证过），根本点不到正文。
+  await page.locator('#cardclick a h3').first().click();
+  await page.waitForTimeout(300);
+  const p3 = await pathNow();
+  if (p3 !== '/') ok(`正对照：点卡片正文照常进详情页（路径 → ${p3}），链接本身是好的`);
+  else bad('点卡片正文没有跳转，说明卡片链接本身失效（前面「路径没变」的结论不算数）');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

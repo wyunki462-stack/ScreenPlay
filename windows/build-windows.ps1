@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
     ScreenPlay Windows 桌面端 - 一键构建脚本
     ---------------------------------------------------------------
@@ -359,7 +359,7 @@ try {
         Write-Log '  说明: prepare:frontend 生成桌面精简版 web 资源；prepare:backend 组装 Windows 版后端。'
         $ok = Invoke-Step -Title '前端精简（npm run prepare:frontend）' -Exe 'npm' `
             -StepArgs @('run', 'prepare:frontend') `
-            -Hint 'prepare:frontend 失败：先在仓库根执行 npm install / npm run build:web 验证 web 能构建，再重试。'
+            -Hint 'prepare:frontend 失败：先在仓库根执行 npm install / npm run build:web:desktop 验证 web 的桌面模式构建，再重试。'
         if (-not $ok) { Stop-Build -ExitCode 1 }
 
         $ok = Invoke-Step -Title '后端组装（npm run prepare:backend）' -Exe 'npm' `

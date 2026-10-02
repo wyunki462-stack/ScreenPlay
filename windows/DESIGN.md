@@ -26,6 +26,7 @@
 - `backend/src/auth/auth.guard.ts:29` 非 `/api/` 路径放行
 
 前端唯一 API 出口是同源相对路径 `/api`（`web/src/api/client.ts:3,23`），媒体 URL 全部由后端 JSON 下发。**因此：只要窗口指向 `http://127.0.0.1:<port>`，前端源码一行都不用改。**
+（唯一的按平台差异是构建期模块替换：桌面模式把「修改密码」卡片换成空实现，见 §6 —— 源码不分叉，见差异 ⑦。）
 
 ```
 Tauri 进程 (ScreenPlay.exe)
@@ -49,14 +50,15 @@ windows/
   build-windows.ps1          一键构建（prepare → tauri build → portable zip）
   build-windows.cmd          双击入口（转调 ps1，-ExecutionPolicy Bypass）
   scripts/
-    prepare-frontend.mjs     构建 web/dist 并生成"桌面精简版"（见 §6），输出到 resources/web/
+    prepare-frontend.mjs     构建 web/dist-desktop（桌面模式）并生成"桌面精简版"（见 §6），输出到 resources/web/
     prepare-backend.mjs      组装 resources/ 下 Windows 后端（见 §4）
     make-portable.mjs        组装免安装 zip（exe + resources + 使用说明.txt + portable.flag）
     build-windows.mjs        ps1 调用的 Node 侧编排（可选，允许直接用 ps1 调 tauri）
   src-tauri/
     Cargo.toml  build.rs  tauri.conf.json
     capabilities/default.json
-    icons/                    icon.ico / icon.png / 32x32.png / 128x128.png（可由脚本生成）
+    icons/                    icon.ico / icon.png / 32x32.png / 128x128.png
+                              （由 scripts/gen-icons.mjs 按 Web 品牌几何生成，scripts/verify-icons.mjs 像素自检）
     splash/index.html         splash（本地源）
     src/main.rs               入口：单实例、配置加载、后端编排、窗口导航
     src/backend.rs            资源定位、端口选择、node 启动、健康检查、日志、进程树回收
@@ -77,7 +79,8 @@ src-tauri/resources/
   backend/dist/**                   nest build 产物（backend/dist）
   backend/node_modules/**           Windows 版生产依赖（见下）
   backend/package.json              随附（版本信息）
-  web/index.html web/assets/**      web/dist 的"桌面精简版"
+  web/index.html web/assets/**      web/dist-desktop 的"桌面精简版"
+  web/favicon.svg                   品牌图标（与 Web/Linux 端同一份矢量，标签页用）
   bin/ffmpeg.exe bin/ffprobe.exe    @ffmpeg-installer/win32-x64 + @ffprobe-installer/win32-x64
   build-info.json                   { version, sourceHash, builtAt, nodeVersion }
 ```
@@ -115,10 +118,16 @@ Windows 生产依赖安装方式（不要动仓库的 node_modules）：
 
 在 **副本** 上做构建后处理，**绝不改 `web/` 源码**（保证 Web 端产物字节不变）：
 
-1. 在 `web/` 执行现有构建（`npm --prefix web run build`，产物 `web/dist`），复制到 `src-tauri/resources/web/`。
+1. 在 `web/` 执行**桌面模式**构建（`npm --prefix web run build:desktop` = `vite build --mode desktop`，产物 `web/dist-desktop`），复制到 `src-tauri/resources/web/`。
+   桌面模式只做一件事：把「修改密码」卡片模块（`web/src/components/ChangePasswordCard.tsx`）在打包时换成空实现
+   `ChangePasswordCard.desktop-stub.tsx`（由 `web/vite.config.ts` 的 `resolve.alias` + `web/.env.desktop` 的
+   `VITE_SCREENPLAY_TARGET=desktop` 决定，源码见 `web/src/lib/platform.ts`）。桌面端是单机应用，密码由
+   `config.json` 首次启动生成并写在 `<DATA_DIR>/初始密码.txt`，界面上不需要改密入口；Web/Linux 构建（`web/dist`）
+   不受影响，改密功能照旧（后端 `POST /api/auth/password` 两端共用，不动）。
 2. 精简：删除 `@media (max-width: …)` / `@media (max-width: …) and …` 整块（桌面窗口固定，移动端断点无意义）；其余 CSS 原样保留（视觉 1:1）。
 3. 离线化：把产物中 `https://cdn.plyr.io/3.8.4/plyr.svg` 替换为相对路径 `assets/plyr.svg`，并把本地 svg（从 npm `plyr` 包或内联生成）放进 `web/assets/`。
-4. 校验：`web/index.html` 存在且引用 `/assets/*.js`、`/assets/*.css`；`grep -c "cdn.plyr.io" resources/web -r` 必须为 0；打印前后体积对比。
+4. 校验：`web/index.html` 存在且引用 `/assets/*.js`、`/assets/*.css`；产物体内 `cdn.plyr.io`、`change-password`、
+   `settings.password.` 命中数必须为 0（脚本里的 `FORBIDDEN` 列表）；打印前后体积对比。
 
 ## 7. `config.json`（壳的配置，位置见 §8）
 
@@ -150,7 +159,12 @@ Windows 生产依赖安装方式（不要动仓库的 node_modules）：
 
 ## 10. 硬约束
 
-- 不改 `web/`、`backend/` 源码；不新增后端逻辑；不改动 API 契约。
+- 不改 `backend/` 源码与 API 契约；不新增后端逻辑。`web/` 源码不为桌面端分叉 —— 桌面端只是同一份
+  源码的 `--mode desktop` 产物（唯一构建期差异＝改密卡片模块换空实现，见 §6 与 PARITY 差异 ⑦）。
+- 品牌图标三处同源：`web/public/favicon.svg` 是几何真源（紫青对角渐变圆角方块 + 白色 lucide `Gamepad2`），
+  Web 标签页 `<link rel="icon">`、splash 内联 SVG、`src-tauri/icons/*`（4 个栅格，由 `scripts/gen-icons.mjs`
+  生成）镜像同一段几何；`gen-icons.mjs` 的 `assertBrandSvg()` 逐字断言、`scripts/verify-icons.mjs` 做像素自检。
+  生成/校验只用 Node 标准库，不引入 sharp/canvas/Playwright 等新依赖。
 - `windows/` 内所有文件用 UTF-8；中文文档；脚本必须能在 Windows PowerShell 5.1 下运行（不依赖 pwsh 7）。
 - 体积目标：便携包压缩后 ≤ 200 MB（node ≈ 110 MB 解压、node_modules ≈ 90–115 MB、ffmpeg+ffprobe ≈ 120 MB 解压是主要项）；超出必须说明。
 - 网络受限环境：所有下载走 §4 的镜像/代理，失败要给出可读错误。

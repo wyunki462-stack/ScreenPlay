@@ -16,7 +16,9 @@
 | --- | --- |
 | `build-windows.cmd` | **双击这个就能构建**（`build-windows.ps1` 的带 `pause` 入口） |
 | `build-windows.ps1` | 一键构建脚本（Windows PowerShell 5.1）：环境自检 → 准备资源 → 编译 → 打包 |
-| `scripts/prepare-frontend.mjs` | 把 `web/dist` 生成**桌面精简版**（去移动端媒体查询、Plyr 图标改本地） |
+| `scripts/prepare-frontend.mjs` | 把 `web/dist-desktop` 生成**桌面精简版**（去移动端媒体查询、Plyr 图标改本地） |
+| `scripts/gen-icons.mjs` | 按 Web 品牌几何（`web/public/favicon.svg`）生成/重建 `src-tauri/icons/` 4 个图标（零依赖） |
+| `scripts/verify-icons.mjs` | 图标像素自检：尺寸、圆角透明、渐变色与方向、白色字形、无旧版深色底（32 项） |
 | `scripts/prepare-backend.mjs` | 组装 Windows 版后端运行时（`node.exe`、Windows 生产依赖、`ffmpeg`） |
 | `scripts/make-portable.mjs` | 把 exe + `resources/` 打成一个便携 zip |
 | `scripts/make-webapp-bundle.mjs` | 组装**零工具链**免安装 zip（不需要 exe，解压双击 `ScreenPlay.cmd` 即用） |
@@ -68,14 +70,15 @@ node scripts/make-webapp-bundle.mjs   # → dist/ScreenPlay_1.0.0_x64-webapp.zip
 
 ```bash
 cd <项目>/windows
-node scripts/verify-desktop.mjs            # 资源完整性 + 体积清单 + 禁带开发依赖（24 项）
-node scripts/verify-desktop.mjs --smoke    # 再用本机 node 真启动打包后的后端跑一遍接口（共 34 项）
+node scripts/verify-desktop.mjs            # 资源完整性 + 体积清单 + 禁带开发依赖 + 品牌图标像素自检（57 项）
+node scripts/verify-desktop.mjs --smoke    # 再用本机 node 真启动打包后的后端跑一遍接口（共 68 项）
 node scripts/verify-desktop.mjs --exe      # 校验 dist 里的 exe / zip 产物
 ```
 
 `--smoke` 会复制 `resources/backend/dist` 到 `windows/.cache/smoke/`，用仓库里的 `node_modules`
 与 `backend/scripts/verify/sqlite-shim.js`（本机没有 better-sqlite3 编译产物时的既有约定）启动，
-断言 `/api/health`、`/`、`/assets/*`、SPA 深链 `/games/1`、`/api/games`、`/assets/plyr.svg`。
+断言 `/api/health`、`/`、`/assets/*`、SPA 深链 `/games/1`、`/api/games`、`/assets/plyr.svg`、
+`/favicon.svg`。
 **不影响 Windows 产物**，只验证打包后的文件本身是完整可跑的一套。
 
 ---
@@ -170,8 +173,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build-windows.ps1
 
 桌面端**不重写**任何界面，也不给后端加接口。做法是复用：
 
-1. **同一份 Web 产物**：`scripts/prepare-frontend.mjs` 拿 `web/dist` 做**构建后处理**（剥离移动端媒体查询、
-   把 Plyr 控件图标从 CDN 改成随包的本地图标），产出的仍是同一个前端应用；源码 `web/` 不动。
+1. **同一份 Web 源码**：桌面端用**桌面模式**构建产物 `web/dist-desktop`（`npm run build:web:desktop`
+   = `vite build --mode desktop`），`scripts/prepare-frontend.mjs` 再对它做**构建后处理**（剥离移动端媒体查询、
+   把 Plyr 控件图标从 CDN 改成随包的本地图标），产出的仍是同一个前端应用；源码 `web/` 不为桌面端分叉。
+   桌面模式与 Web 端只有一处构建期差异：把「修改密码」卡片模块换成空实现（`windows/DESIGN.md` §6、
+   `windows/docs/PARITY.md` 差异 ⑦）—— 单机版密码写在 `<DATA_DIR>\初始密码.txt`，界面不需要改密入口。
 2. **同一套后端**：直接把 `backend/` 编译产物 + Windows 版生产依赖打进 `resources/`，
    由外壳用它自带的 `node.exe` 启动；`backend/` 源码不动。
 3. **同源托管**：后端本来就托管 Web 产物，前端的 API 出口是相对路径 `/api`

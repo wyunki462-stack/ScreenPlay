@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ScreenPlay 品牌图标 —— 唯一矢量真源（single source of truth）。
+  几何与 Web 页眉左上角的品牌块（web/src/App.tsx 的 h-9 渐变方块 + 白色 lucide Gamepad2）
+  完全一致：36×36 圆角方块（rounded-lg = 8），bg-gradient-to-br 从 violet-600 #7c3aed
+  到 cyan-500 #06b6d4，字形是 lucide Gamepad2 v0.427.0（ISC）按 24→20/36 缩放、stroke 2。
+
+  ⚠ 数值不可随意改动：`windows/scripts/gen-icons.mjs` 会用完全相同的常量栅格化 Windows 端
+  exe 图标（icon.png / 32x32.png / 128x128.png / icon.ico），并断言本文件与那些常量一致
+  （属性名与顺序、`d`、颜色、rx 都会被逐字比对），不一致就直接构建失败。
+  修改图标请同时改这里、windows/scripts/gen-icons.mjs 与 src-tauri/splash/index.html。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36" role="img" aria-label="ScreenPlay">
+  <defs>
+    <linearGradient id="sp" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7c3aed" />
+      <stop offset="1" stop-color="#06b6d4" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="36" height="36" rx="8" fill="url(#sp)" />
+  <g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(11.33333 11.33333) scale(0.555556)">
+    <line x1="6" y1="11" x2="10" y2="11" />
+    <line x1="8" y1="9" x2="8" y2="13" />
+    <line x1="15" y1="12" x2="15.01" y2="12" />
+    <line x1="18" y1="10" x2="18.01" y2="10" />
+    <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z" />
+  </g>
+</svg>

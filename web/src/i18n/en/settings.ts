@@ -83,32 +83,6 @@ export const settingsEn: Record<string, string> = {
   "settings.howTo.tip":
     "Tip: after saving the keys, click “Scrape all games now”; you can also scrape a single game from its card via “···” → “Refresh metadata”.",
 
-  // Change password: the local account hash lives in the on-box SQLite database
-  "settings.password.title": "Change password",
-  "settings.password.intro":
-    "The password of the local account (e.g. admin) is stored in this device's database. A change takes effect immediately and survives a container restart — you no longer need the initial password printed in the startup log.",
-  "settings.password.current": "Current password",
-  "settings.password.next": "New password",
-  "settings.password.confirm": "Confirm new password",
-  "settings.password.hint":
-    "At least 4 characters. After a change, other devices are signed out while this page stays signed in.",
-  "settings.password.submit": "Change password",
-  "settings.password.submitting": "Submitting…",
-  "settings.password.success": "Password changed ✓ Use the new one to sign in.",
-  "settings.password.failed": "Could not change the password; please retry.",
-  "settings.password.errCurrent": "Enter your current password.",
-  "settings.password.errTooShort": "The new password must be at least 4 characters.",
-  "settings.password.errMismatch": "The two new passwords do not match.",
-  "settings.password.errWrongCurrent": "The current password is incorrect.",
-  "settings.password.errNotLocal": "You are signed in with a NAS system account; its password is managed by the NAS.",
-  "settings.password.errBlank": "The new password cannot be blank.",
-  "settings.password.errTooLong": "The new password must be at most 128 characters.",
-  "settings.password.errSame": "The new password must differ from the current one.",
-  "settings.password.unauth": "You must be signed in to change the password.",
-  "settings.password.disabled": "Sign-in is disabled (AUTH_DISABLED=1); there is no password to change.",
-  "settings.password.systemHint":
-    "You are signed in with a NAS system account; its password is managed by the NAS — change it in the host's user settings.",
-
   "library.title": "Media library",
   "library.count": "{count}",
   "library.rescan": "Rescan",

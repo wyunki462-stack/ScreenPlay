@@ -16,6 +16,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { verifyIcons } from './verify-icons.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WIN = path.resolve(HERE, '..');
@@ -93,6 +94,13 @@ if (!fs.existsSync(RES)) {
     const jsFiles = files.filter((f) => f.endsWith('.js'));
     const cdnHits = jsFiles.reduce((n, f) => n + (fs.readFileSync(path.join(assetsDir, f), 'utf8').match(/cdn\.plyr\.io/g) || []).length, 0);
     check(cdnHits === 0, '产物内无 cdn.plyr.io 外链（离线可用）', `命中 ${cdnHits}`);
+    // 桌面端不提供「修改密码」入口：构建期已把该卡片模块换成空实现（见 windows/docs/PARITY.md 差异 ⑦），
+    // 这里对**已交付的资源副本**再做一次断言，防止有人用 web/dist（服务端产物）误覆盖 resources/web。
+    const pwHits = jsFiles.reduce((n, f) => {
+      const txt = fs.readFileSync(path.join(assetsDir, f), 'utf8');
+      return n + (txt.match(/change-password|settings\.password\./g) || []).length;
+    }, 0);
+    check(pwHits === 0, '产物内无「修改密码」界面代码（桌面端按平台剔除）', `命中 ${pwHits}`);
     check(fs.existsSync(path.join(assetsDir, 'plyr.svg')), '本地 plyr.svg 已就位');
   }
 
@@ -150,7 +158,14 @@ if (!fs.existsSync(RES)) {
   notes.push(`打包后压缩体积通常会降到解压体积的 35%–45%（zip/tar.gz 口径）。`);
 }
 
-// ───────────────────────── 2. 已构建 exe（可选） ─────────────────────────
+// ───────────────────────── 2. 品牌图标（像素级） ─────────────────────────
+section('品牌图标（Windows 端图标必须与 web 首页品牌块同源）');
+{
+  const { icons } = verifyIcons((cond, label, detail) => check(cond, label, detail));
+  notes.push(`图标像素自检覆盖 ${icons} 个文件（windows/src-tauri/icons/，唯一生成器 scripts/gen-icons.mjs）。`);
+}
+
+// ───────────────────────── 3. 已构建 exe（可选） ─────────────────────────
 if (exePath) {
   section(`构建产物检查：${exePath}`);
   const ex = path.resolve(exePath);
@@ -292,6 +307,12 @@ async function smoke() {
   check(api.status === 200, 'GET /api/games 返回 200（数据接口可用）', `status=${api.status}`);
   const plyr = await get('/assets/plyr.svg');
   check(plyr.status === 200, 'GET /assets/plyr.svg 正常返回（离线图标）', `status=${plyr.status}`);
+  const favicon = await get('/favicon.svg');
+  check(
+    favicon.status === 200 && /<svg[\s>]/.test(favicon.body) && /#7c3aed/i.test(favicon.body),
+    'GET /favicon.svg 正常返回（与 Web/Linux 端同源的品牌图标）',
+    `status=${favicon.status}`,
+  );
 
   done(failures.length ? 1 : 0);
 }

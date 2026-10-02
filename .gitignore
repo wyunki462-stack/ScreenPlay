@@ -14,6 +14,10 @@ dist-image/
 !/scripts/build/
 *.tsbuildinfo
 web/dist/
+# 桌面端（单机版）构建产物：`npm run build:desktop -w web` → vite --mode desktop。
+# 由 windows/scripts/prepare-frontend.mjs 复制到 windows/src-tauri/resources/web，
+# 不进版本库（web/.env.desktop 是源码，要进）。
+web/dist-desktop/
 
 # environment / secrets
 .env

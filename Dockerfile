@@ -136,6 +136,30 @@ COPY backend/tsconfig.build.json backend/tsconfig.build.json
 COPY web/tsconfig.json web/tsconfig.json
 COPY web/tsconfig.node.json web/tsconfig.node.json
 
+# ── 原生依赖 better-sqlite3 的预编译包换源（离线可构建的关键）────────────────
+#
+# 为什么需要：better-sqlite3 的预编译包**不在 npm registry** 上，而在 GitHub
+# Releases。Alpine/musl 下如果 prebuild-install 取不到预编译包，npm 会退化成
+# node-gyp 源码编译，再去 unofficial-builds.nodejs.org 下载 node 头文件；而构建
+# 容器通常没有出网出口（实测直连 GitHub 与 unofficial-builds 全部超时），于是整条
+# 安装链失败，报错停在 `npm error path /app/node_modules/better-sqlite3`。
+#
+# 怎么解决：把预编译下载源指向 npm 国内镜像 —— npmmirror 完整镜像了 GitHub
+# Releases 的资产，含 node:22-alpine 需要的那个组合
+# （better-sqlite3-v11.10.0-node-v127-linuxmusl-x64.tar.gz：ABI 127 = Node 22，
+# linuxmusl = Alpine）。prebuild-install 用「镜像 + ABI + libc + arch」直接拼 URL
+# 取包，既不出网到 GitHub，也不再需要 node 头文件。
+#
+# 只针对 better-sqlite3 这一个包。不要图省事去设全局的
+# npm_config_build_from_source —— 那会把 sharp 也拖进源码编译
+# （见 node_modules/sharp/install/check.js），只会让构建更脆。
+#
+# 留空 = 保持上游默认（GitHub Releases）；镜像里没有对应 ABI 的包时，
+# prebuild-install 失败后仍会回退到 node-gyp 源码编译。
+# 该 ENV 只存在于 build 阶段（run 阶段是另一个 FROM，不继承），不会写进最终镜像。
+ARG NPM_BINARY_MIRROR
+ENV npm_config_better_sqlite3_binary_host_mirror="${NPM_BINARY_MIRROR}"
+
 # npm install 复用上面「实测可用」的代理（由 apk-setup.sh 写入 /tmp）。
 # npm-run.sh 内部：代理只走环境变量（绝不作为 npm 参数）→ 先在容器内真实探测
 # 代理连通性，探不通就跳过 → 全部不通时兜底国内镜像源 registry.npmmirror.com 直连。
