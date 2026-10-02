@@ -87,6 +87,7 @@ ScreenPlay/
 │       └── common/     # HTTP 限流/重试客户端、元数据缓存
 ├── web/                # React 18 + TS + Tailwind + TanStack Query Web 前端
 ├── flutter/            # Flutter 客户端（Phase 2，Windows + Android）
+├── windows/            # Windows 桌面端（Tauri v2 壳 + 内置后端，见 windows/README.md）
 ├── docs/API.md         # 完整 API 接口文档
 ├── scripts/            # docker-build.sh 代理注入/源切换构建脚本 + apk/npm 构建期辅助脚本
 ├── Dockerfile          # Linux 镜像（node:22-alpine，多阶段）
@@ -417,6 +418,27 @@ bash scripts/rebuild-and-verify.sh
 （`backend/src/metadata/provider.interface.ts`）的两个方法
 `search(name, platform)` 与 `fetch(match)`，并在 `metadata.module.ts` 的
 `METADATA_PROVIDERS` 工厂数组中加入实例。聚合器自动接手限流、重试、缓存与持久化。
+
+---
+
+## Windows 桌面端（Tauri v2，内置后端）
+
+`windows/` 是 Windows 桌面端源码，目标是把 Web 端**原样**装进一个原生窗口，且**默认离线可用**：
+
+- **壳**：Tauri v2（Rust），单实例；启动时在本地随机端口拉起**随包发布的** NestJS 后端
+  （`backend/dist` + `node.exe` + `better-sqlite3`/`sharp` 的 Windows 预编译产物 + `ffmpeg.exe`/`ffprobe.exe`），
+  健康检查通过后再把主窗口指向 `http://127.0.0.1:<port>`，因此**前端零改动**、接口与数据行为与 Web 端一致。
+- **数据目录**：默认 `%APPDATA%\ScreenPlay`（可用 `config.json` 改到任意目录），数据库、海报、
+  缩略图、缓存都在其中；程序目录保持只读，可整体拷贝成免安装包。
+- **精简**：不打包任何开发依赖与 Web 端专属运行时依赖（`react*`/`@tanstack`/`plyr` 等已由
+  后端静态托管产物替代），去掉了 viewport meta 与一条移动端媒体查询，图标本地化（不再依赖 CDN）。
+- **构建**：在 Windows 上运行 `windows\build-windows.ps1`（或 `build-windows.cmd`）。仓库
+  **自带全部离线依赖**（Node 运行时、原生模块、ffmpeg），构建机不需要联网拉取这些资源；
+  具体步骤、产物说明与「功能对齐对照表」见 [`windows/docs/BUILD-WINDOWS.md`](windows/docs/BUILD-WINDOWS.md)、
+  [`windows/docs/ARTIFACTS.md`](windows/docs/ARTIFACTS.md)、[`windows/docs/PARITY.md`](windows/docs/PARITY.md)。
+
+> 产物形态：NSIS 安装包（`bundles/nsis/*.exe`）与免安装 zip（`portable/*.zip`，解压即用）。
+> 桌面端不重复实现任何后端逻辑，所有数据都来自同一个 REST API。
 
 ---
 

@@ -1,0 +1,40 @@
+[package]
+name = "screenplay"
+version = "1.0.0"
+description = "ScreenPlay desktop shell (Tauri v2) — hosts the bundled NestJS backend and shows the Web UI 1:1."
+authors = ["ScreenPlay"]
+edition = "2021"
+# Verified against the real crate sources: tauri 2.12.0 (the version `version = "2"`
+# resolves to) is `edition = "2024"` with `rust-version = "1.90"`, so a build needs
+# rustc >= 1.90. Declaring it here also makes cargo's MSRV-aware resolver pick
+# dependency versions that a 1.90 toolchain can actually compile.
+rust-version = "1.90"
+license = "MIT"
+
+# No `[lib]` section on purpose: an empty `[lib]` table declares a library target
+# and makes cargo look for a `src/lib.rs` that does not exist. Tauri only needs a
+# lib target for mobile; this shell is a plain binary.
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Deliberately minimal: no reqwest/hyper/tokio/openssl.
+#  - health check is hand-written on std::net::TcpStream
+#  - child process handling is std::process + std::thread
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+# No `panic = "abort"`: a panic on the health-poll thread must not take the whole
+# shell down with it.
+
+[features]
+# No custom features. Tauri's defaults are enough for a single-window shell.
+default = []

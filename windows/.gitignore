@@ -1,0 +1,8 @@
+# 构建缓存与产物（不入库）
+.cache/
+dist/
+node_modules/
+src-tauri/resources/
+src-tauri/target/
+src-tauri/gen/
+*.log

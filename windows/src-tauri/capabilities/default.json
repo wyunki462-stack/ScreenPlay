@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "ScreenPlay splash window: needs only the core IPC surface. The main window is loaded from http://127.0.0.1:<port> and therefore intentionally has NO capability (it must not get Tauri IPC).",
+  "windows": ["splash"],
+  "permissions": ["core:default"]
+}

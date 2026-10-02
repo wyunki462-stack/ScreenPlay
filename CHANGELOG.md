@@ -6,6 +6,26 @@
 
 ---
 
+## 未发布
+ 
+### Windows 桌面端（`windows/`）
+
+- 新增 `windows/`：Tauri v2 壳 + **内置后端**的 Windows 桌面端源码与构建方案。启动时壳在本地
+  随机端口拉起随包发布的 NestJS 后端（`backend/dist`、`node.exe`、Windows 版 `better-sqlite3`/`sharp`
+  预编译产物、`ffmpeg.exe`/`ffprobe.exe`），健康检查通过后主窗口指向 `http://127.0.0.1:<port>`，
+  因此**前端零改动、接口与数据行为与 Web 端一致**；四种入口（登录/`AUTH_DISABLED`）与时区、
+  语言、设置项全部沿用后端既有实现。
+- 数据默认落 `%APPDATA%\ScreenPlay`（`config.json` 可改），程序目录只读，可整体拷贝免安装运行；
+  离线可用（库扫描、缩略图/海报生成、Range 流、本地账户、设置），仅刮削/成就/远程图片代理需要外网。
+- 精简：不打包开发依赖与 Web 端专属运行时依赖，图标本地化（不再请求 `cdn.plyr.io`），
+  去掉 viewport meta 与一条移动端媒体查询（Tailwind 的 `min-width` 断点保留，桌面布局不变）。
+- 交付：`windows/build-windows.ps1`（PowerShell 7 与 Windows PowerShell 5.1 均可用）、
+  `windows/scripts/*.mjs`（资源组装、图标生成、打包、自检）、
+  `windows/docs/{BUILD-WINDOWS,ARTIFACTS,PARITY}.md`。
+  产物：NSIS 安装包 + 免安装 zip。**产物需在 Windows 上构建**（仓库不含 CI 出的 exe）。
+
+---
+
 ## [1.0.0] — 2026-10-02
 
 **首个正式版。** 接口（`/api/*`）与数据表结构自本版起进入稳定状态，此后只按语义化版本递增。

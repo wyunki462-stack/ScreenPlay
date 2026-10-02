@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ScreenPlay</title>
+<style>
+  /* Deliberately animation-free (DESIGN §1: 精简、去掉装饰性动画). */
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #0d1017;
+    color: #e6edf3;
+    font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  .wrap {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 28px 32px;
+    text-align: center;
+  }
+  .logo {
+    width: 64px; height: 64px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #1b2130 0%, #0a0d14 100%);
+    border: 1px solid #232b3d;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 36px; font-weight: 700; line-height: 1;
+    color: #6fb4ff;
+    margin-bottom: 16px;
+  }
+  h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; letter-spacing: .3px; }
+  .sub { margin: 0; color: #7d8797; font-size: 12px; }
+  .bar {
+    width: 100%; max-width: 380px; height: 2px; border-radius: 2px;
+    background: #1c2331; margin: 20px 0 12px;
+    overflow: hidden;
+  }
+  .bar > i { display: block; height: 100%; width: 38%; background: #3d7eff; }
+  #msg {
+    margin: 0; max-width: 420px; color: #a9b4c4; font-size: 13px; line-height: 1.6;
+    word-break: break-word;
+  }
+  /* Failure-only block. */
+  #fail { display: none; width: 100%; max-width: 440px; margin-top: 14px; }
+  #fail.show { display: block; }
+  pre#detail {
+    margin: 0 0 10px; padding: 10px 12px; max-height: 108px; overflow: auto;
+    background: #12161f; border: 1px solid #242c3c; border-radius: 8px;
+    color: #c9d3e0; font-size: 11px; line-height: 1.55; text-align: left;
+    white-space: pre-wrap; word-break: break-all;
+    font-family: Consolas, "Cascadia Mono", monospace;
+  }
+  .paths { margin: 0 0 12px; color: #6c7787; font-size: 11px; line-height: 1.7; text-align: left; word-break: break-all; }
+  .actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  button {
+    font: inherit; font-size: 12.5px; padding: 7px 14px; border-radius: 8px;
+    cursor: pointer;
+    border: 1px solid #2b3547; background: #1a2130; color: #dbe4ee;
+  }
+  button:hover { background: #222b3d; }
+  button.primary { background: #2f6fe4; border-color: #2f6fe4; color: #fff; }
+  button.primary:hover { background: #3b7cf0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo">S</div>
+    <h1>ScreenPlay</h1>
+    <p class="sub">桌面版</p>
+
+    <div class="bar"><i id="bar"></i></div>
+    <p id="msg">正在启动本地服务…</p>
+
+    <div id="fail">
+      <pre id="detail"></pre>
+      <p class="paths" id="paths"></p>
+      <div class="actions">
+        <button class="primary" id="retry">重试</button>
+        <button id="logs">查看日志</button>
+        <button id="dataDir">打开数据目录</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // withGlobalTauri gives us `window.__TAURI__.core.invoke` (Tauri v2).
+  // The flat `window.__TAURI__.invoke` fallback keeps this working if the
+  // global shape ever changes; without either, we can only render a hint.
+  var T = window.__TAURI__;
+  var invoke =
+    (T && T.core && T.core.invoke) ? T.core.invoke.bind(T.core) :
+    (T && typeof T.invoke === "function") ? T.invoke.bind(T) :
+    null;
+
+  var msg = document.getElementById("msg");
+  var bar = document.getElementById("bar");
+  var fail = document.getElementById("fail");
+  var detail = document.getElementById("detail");
+  var paths = document.getElementById("paths");
+
+  if (!invoke) {
+    fail.classList.add("show");
+    detail.textContent = "无法访问 Tauri IPC（window.__TAURI__ 不存在）。";
+    msg.textContent = "界面初始化失败，请重新启动程序。";
+    return;
+  }
+
+  var timer = null;
+
+  function render(status) {
+    if (!status) return;
+    var state = status.state || "starting";
+
+    if (state === "ready") {
+      // The shell navigates this window to http://127.0.0.1:<port>/ itself.
+      msg.textContent = status.message || "已就绪，正在打开主界面…";
+      bar.style.width = "100%";
+      fail.classList.remove("show");
+      stop();
+      return;
+    }
+
+    if (state === "failed") {
+      msg.textContent = "本地服务启动失败";
+      bar.style.width = "100%";
+      bar.style.background = "#e5534b";
+      detail.textContent = status.message || "（无错误详情）";
+      paths.textContent =
+        "日志：" + (status.logPath || "未知") + "\n" +
+        "数据目录：" + (status.dataDir || "未知");
+      fail.classList.add("show");
+      stop();
+      return;
+    }
+
+    // starting
+    msg.textContent = status.message || "正在启动本地服务…";
+    fail.classList.remove("show");
+  }
+
+  function stop() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  function poll() {
+    invoke("backend_status").then(render).catch(function (err) {
+      msg.textContent = "无法读取启动状态：" + (err && err.message ? err.message : err);
+    });
+  }
+
+  function restart() {
+    fail.classList.remove("show");
+    bar.style.background = "#3d7eff";
+    bar.style.width = "38%";
+    msg.textContent = "正在重新启动本地服务…";
+    invoke("restart_backend").catch(function (err) {
+      detail.textContent = "重试失败：" + (err && err.message ? err.message : err);
+      fail.classList.add("show");
+    });
+    stop();
+    poll();
+    timer = setInterval(poll, 500);
+  }
+
+  document.getElementById("retry").addEventListener("click", restart);
+  document.getElementById("logs").addEventListener("click", function () {
+    invoke("open_log_dir").catch(function (err) {
+      detail.textContent = "打开日志目录失败：" + (err && err.message ? err.message : err);
+      fail.classList.add("show");
+    });
+  });
+  document.getElementById("dataDir").addEventListener("click", function () {
+    invoke("open_data_dir").catch(function (err) {
+      detail.textContent = "打开数据目录失败：" + (err && err.message ? err.message : err);
+      fail.classList.add("show");
+    });
+  });
+
+  poll();
+  timer = setInterval(poll, 500);
+})();
+</script>
+</body>
+</html>

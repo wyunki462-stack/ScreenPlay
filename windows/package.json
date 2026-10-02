@@ -1,0 +1,25 @@
+{
+  "name": "screenplay-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ScreenPlay Windows 桌面端构建入口（Tauri v2 壳 + 内置 NestJS 后端）；仅负责编排构建，不参与运行时代码。",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "prepare:frontend": "node scripts/prepare-frontend.mjs",
+    "prepare:backend": "node scripts/prepare-backend.mjs",
+    "prepare": "npm run prepare:frontend && npm run prepare:backend",
+    "tauri": "tauri",
+    "build:win": "node scripts/build-windows.mjs",
+    "portable:win": "node scripts/make-portable.mjs",
+    "bundle:webapp": "node scripts/make-webapp-bundle.mjs",
+    "icons": "node scripts/gen-icons.mjs",
+    "verify:win": "node scripts/verify-desktop.mjs",
+    "verify:win:smoke": "node scripts/verify-desktop.mjs --smoke"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1"
+  }
+}
