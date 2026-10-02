@@ -133,18 +133,19 @@ npm run portable:win
 
 ---
 
-## 3. 路径三：Linux 交叉编译尝试（**只出便携 zip**）
+## 3. 路径三：Linux 交叉编译（**已实测跑通**，产出便携 zip）
 
-> ⚠️ **先看结论**：这条路径只可能产出**便携 zip**。NSIS 安装包必须在 Windows 上生成。
-> 已知阻塞点见 3.4，遇到就按 3.5 处理或直接放弃安装包、只发便携包。
+> **结论先说**：在无 root、`HOME` 不可写、没有任何系统 C 编译器的 Linux 上，本仓库**已经用它编译出
+> 真正的 Windows x64 GUI 可执行文件**并打出免安装包（体积见 §3.3.2）。NSIS 安装包仍需在 Windows 上生成。
+>
+> 一键脚本：`windows/scripts/cross/cross-build.sh`（4 个垫片 + 1 个 LD_PRELOAD 修丁，见 §3.3.1）。
 
-### 3.1 准备 Rust 与 Windows target
+### 3.1 前置条件
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
 rustup target add x86_64-pc-windows-msvc
-cargo install cargo-xwin          # 提供 MSVC 交叉编译所需的头文件/SDK 下载
+cargo install cargo-xwin --locked        # 负责下载 MSVC CRT/SDK 头文件与库
+zig version                              # 需要 zig 0.13+：同时充当 cc / ar / rc
 ```
 
 ### 3.2 准备前端与后端资源（平台无关，Linux 上照跑）
@@ -152,65 +153,106 @@ cargo install cargo-xwin          # 提供 MSVC 交叉编译所需的头文件/S
 ```bash
 cd <项目>/windows
 npm install --ignore-scripts --no-audit --no-fund
-npm run prepare:frontend
-npm run prepare:backend     # 这一步会下载 Windows 版 node.exe / ffmpeg / better-sqlite3 预编译包
+npm run prepare:frontend      # 由 web/dist 生成 resources/web/
+npm run prepare:backend       # 下载 Windows 版 node.exe / ffmpeg / ffprobe / better-sqlite3 预编译包
 ```
 
-已在本机（Linux）**实测可达**的下载源（走代理时更快，但直连也可）：
+已在本机（Linux）**实测可达**的下载源（走代理更快，但直连也可）：
 
 | 资源 | 来源 | 实测 |
 | --- | --- | --- |
-| `node.exe`（v22.20.0 win-x64） | npmmirror 镜像 / nodejs.org | ✅ 可达 |
+| `node.exe`（v22.20.0 win-x64） | npmmirror 镜像 | ✅ 可达 |
 | `ffmpeg.exe` + `ffprobe.exe` | GitHub release（302 跳转） | ✅ 可达 |
-| `better-sqlite3` 预编译包 | GitHub release（ABI 127 / win32-x64） | ✅ 可达（测试脚本另用 `npm pack` 走 npmmirror） |
-| **NSIS 打包器** | `github.com/tauri-apps/binary-releases/.../nsis-3.11.zip` | ❌ **直连 `http=000`，必须走代理** |
+| `better-sqlite3` 预编译包 | npmmirror / GitHub release | ✅ 可达 |
+| MSVC CRT / Windows SDK | cargo-xwin 内置下载（`aka.ms`） | ✅ 可达（约 630 MB，1m13s） |
+| **NSIS 打包器** | `github.com/tauri-apps/binary-releases/.../nsis-3.11.zip` | ❌ 直连 `http=000`，必须走代理 |
 
-### 3.3 交叉编译 exe
+### 3.3 交叉编译 exe（一条命令）
 
 ```bash
-cd src-tauri
-cargo xwin build --release --target x86_64-pc-windows-msvc
-# 产物：src-tauri/target/x86_64-pc-windows-msvc/release/ScreenPlay.exe
+cd <项目>/windows
+bash scripts/cross/cross-build.sh            # 只出 exe
+bash scripts/cross/cross-build.sh --portable # 出 exe 并顺手打便携 zip
 ```
+
+脚本做的事：检查工具 → 编译 `fixmode.so` → `rm -rf src-tauri/gen` → `cargo-xwin build --release --locked
+--target x86_64-pc-windows-msvc -j 2` → 用 python3 校验 PE（machine/subsystem/资源目录）→ 拷到
+`windows/dist/ScreenPlay.exe`（`--portable` 时再跑 `npm run portable:win`）。
+
+可用环境变量（都有默认值）：`SP_WORK`（默认 `/tmp/sp-cross`，**必须放在可写盘**）、`SP_CARGO_HOME` /
+`SP_RUSTUP_HOME`、`SP_ZIG`、`SP_JOBS`（默认 2）、`SP_LTO`（默认 `false`，省内存）、`SP_FIXMODE`（默认 1）。
+
+#### 3.3.1 为什么需要那 4 个垫片（`windows/scripts/cross/`）
+
+| 垫片 | 解决什么 | 关键细节 |
+| --- | --- | --- |
+| `cc.sh` | zig 当主机 C 编译器 | cc-rs 传的是 Rust 三元组 `--target=x86_64-pc-windows-msvc`，zig 只认 `x86_64-windows-msvc`，必须逐参数翻译 |
+| `ar.sh` | 静态库打包 | `zig ar` |
+| `llvm-rc.sh` | **本机没有 `llvm-rc`**，`tauri-winres 0.3.6` 的 `embed_resource::compile()` 会 panic：`NotAttempted("llvm-rc")` | 伪装成 llvm-rc：探测时打印 `OVERVIEW: LLVM Resource Converter` + `no-preprocess`，编译时把参数转给 `zig rc`（只认小写 `/c`；`/no-preprocess` 会被它当 `/n`+残留字符解析而报 `<cli>: error: invalid option: /o-preprocess`，必须吃掉） |
+| `clang-cl.sh` | **cargo-xwin 自己把 `CC_x86_64_pc_windows_msvc` 设成 `clang-cl`**（shell 里 export 的 CC 被覆盖），而本机没有 LLVM | `embed-resource` 要用 cc crate 预处理 `.rc` 并**捕获 stdout**；垫片把 `/imsvc`→`-isystem`、`/I /D /U`→`-I/-D/-U`、丢掉 `-Xclang`+下一参数与 MSVC 专有开关，再 `cc.sh -E -x c` |
+| `fixmode.c` | 本机文件系统怪癖：**进程新建的文件权限是 `000`**，于是 build script 写出的 `acl-manifests.json`、`capabilities.json`、`gen/schemas/*.json` 在同一/下一轮构建里读不回来（`Permission denied (os error 13)`） | LD_PRELOAD 拦截 open 系列：创建成功后 `fchmod(fd,0666)`；遇 EACCES 先 `chmod 0666` 再重试一次。构建前还需 `rm -rf src-tauri/gen`（旧 schema 也是 `000`） |
+
+> 资源文件这条链路是通的：`zig rc` 输出 **RES 格式（不是 COFF）**，但 `lld-link` 按内容识别 `.res`
+> 可直接链接（实测），所以 `embed-resource` 的 `cargo:rustc-link-arg-bins=<out>` 依然成立。
+
+#### 3.3.2 本机实测结果
+
+| 项目 | 实测值 |
+| --- | --- |
+| 构建命令 | `cargo-xwin build --release --locked --target x86_64-pc-windows-msvc -j 2` |
+| 编译耗时 | `Finished 'release' profile [optimized] target(s) in 39.93s`（依赖已编译完时约 37 s） |
+| 产物 | `screenplay.exe` = **7,381,504 B = 7.04 MiB** |
+| PE 校验 | `machine=0x8664`(x64)、PE32+、**`subsystem=2`(GUI，不弹控制台)**、8 节、资源目录 8,968 B |
+| 资源内容 | `[3] ICON 7809 B`、`[14] GROUP_ICON 20 B`、`[16] VERSION 488 B`、`[24] MANIFEST 334 B`（**图标/版本信息/manifest 全都在**） |
+| 告警 | 只有 `LNK4099`（CRT 库的 PDB 引用缺失），无害 |
+| 便携包 | `dist/ScreenPlay_1.0.0_x64-portable.zip` = **114,278,175 B = 108.98 MiB**（11,417 条目，staging 309.94 MiB） |
+| 未产出 | NSIS `*-setup.exe`（需要 wine + makensis，本机没有） |
 
 ### 3.4 已知阻塞点（踩坑清单）
 
-1. **NSIS 安装包做不出来**：`tauri build` 在 Windows 之外的平台要下载 NSIS 打包器，
-   而该下载源 `https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip`
-   **在本机直连返回 `http=000`（拿不到任何响应）**，加代理后可用：
-   `curl -x http://127.0.0.1:7890 -L -o nsis-3.11.zip <上面的 URL>`。
-   → 所以：**Linux 交叉编译只做便携 zip，NSIS 安装包请在 Windows 上生成。**
-2. **需要 MSVC CRT / Windows SDK 头文件与库**：`cargo xwin` 会自行下载（数百 MB），
-   但它不会给你 `link.exe`；若上游改动导致 `xwin` 拉不到 SDK，需要手动提供或改用 `cargo-zigbuild`。
-3. **打包期资源编译**：`tauri-winres` / `embed-resource` 通常需要 `llvm-rc` 或 `windres`
-   （`apt install llvm` 或 `apt install binutils-mingw-w64-x86-64`）。缺了会在 `build.rs` 阶段报错。
-4. **`cargo-xwin` 版本漂移**：Tauri v2 的 `build.rs` 行为随版本变化，交叉编译属于「尽力而为」，
-   官方不承诺支持。
+1. **NSIS 安装包做不出来**：`tauri build` 在非 Windows 平台会下载 NSIS 打包器，而该下载源
+   `https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip`
+   本机直连返回 `http=000`；即使拿到，跑 `makensis.exe` 还需要 wine。
+   → **Linux 交叉编译只做便携 zip，NSIS 安装包在 Windows 上生成。**
+2. **需要 MSVC CRT / Windows SDK**：`cargo-xwin` 会自行下载（实测 `⏬ Downloading MSVC CRT...`
+   后 1m13s 完成，约 630 MB，落在 `XWIN_CACHE_DIR`），直连可达、不需要代理；但它不给 `link.exe`
+   ——链接由 rustc 自带的 `lld-link` 完成。
+3. **`cargo-xwin` 版本漂移**：Tauri v2 的 `build.rs`/`tauri-winres` 行为随版本变化，交叉编译属于
+   「尽力而为」，官方不承诺支持；本仓库已把可用组合（tauri 2.12.1 + cargo-xwin 0.23.1 + zig 0.13.0）钉住。
+4. **构建目录必须可写、且新文件要有写权限**：在共享盘/网络盘（新文件默认 `000`）上直接在仓库里编译，
+   rustc 会在写目标文件时报
+   `error: output file .../target/release/deps/unicode_ident-*.rcgu.o is not writeable -- check its permissions`。
+   → `CARGO_TARGET_DIR` 挪到本机盘（`cross-build.sh` 默认 `/tmp/sp-cross/target`）。
+5. **crates.io 直连会限速或偶发挂起**：实测 `static.crates.io` 只有 ~100 KB/s 且会中途卡住。缓解：
+   ① `CARGO_HTTP_MULTIPLEXING=false CARGO_HTTP_TIMEOUT=60 CARGO_NET_RETRY=10`；
+   ② 先用镜像并行预取 `Cargo.lock` 里缺的 crate 到缓存，再让 cargo 跑（命缓存即不再下载）：
+   ```bash
+   CACHE=$(ls -d $CARGO_HOME/registry/cache/index.crates.io-* | head -1)
+   xargs -P 6 -n 2 sh -c \
+     'curl -sS -L --retry 3 --max-time 120 -o '"$CACHE"'/$0-$1.crate \
+        https://rsproxy.cn/api/v1/crates/$0/$1/download' < 缺失列表
+   ```
+   实测 `rsproxy.cn` 约 370 KB/s。**只预取文件、不改 `[source]` 替换**最省事（换源会让 cargo 重下整棵树）。
+6. **`--offline` 首次构建不可用**：稀疏索引缓存里没有 tauri 的 Linux 目标依赖，会报
+   `error: no matching package named 'gtk' found`。首次构建必须联网更新索引。
+7. **`cargo` 不一定在 `CARGO_HOME/bin` 里**：rustup 安装的 `cargo`/`rustc` 在
+   `RUSTUP_HOME/toolchains/<toolchain>/bin`，`cargo-xwin` 才在 `CARGO_HOME/bin`。两个目录都要进 `PATH`
+   （`cross-build.sh` 已自动处理）。
 
-### 3.5 在 Linux 上手工组装便携包
+### 3.5 在 Linux 上手工组装便携包（可选）
 
-交叉编译出 `ScreenPlay.exe` 后，便携包结构就是「一个目录 + 两个标记文件」，可以手工组装：
+`cross-build.sh --portable` 已经会自动完成，手工做的话就是：把 `windows/src-tauri/resources/` 整目录拷进
+一个目录，再把 exe 放同级，加两个标记文件：
 
 ```
-ScreenPlay_<ver>_x64-portable/
+ScreenPlay_1.0.0_x64-portable/
 ├── ScreenPlay.exe
 ├── portable.flag                 # 存在即启用便携模式：DATA_DIR = <exeDir>\data
 ├── 使用说明.txt
-└── resources/
-    ├── node/node.exe
-    ├── backend/{dist,node_modules,package.json}
-    ├── web/{index.html,assets/**}
-    ├── bin/{ffmpeg.exe,ffprobe.exe}
-    └── build-info.json
+└── resources/{node,backend,web,bin,build-info.json}
 ```
 
-即：把 `windows/src-tauri/resources/` 整目录拷进去，再把交叉编译出来的 `ScreenPlay.exe` 放到同级。
-`npm run portable:win` 做的就是这件事（外加压缩），但它期望的是 Windows 路径下的
-`src-tauri/target/release/ScreenPlay.exe`——交叉编译时路径不同，所以走这条路要手工拷。
-
 > 便携包的体积预期见 `windows/docs/ARTIFACTS.md`。
-
----
 
 ## 4. 网络受限：镜像与代理
 

@@ -62,6 +62,28 @@ ScreenPlay_<version>_x64-portable/
 | 端口 | 默认从 **3210** 起自动探测空闲端口，仅监听 `127.0.0.1`（`embedded` 模式）；端口冲突时壳会自动换端口 |
 | 网络 | 仅在使用联网元数据源 / 下载代理媒体时需要 |
 
+### 3.1 启动速度与内存（对应需求「精简优化」）
+
+本机（Linux）把**同一份 `resources/` + 同一个启动流程**真跑过，可量化的观测值：
+
+* **内置后端冷启动到可用 ≈ 1.0–1.5 s**：后端自己的日志 `[Bootstrap] Ready after 1.0s (health: /api/health)`
+  就是在 `resources/` 这套产物上测出来的（`GET /api/health` 返回 `status=ok`、27 个功能标记齐全）。
+  壳在此基础上再加 splash → WebView2 初始化 → 主窗口，Windows 上的总时长通常 2–4 s（此段未在 Windows 上实测，属估计）。
+* **启动期不做任何多余动作**：`MAINTENANCE_ON_BOOT=0`（不自动扫描/清理）、不预加载媒体库、不开托盘以外的后台轮询；
+  媒体库扫描只在用户点「扫描」或进图库时按需触发。
+* **内存**：后端 Node 进程启动后空闲 **RSS ≈ 140 MB**（本机实测，`data/` 为空库时的口径），
+  加 WebView2 主进程合计约 280–450 MB；处理图片/视频时由 sharp/ffmpeg 临时抬高，属正常范围。
+  想再降，可删 `resources/bin/ffmpeg.exe`+`ffprobe.exe`（省约 139 MB 磁盘，代价是视频缩略图/时长解析不可用）。
+
+精简口径（与 `windows/DESIGN.md` §6 一致，**不影响视觉 1:1**）：
+
+1. 前端只删「移动端断点」整块 CSS（`@media (max-width: …)`），桌面窗口固定宽度，这些规则本来不会被命中；
+   装饰性动画与过渡**保留**——删掉就不是 1:1 复刻了（需求二优先）。
+2. Web 产物用生产构建（压缩、无 source map、无 polyfill 冗余），并把 Plyr 控件图标从 CDN 改为包内 `assets/plyr.svg`（离线可用）。
+3. 后端只带生产依赖（18 个直接依赖 / 230 packages），不带 `typescript`、`vite`、`playwright`、`@nestjs/cli` 等开发链；
+   `dist/` 不含 `.map`。
+4. 壳侧不引入 `reqwest`/`tokio`/`hyper`/`openssl`（健康检查是手写 `GET /api/health`），release 开 `strip`+`lto`+`opt-level="s"`。
+
 ---
 
 ## 4. 数据目录与便携模式（对应 `windows/DESIGN.md` §8）
@@ -138,12 +160,12 @@ ScreenPlay_<version>_x64-portable/
 | Web 产物（精简版） | `resources/web/**` | **0.60 MiB** / 5 文件（`index.html` 443 B、CSS 71.56 KB、JS 532.92 KB、`assets/plyr.svg`、`assets/blank.mp4`） | — |
 | 后端 JS / 清单 | `resources/backend/dist/**` + `package.json`、`build-info.json` | **0.84 MiB** / 148 文件（`dist` 无 `.map`） | — |
 | **`resources/` 合计** | 上五项 | **303.22 MiB = 317,945,062 B** / 10,456 文件 | — |
-| 桌面壳 | `ScreenPlay.exe`（Tauri v2 release，`strip=true`+`lto`） | 需在 Windows 上编译后称重（预期 5–15 MiB） | — |
-| **便携包合计** | `resources/` + `ScreenPlay.exe` + 标记文件 + 说明 | **≈303 MiB + 壳** | **zip 106.90 MiB = 112,088,975 B**（用占位 exe 真跑 `make-portable.mjs` 实测，条目 11,417；压缩率 35.3%） |
+| 桌面壳 | `ScreenPlay.exe`（Tauri v2 release，`strip=true`） | **7.04 MiB = 7,381,504 B**（本机 Linux 交叉编译实测；PE32+ x64、`subsystem=GUI`、资源目录 8,968 B 内含 ICON/GROUP_ICON/VERSION/MANIFEST） | 并入便携包 |
+| **便携包合计** | `resources/` + `ScreenPlay.exe` + 标记文件 + 说明 | **309.94 MiB**（staging = resources 303.22 MiB + 真 exe 7.04 MiB，10,461 文件） | **zip 108.98 MiB = 114,278,175 B**（真 exe 跑 `npm run portable:win` 实测，条目 11,417，全量比对 ✓，≤200 MiB 目标达标） |
 | **零工具链包**（备用方案，无需 Rust） | `resources/` + `launcher/` + `ScreenPlay.cmd` | **303.22 MiB + 0.1 MiB** / 10,463 文件（staging 计数） | **zip 106.89 MiB**（真跑 `make-webapp-bundle.mjs` 实测，条目 11,420） |
 | 安装包 | `ScreenPlay_<ver>_x64-setup.exe` | — | 与便携包同量级（内容相同，仅多一层自解压） |
 
-* `windows/DESIGN.md` §10 的**硬指标**是「便携包压缩后 ≤ 200 MB」。实测 **106.9 MiB（约 112 MB）**，
+* `windows/DESIGN.md` §10 的**硬指标**是「便携包压缩后 ≤ 200 MB」。实测 **108.98 MiB（约 114 MB，真 exe 版；零工具链版 106.89 MiB）**，
   余量充足。若构建后明显超出，按经验先查：误把 devDependencies 或 Web 端 `node_modules` 打进包、
   ffmpeg 换了带全部编码器的巨型静态版。
 * 体积大头是 ffmpeg/ffprobe（138.72 MiB 解压后）与 Node 运行时（81.62 MiB），两者合计占 74%。

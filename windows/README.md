@@ -20,6 +20,7 @@
 | `scripts/prepare-backend.mjs` | 组装 Windows 版后端运行时（`node.exe`、Windows 生产依赖、`ffmpeg`） |
 | `scripts/make-portable.mjs` | 把 exe + `resources/` 打成一个便携 zip |
 | `scripts/make-webapp-bundle.mjs` | 组装**零工具链**免安装 zip（不需要 exe，解压双击 `ScreenPlay.cmd` 即用） |
+| `scripts/cross/` | **Linux 交叉编译套件**：在非 Windows 主机上编译真 `ScreenPlay.exe`（`cross-build.sh` + 4 个垫片） |
 | `scripts/verify-desktop.mjs` | 交付自检：资源完整性、体积清单、禁带依赖、`--smoke` 真启动一次后端 |
 | `launcher/` | 备用启动器：`ScreenPlay.cmd` + `launch.mjs`（选空闲端口 → 起内置后端 → Edge `--app` 窗口） |
 | `scripts/build-windows.mjs` | Node 侧的编排脚本（`npm run build:win`，`build-windows.ps1` 的等价实现） |
@@ -104,8 +105,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build-windows.ps1
 完整说明（含 **Linux 交叉编译** 与网络镜像/代理方案、常见报错对照表）见
 [`docs/BUILD-WINDOWS.md`](docs/BUILD-WINDOWS.md)。
 
-> 没有 Windows 机器？Linux 上交叉编译**只能出便携 zip**，且有几个已知阻塞点，
-> 详见 [`docs/BUILD-WINDOWS.md`](docs/BUILD-WINDOWS.md) §3。
+> 没有 Windows 机器？Linux 上也能出**真正的 Windows exe**：`bash scripts/cross/cross-build.sh --portable`
+> 一条命令即可（用 zig 冒充 cc/ar/rc，配 4 个垫片，见 [`docs/BUILD-WINDOWS.md`](docs/BUILD-WINDOWS.md) §3）。
+> 实测结果：exe **7.04 MiB**（PE32+ x64 GUI，图标/版本/manifest 均在），便携 zip **108.98 MiB / 11,417 条目**。
+> 唯一做不了的是 **NSIS 安装包**（需要 wine + makensis）——那个在 Windows 上跑 `build-windows.ps1` 生成。
 
 ---
 
@@ -115,6 +118,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build-windows.ps1
 | --- | --- |
 | 安装包 | `windows/dist/ScreenPlay_<版本>_x64-setup.exe` |
 | 便携包 | `windows/dist/ScreenPlay_<版本>_x64-portable.zip` |
+| 零工具链包 | `windows/dist/ScreenPlay_<版本>_x64-webapp.zip`（不用 Rust/编译，解压双击 `ScreenPlay.cmd`） |
 | 构建日志 | `windows/dist/build-<时间戳>.log`（UTF-8，记事本可直接看） |
 
 脚本结束时会把每个产物的**绝对路径与大小**打印出来。

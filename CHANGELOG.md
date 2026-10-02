@@ -22,7 +22,12 @@
 - 交付：`windows/build-windows.ps1`（PowerShell 7 与 Windows PowerShell 5.1 均可用）、
   `windows/scripts/*.mjs`（资源组装、图标生成、打包、自检）、
   `windows/docs/{BUILD-WINDOWS,ARTIFACTS,PARITY}.md`。
-  产物：NSIS 安装包 + 免安装 zip。**产物需在 Windows 上构建**（仓库不含 CI 出的 exe）。
+  产物：NSIS 安装包 + 免安装 zip；**仓库不含构建出的二进制**（exe/zip 都在 `windows/dist/` 且已 gitignore）。
+  原生壳 exe 在 Windows 上构建，**也可以用 `windows/scripts/cross/cross-build.sh` 在 Linux 上交叉编译**
+  （zig 冒充 cc/ar/rc + 4 个垫片；实测 exe 7.04 MiB、便携 zip 108.98 MiB）；NSIS 安装包只能在 Windows 上出。
+  另提供**零工具链备用包** `ScreenPlay_<ver>_x64-webapp.zip`（`npm run bundle:webapp`）：
+  不需要 Rust/编译，解压双击 `ScreenPlay.cmd` 就用同一份 `resources/`（内置后端 + Edge `--app` 窗口），
+  用于目标机器上装不了构建工具链时的兜底。
 
 ---
 
