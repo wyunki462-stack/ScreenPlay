@@ -59,7 +59,7 @@ fi
 
 step "2. docker-deploy.sh 的四个检查项，逐条跑"
 run_check "A. maintenance.service.js" 'test -f /app/backend/dist/maintenance/maintenance.service.js'
-run_check "B. purgeAutoAddedAlbumFrames" 'grep -rqF "purgeAutoAddedAlbumFrames" /app/backend/dist'
+run_check "B. removeAutoAddedFramesFromRotation" 'grep -rqF "removeAutoAddedFramesFromRotation" /app/backend/dist'
 run_check "C. /app/public/assets" 'test -f /app/public/assets'
 run_check "D. slideshowItemHint" 'grep -rqF "slideshowItemHint" /app/public/assets'
 

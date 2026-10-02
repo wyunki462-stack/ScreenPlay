@@ -180,8 +180,10 @@ export class DatabaseService implements OnModuleInit {
       );
 
       -- Custom / multiple posters per game.
-      --   kind='selected' → the single poster shown in static mode
-      --   kind='gallery'  → an extra poster usable in slideshow mode
+      --   is_selected  → the game's cover (the card's static frame, always frame 0)
+      --   in_slideshow → ticked in 「编辑海报」to join the HOME-CARD carousel;
+      --                  the detail-page hero rotates the official posters
+      --                  regardless of this flag
       -- source: 'upload' (user file) | 'media' (existing album image) | 'scraped'
       CREATE TABLE IF NOT EXISTS game_posters (
         id           TEXT PRIMARY KEY,
@@ -190,7 +192,7 @@ export class DatabaseService implements OnModuleInit {
         source       TEXT NOT NULL DEFAULT 'upload',
         media_id     TEXT,
         is_selected  INTEGER NOT NULL DEFAULT 0,
-        in_slideshow INTEGER NOT NULL DEFAULT 1,
+        in_slideshow INTEGER NOT NULL DEFAULT 0,
         sort_order   INTEGER NOT NULL DEFAULT 0,
         created_at   INTEGER NOT NULL
       );
@@ -259,7 +261,10 @@ export class DatabaseService implements OnModuleInit {
     // Feature: user-selected play platforms (JSON array, e.g. ["PC","PlayStation 5"]).
     // When present it replaces the auto-scraped single platform everywhere.
     this.addColumnIfMissing('games', 'platforms', "TEXT NOT NULL DEFAULT '[]'");
-    // Feature: gallery card display mode — 'static' | 'slideshow'.
+    // Feature: 「首页卡片轮播」 switch — 'static' | 'slideshow'. Drives whether the
+    // home-card frames auto-advance and whether the card shows its prev/next
+    // arrows. It has nothing to do with per-poster `in_slideshow` (the tick) or
+    // with the detail-page hero carousel.
     this.addColumnIfMissing('games', 'poster_mode', "TEXT NOT NULL DEFAULT 'static'");
     // Feature: marks platform/poster as user-controlled so scrapes never clobber it.
     this.addColumnIfMissing('games', 'custom_platform', 'INTEGER NOT NULL DEFAULT 0');
@@ -269,13 +274,15 @@ export class DatabaseService implements OnModuleInit {
     // official poster: the fallback row was re-selected and looked user-chosen.
     this.addColumnIfMissing('game_posters', 'is_user_choice', 'INTEGER NOT NULL DEFAULT 0');
 
-    // Whether the USER has decided this poster's slideshow membership.
+    // Whether the USER has decided this poster's card-rotation membership.
     //
-    // Needed because scraped artwork is now added to the rotation automatically
-    // (「所有官方刮取到的海报/截图统一纳入详情页轮播」). Without recording *who*
-    // made the call, a later re-scrape could not tell "the user ticked this off"
-    // from "nobody has touched it yet", and re-adding it would silently undo a
-    // deliberate choice — the exact class of bug this column prevents.
+    // `in_slideshow` is the home-card tick, and nothing enrolls a frame
+    // automatically any more — but an older rule did (the boot-time cover floor
+    // and the album rotation floor), leaving `in_slideshow = 1` rows nobody chose.
+    // Recording *who* made the call is what lets the boot-time cleanup
+    // (`removeAutoAddedFramesFromRotation`) take the un-chosen rows back out
+    // without ever touching a user's tick or untick. It is also what tells a
+    // re-scrape "the user decided this row, leave it alone".
     //
     // Named separately from is_user_choice on purpose: that one means "the user
     // picked this as the COVER", which is a different decision.

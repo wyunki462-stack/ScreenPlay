@@ -126,8 +126,9 @@ peerDependency）。
 - `backend/src/media/streaming.service.ts`：删死字段 `chunkSize`（`1024 * 256`，从未被读取）。
 - `backend/src/library/game-recognizer.service.ts`、`backend/src/games/media-reviews.service.ts`、
   `backend/src/metadata/providers/igdb.provider.ts`：删未使用的 `Logger` 字段与对应导入。
-- `web/src/components/HeroPosterCarousel.tsx:9`：注释还在引用已删除的 `ScreenshotCarousel`，
-  改为「旧的截图轮播」。
+- `web/src/components/HeroPosterCarousel.tsx`：注释曾引用已删除的 `ScreenshotCarousel`，
+  当时改为「旧的截图轮播」；该文件后来因**两套轮播职责拆分**整体重写了头部注释（现直接说明
+  「详情页大图 = 全部官方海报、恒定自动、与「编辑海报」面板解耦」，见 `docs/API.md`）。
 - `backend/src/maintenance/maintenance.service.ts`：删掉从未被写入的 `ROTATION_MARKER` 常量，
   并把两处「声称会写版本标记」的注释改成真实行为（只有 `repairDurations` 用版本标记；
   海报轮播修复故意每次启动都跑，因为它便宜、幂等，且目标集合会随新增游戏变大）。
@@ -142,7 +143,7 @@ peerDependency）。
 | G2 | 平台回退 | 后端 `backend/src/common/game-row.ts` 的 `platformsOfRow()` / `parseStringArray()`；前端 `web/src/lib/platforms.ts` 的 `platformTags()` | `games.service.ts` 的 `platformsOf`+`displayPlatforms`+本地 `parseArray`（三份）、`trophies.service.ts` 的同名 `platformsOf`、`GameCard.tsx` 与 `GameDetail.tsx` 各一份逐字相同的前端副本 |
 | G3 | 评分色调阈值 | `web/src/lib/utils.ts` 的 `metacriticTone()`（`RatingPickDialog.tsx` 只保留自己的类名表） | `RatingPickDialog.tsx` 自带 75/50 阈值 |
 | G4 | Escape 关闭弹窗 | `web/src/lib/hooks.ts` 的 `useEscapeClose()` | `PlatformDialog.tsx`、`PosterDialog.tsx` 各一份 |
-| G5 | 轮播定时器 | `web/src/lib/hooks.ts` 的 `useRotationTimer()` | `HeroPosterCarousel.tsx`、`PosterCarousel.tsx` 各一份（hover 暂停 + 手动翻页冷却，已漂移过一次） |
+| G5 | 轮播定时器 | `web/src/lib/hooks.ts` 的 `useRotationTimer()` | `HeroPosterCarousel.tsx`、`PosterCarousel.tsx` 原来各写一份（hover 暂停 + 手动翻页冷却）。两套轮播职责拆分后，两者**何时启用定时器已按设计不同**（大图恒定自动、卡片随「首页卡片轮播」开关），但定时器实现仍共用这一份 |
 | G6 | 代理探针 | `backend/src/common/http/proxy-config.ts` 的 `probeProxy(url, useTls, …)` | `probeHttpProxy` / `probeHttpsProxy` 两份逐字相同 |
 
 新增文件：`backend/src/common/game-row.ts`、`web/src/lib/platforms.ts`、`web/src/lib/hooks.ts`。

@@ -141,7 +141,7 @@ export default function PosterDialog({
           </button>
         </div>
 
-        {/* Display mode (feature 5) */}
+        {/* Homepage card slideshow (feature 5) */}
         <div className="flex flex-wrap items-center gap-3 border-b border-zinc-800 px-4 py-3">
           <span className="text-xs text-zinc-400">{t("dialogs.poster.displayMode")}</span>
           <div className="flex overflow-hidden rounded-md border border-zinc-700">
@@ -176,10 +176,11 @@ export default function PosterDialog({
               })}
             </span>
           )}
-          {/* 说清楚这套勾选管的是哪个轮播。
-              曾经这里只写「已勾选 N 张参与轮播」，而页面上唯一会自动动的是首页
-              图库卡片 —— 用户因此以为勾选在控制卡片。实际数据源已经分开（见
-              GameCard / HeroPosterCarousel），文案也必须跟着说清楚。 */}
+          {/* 说清楚这套开关管的是哪个轮播。
+              新语义：上面的展现模式与下面的「轮播」勾选只作用于**首页卡片轮播**；
+              详情页大图默认用全部官方海报自动轮播，不需要在这里设置。
+              曾经这里写的是「决定哪些图进详情页大图轮播」，而页面上唯一会自动动的
+              是首页图库卡片 —— 文案说反了，用户自然对不上。 */}
           <span className="text-xs text-zinc-500">
             {t("dialogs.poster.slideshowHint")}
           </span>
@@ -454,9 +455,11 @@ export default function PosterDialog({
                       而是控件不存在。
                       
                       两件事必须分开：
-                        · 勾选 → 这张图是否进入**详情页大图区**的集合（本控件）
-                        · 展现模式 → 这套集合是否**自动切换**（上方的按钮组）
+                        · 勾选 → 这张图是否进入**首页卡片轮播**的集合（本控件）
+                        · 展现模式 → **首页卡片轮播**是否自动切换、卡片上是否给箭头（上方按钮组）
                       把它们绑在一起，等于「不自动轮播就不许你挑选哪些图」。
+                      详情页大图不读这两个设置：它恒定自动轮播全部官方海报
+                      （见 GameDetail 的 `heroPosters()`）。
                     */}
                     <label
                       className="flex cursor-pointer items-center gap-1 text-[10px] text-zinc-400"

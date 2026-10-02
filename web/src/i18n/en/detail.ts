@@ -166,11 +166,11 @@ export const detailEn: Record<string, string> = {
   "detail.nav.position": "{index} of {total} (current order)",
   "detail.nav.loading": "Loading neighbour…",
 
-  // Detail poster carousel (hero area)
+  // Detail poster carousel (hero area, always auto-rotating)
   "detail.poster.prev": "Previous poster",
   "detail.poster.next": "Next poster",
   "detail.poster.goto": "Show poster {index}",
-  "detail.poster.official": "Official posters / screenshots",
+  "detail.poster.official": "Official posters · auto-rotating",
   "detail.poster.alt": "Official poster",
   "detail.poster.empty": "No poster yet — use “Edit poster” to add one",
 };

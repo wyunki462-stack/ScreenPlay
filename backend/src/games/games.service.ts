@@ -189,33 +189,37 @@ export class GamesService {
   ) {}
 
   /**
-   * Every registered poster URL for a game — the **card / gallery** set.
+   * The **home-card carousel** set for a game — `game.posters`.
    *
-   * This deliberately returns the full set rather than the `in_slideshow` subset.
-   * It used to return only the slideshow rows, which conflated two different
-   * things and produced the reported defect 「编辑海报的轮播设置控制的是首页图库
-   * 卡片轮播，而不是详情页的大图轮播」: because the gallery card consumed this
-   * field, unticking a poster in 「编辑海报」changed *which pictures the card
-   * could show*, while the detail page's large carousel — the thing the checkbox
-   * is supposed to curate — was not what the user was watching change.
+   * The card's frames are exactly what the user curated: the current cover, then
+   * every poster ticked in 「编辑海报」(`in_slideshow = 1`). A poster the user
+   * never ticked is **not** here, so the card cannot cycle through pictures the
+   * user has not put in its rotation. The cover is included structurally (via
+   * `is_selected`), not by a flag: it is the card's static frame whatever the
+   * 「轮播」 checkbox says.
    *
-   * The two carousels are now separated by data source, not just by intent:
+   * This is deliberately NOT the detail-page hero set. The two carousels are now
+   * separated by purpose, which is what the reported defect 「编辑海报的轮播设置控制
+   * 的是首页图库卡片轮播，而不是详情页的大图轮播」was really about:
    *
-   *   - **首页图库卡片** (`GameCard`) → this field: cover first, then every
-   *     registered poster. Browsable with its arrows; auto-advances only according
-   *     to the game's 展现模式 (`posterMode`).
-   *   - **详情页大图区** (`HeroPosterCarousel`) → `posterList` filtered on
-   *     `inSlideshow`, i.e. exactly what 「编辑海报」shows ticked, plus the cover.
+   *   - **首页图库卡片** (`GameCard`) → this field: cover first, then the ticked
+   *     frames. Browsable with its arrows; auto-advances only according to the
+   *     game's 「首页卡片轮播」 switch (`posterMode`).
+   *   - **详情页大图区** (`HeroPosterCarousel`) → the game's `posterList`, from
+   *     which it rotates every OFFICIAL poster (source `scraped`/`upload`, never
+   *     `media`) automatically. It ignores `in_slideshow` entirely and needs no
+   *     configuration.
    *
-   * So ticking/unticking a poster changes the detail-page carousel and leaves the
-   * card set alone, and the two can no longer drift in or out of sync by accident.
+   * So ticking/unticking a poster changes the card and leaves the hero untouched,
+   * and the two can no longer drift in or out of sync by accident.
    */
-  private slideshowPosters(r: GameRow): string[] {
+  private cardPosters(r: GameRow): string[] {
     const rows = this.db.all<{ url: string; source: string; id: string; media_id: string | null }>(
-      // No `in_slideshow` filter here — see the docblock: this is the card set.
-      // Cover first so it is always the frame the gallery shows.
+      // Cover first (`is_selected DESC`) so the static frame is always frame 0,
+      // then the ticked rows. A row that is neither the cover nor ticked stays out
+      // of the card — `in_slideshow` is the card's own switch.
       `SELECT id, url, source, media_id FROM game_posters
-        WHERE game_id = ?
+        WHERE game_id = ? AND (is_selected = 1 OR in_slideshow = 1)
         ORDER BY is_selected DESC, sort_order ASC, created_at ASC`,
       [r.id],
     );
@@ -1132,8 +1136,10 @@ export class GamesService {
       platforms,
       customPlatform: !!r.custom_platform,
       posterUrl: this.proxyImage(r.poster_url),
-      // Feature 5: slideshow list + mode.
-      posters: this.slideshowPosters(r).map((u) => this.proxyImage(u) ?? u),
+      // Home-card carousel set: cover first, then the user-ticked rows. The field
+      // name stays `posters` — the card and its arrows already read it. Each URL
+      // is already routed through the image proxy inside `cardPosters`.
+      posters: this.cardPosters(r),
       posterMode: r.poster_mode === 'slideshow' ? 'slideshow' : 'static',
       mediaCount: this.media.countByGame(r.id),
       durationSeconds: r.duration_seconds,

@@ -132,14 +132,17 @@ say "校验镜像内容"
 #     /app/backend/dist/app.controller.js；
 #   · 前端标记是界面/文案符号，打包进 /app/public/assets/*.js。
 # 一开始我把两者都往 /app/dist 里找，那是错的路径 —— 那样会永远报"缺少"。
-# 1.0.0 与 0.6.4 的 features 列表**完全相同**（这一版只瘦身、去重、修一处缺陷，没有新增界面
-# 能力），所以这里查的是「0.6.4 那一轮 + 之前各轮」的标记 —— 它们只要在，界面侧就不是旧镜像；
-# 「跑的是不是 1.0.0」由下面的版本号检查回答。
+# 注意：`features` 列表**不是**历轮累加的完整快照 —— 每次按语义重命名标记时，旧名字就从
+# 产物里消失了。所以每一项都必须盯**当前**源码里的名字（见 `backend/src/app.controller.ts`
+# 的 `BACKEND_FEATURES`），否则会对着一条已退役的标记空转通过、或对着已删除的名字假报缺失。
+# 本列表挑的是「只要界面侧不是旧镜像就一定在」的标记；「跑的是不是最新版」由下面的版本号检查回答。
 BACKEND_FEATURES="card-carousel-no-dots album-frame-removable review-paged-ui boot-purge-logged \
-ratings-no-user-score reviews-ui-search-sort reviews-page-jump poster-rotation-user-decided"
+ratings-no-user-score reviews-ui-search-sort reviews-page-jump card-rotation-user-decided \
+card-rotation-user-ticks hero-rotation-all-official password-change-api"
 # 本轮界面改动必须在产物里出现的关键符号
 FRONTEND_FEATURES="media-reviews-expand media-reviews-page \
-media-reviews-search media-reviews-sort media-reviews-page-numbers"
+media-reviews-search media-reviews-sort media-reviews-page-numbers \
+change-password errWrongCurrent"
 
 MISSING=""
 container_has() {  # $1 = 要搜的字面串, $2 = 搜索目录

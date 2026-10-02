@@ -11,7 +11,17 @@ import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { SESSION_COOKIE } from './session-cookie';
 
-export const PUBLIC_PATHS = ['/api/health', '/api/auth/login', '/api/auth/session', '/api/auth/logout'];
+export const PUBLIC_PATHS = [
+  '/api/health',
+  '/api/auth/login',
+  '/api/auth/session',
+  '/api/auth/logout',
+  // Password change resolves the cookie itself and answers `{ ok: false }` for
+  // an absent session. Keeping it public means the response shape is uniform and
+  // that a wrong-password / signed-out attempt is a normal JSON reply instead of
+  // a guard 401 (which the Web client would broadcast as "session lost").
+  '/api/auth/password',
+];
 
 @Injectable()
 export class AuthGuard implements CanActivate {

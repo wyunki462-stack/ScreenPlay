@@ -230,12 +230,14 @@ Liveness/readiness probe.
     "game-neighbors", "duration-backfill", "scraped-posters-all",
     "duration-cache-guard",
     "hero-poster-carousel", "duration-coverage-api", "duration-backfill-ui",
-    "poster-rotation-all-games", "poster-rotation-cover-only",
-    "poster-rotation-user-decided", "card-carousel-vs-hero-carousel",
+    "card-rotation-user-ticks", "card-rotation-cover-always",
+    "card-rotation-user-decided", "hero-rotation-all-official",
+    "card-carousel-vs-hero-carousel",
     "review-pagination", "poster-config-protected",
     "card-carousel-no-dots", "album-frame-removable",
     "review-paged-ui", "boot-purge-logged",
-    "media-reviews-api", "media-reviews-ui", "media-reviews-coverage-api"
+    "media-reviews-api", "media-reviews-ui", "media-reviews-coverage-api",
+    "password-change-api", "password-change-ui"
   ]
 }
 ```
@@ -244,14 +246,19 @@ Liveness/readiness probe.
 旧产物覆盖，而这个列表一定跟着镜像走。部署后先跑一次：
 
 ```bash
-curl -s http://<主机>:3001/api/health | grep -o 'poster-rotation-all-games'
+curl -s http://<主机>:3001/api/health | grep -o 'card-rotation-user-ticks'
 ```
 
-看不到 `poster-rotation-all-games` / `poster-rotation-cover-only` /
-`poster-rotation-user-decided` / `card-carousel-vs-hero-carousel` / `review-pagination` /
+看不到 `card-rotation-user-ticks` / `card-rotation-cover-always` /
+`card-rotation-user-decided` / `hero-rotation-all-official` / `review-pagination` /
 `poster-config-protected`
-就说明跑的还是旧镜像（也就是「只有个别游戏能翻海报」的那一版），需要重新
-`docker compose build && docker compose up -d`。
+就说明跑的还是旧镜像，需要重新 `docker compose build && docker compose up -d`。
+
+> 两套轮播职责拆分后，`poster-rotation-all-games` / `poster-rotation-cover-only` /
+> `poster-rotation-user-decided` 几个旧标记已退役，由 `card-rotation-user-ticks` /
+> `card-rotation-cover-always` / `card-rotation-user-decided` / `hero-rotation-all-official`
+> 取代（`card-carousel-vs-hero-carousel` 保留，含义更新为「首页卡片 = 封面 + 勾选集；
+> 详情页大图 = 全部官方海报」）。改密的两个标记是 `password-change-api` / `password-change-ui`。
 
 同理，看不到 `media-reviews-api` 就说明镜像里还没有「媒体评价」这一块。
 早先占位的 `critic-reviews` 从未实现，已由上面三个按交付面拆分的名字取代。
@@ -296,7 +303,8 @@ providers (cached per the TTL rules).
 ### `PATCH /api/games/:id`
 Body: `{ "name": "corrected name", "platforms": ["PlayStation 5"], "posterMode": "slideshow" }`
 — manually override the matched name, the play platforms (multi-select) and the
-card cover display mode. Re-running a scan will not overwrite manual fixes.
+**首页卡片轮播**模式（`posterMode`：首页图库卡片是否自动切换封面并显示左右箭头；
+**不影响详情页大图区**，后者恒定自动轮播全部官方海报）。Re-running a scan will not overwrite manual fixes.
 Passing `platforms: []` clears the override and restores the auto-detected value.
 
 ### `POST /api/games/:id/refresh`
@@ -438,7 +446,9 @@ curl -X POST http://127.0.0.1:3001/api/games/<gameId>/posters/reconcile
 ```
 
 ### `PATCH /api/games/:id/posters/:posterId`
-Body: `{ "inSlideshow": boolean }` — include/exclude a poster from the rotation.
+Body: `{ "inSlideshow": boolean }` — 是否把这张海报勾选进**首页卡片**轮播集合。
+它**不影响详情页大图区** —— 大图区恒定自动轮播全部官方海报（`source` 为 `scraped` / `upload`，
+不含 `media` 相册截图），与这里的勾选无关。
 
 ### `DELETE /api/games/:id/posters/:posterId`
 Removes a poster (and its uploaded file); promotes the next one if it was the
@@ -835,16 +845,20 @@ provider 返回的片段只有在**确实带有该来源应提供的数据**时�
 `GameDetail.heroPosters()`：
 
 ```
-当前封面 → 用户配置「加入轮播」的海报（in_slideshow）→ 去重
+全部官方海报（source = scraped 或 upload，不含 source='media' 的相册截图）
+  → 当前封面排首位 → 去重
 ```
 
-只有在一张海报都没有时才回退到 `posterUrl` / `screenshots`，保证大图区不空白。
+**大图区与「编辑海报」面板彻底解耦**：默认自动轮播全部官方海报（3.5 秒一张、可循环），
+左右箭头与 `x/y` 计数常驻；面板里的展现模式开关与轮播勾选**只管首页卡片**，不影响这里。
+组件甚至没有 `mode` 属性 —— `HeroPosterCarousel.tsx:75` 是 `const rotating = count > 1;`，
+张数多于 1 就自动切换。只有**官方集合为空**时才回退到 `posterUrl` / `screenshots`，
+保证大图区不空白。
 
-> 这里曾经刻意**不做 `in_slideshow` 过滤**，把 `posterList` 里所有条目都塞进来，为的
-> 是让「刮取到 7 张官方海报却只显示 1 张」的游戏能翻页。那是治错了地方：真正的原因在
-> 后端（见下节「海报注册」），修好之后无条件追加就变成了另一个缺陷 ——「编辑海报」里
-> 被用户取消勾选的那张仍然出现在大图区（实测页面 12 张 vs 配置 11 张），等于取消按钮
-> 无效。**「官方图全部进轮播」是后端的职责，前端只认用户配置。**
+> 历史坑：这里一度改成「`posterList` 全部塞进来、不做任何过滤」，又被改成「只认
+> `in_slideshow` 勾选」。两种都是把两套轮播的职责搅在一起。现在的分工是：
+> **详情页大图 = 全部官方海报，恒定自动；首页卡片 = 勾选 ∪ 当前封面，由 `posterMode`
+> 决定是否自动切换。** 两者数据源不同，互不影响。
 
 关键约束：
 
@@ -853,21 +867,18 @@ provider 返回的片段只有在**确实带有该来源应提供的数据**时�
 - 加载失败的图（`onError`）会被跳过并从计数里剔除，用户不会翻到空白帧；
 - 计数分母是「当前能显示的张数」而非登记总数 —— 剔除坏图后它会变小，这是既定行为。
 
-### 每个游戏都能翻页的保证
+### 两套轮播各自的集合怎么来
 
-三处配合，缺一都会出现「某些游戏只有 1 张」：
-
-1. **`ensureScrapedPosters` 注册全部官方图**（含截图），且**默认全部进轮播**
-   （`in_slideshow = 1`）；
-2. ~~**`ensureRotationFloor` 兜底**：官方图不足时，从游戏自己的相册截图补齐轮播，
-   目标 `min(2 + 相册图数, 8)`~~ → **已移除**，见下方「相册截图不再自动补轮播」；
-3. **前端不额外过滤**，只展示 `in_slideshow` 集合（详情页大图区）；首页图库卡片走
-   另一份数据（`GameSummary.posters` = 全部登记海报），两者互不影响。
+- **详情页大图区（自动翻页）**：`HeroPosterCarousel` 直接消费 `GameDetail.heroPosters()`
+  = 全部官方海报，**不读 `in_slideshow`** —— 官方海报有多少张，大图区就能翻多少张；
+- **首页图库卡片（可选自动切换）**：消费 `GameSummary.posters`，由后端 `cardPosters()`
+  给出，判据是 `in_slideshow = 1 OR is_selected = 1`（勾选 ∪ 当前封面，封面恒在集合里），
+  空则回退 `games.poster_url`。是否自动切换由 `games.poster_mode`（`posterMode`）决定。
 
 ```bash
-# 逐项确认某个游戏是否真的能翻
+# 看清某个游戏登记了哪些、其中几张被勾选参与首页卡片轮播
 curl -s http://<主机>:3001/api/games/<gameId>/posters \
-  | python3 -c 'import sys,json;d=json.load(sys.stdin);print("登记",len(d),"轮播",len([p for p in d if p["inSlideshow"]]))'
+  | python3 -c 'import sys,json;d=json.load(sys.stdin);print("登记",len(d),"勾选",len([p for p in d if p["inSlideshow"]]))'
 ```
 
 ## 海报注册
@@ -876,8 +887,8 @@ curl -s http://<主机>:3001/api/games/<gameId>/posters \
 而不只是封面：调用方传入 `[封面, ...screenshots]`，封面排在第一位。
 
 - 只有封面能在用户未选过封面时占据封面位；
-- **所有**刮取到的**官方**海报/截图默认加入轮播（`in_slideshow = 1`）—— 注意这条只针对
-  `source='scraped'`。**从相册添加的截图默认不加入**，见下方；
+- **新登记的官方海报不再默认进轮播**（`in_slideshow` 默认 0）。轮播归属是**纯用户配置**：
+  勾选即加入首页卡片轮播集合，取消即移出；详情页大图不受影响（它用全部官方海报）；
 - **这里从不删除任何行**。曾经的剪枝逻辑用「封面原始字符串是否还在本次入参里」判断
   海报是否过时，而一次刮削会写入多个 provider 的分片、其中带封面的分片彼此不一致，
   于是后一个分片把前一个刚登记的官方截图整批删掉了 —— 实测
@@ -886,11 +897,14 @@ curl -s http://<主机>:3001/api/games/<gameId>/posters \
 - 身份变更（用户手动换绑到另一个游戏）由 `resetForRematch()` 负责清理，**这是唯一的
   清理入口**，它按游戏 id 整体重置，不会误伤同一身份的其它海报；
 - ~~兼容旧库：扫描时留下的、用户从未动过的旧行会被回填为 `in_slideshow = 1`~~
-  → **已移除**。回填会把用户刚取消掉的又打开，是「勾选后无法取消」的来源之一。
+  → **已移除**。回填会把用户刚取消掉的又打开，是「勾选后无法取消」的来源之一；
+- 启动期修复会把历史上**程序替用户决定**的轮播行摘出（只动 `slideshow_user_set = 0` 的行，
+  用户亲手勾选/取消的保留），官方海报与相册截图都在此列。
 
 ### 相册截图不再自动补轮播（需求 21）
 
-这一版把「谁能自动进轮播」收到了一条规则上：**只有封面默认加入，其余一律等用户勾选**。
+这一版把「谁能自动进轮播」收到了一条规则上：**没有任何海报会被自动加入**，轮播归属
+一律等用户勾选 —— 只有当前封面靠 `is_selected = 1` 恒在首页卡片集合里（不靠 `in_slideshow`）。
 
 改之前的行为（两个地方都在自动加相册截图）：
 
@@ -901,10 +915,11 @@ curl -s http://<主机>:3001/api/games/<gameId>/posters \
 | 启动期 `repairPosterRotation` | 每次开机都按上面的目标补相册帧 | 只补「封面不在轮播里」的游戏 |
 | `ensureScrapedPosters` 的旧行回填 | 把 `slideshow_user_set = 0` 的旧行打开 | 整段删除 |
 
-**取舍（真实存在，已接受）**：provider 只返回一张图、用户又没勾任何东西的游戏，详情页
-大图区现在只有一帧（以前会显示若干本地相册帧）。这是「不主动勾就不加入」的代价。缓解
-措施：`games.posterList` 始终带全部登记海报 + 相册，所以「编辑海报」里永远能勾到它们；
-详情页在大图精选集为空时回退到 `screenshots`。
+**取舍（真实存在，已接受）**：provider 只返回一张官方图、用户又没勾任何东西的游戏，
+首页卡片只有一张静态封面（没有箭头）；详情页大图也只有那一帧官方海报（以前会显示若干
+本地相册帧）。这是「不主动勾就不加入」的代价。缓解措施：`games.posterList` 始终带全部
+登记海报 + 相册，所以「编辑海报」里永远能勾到它们；详情页在**官方集合为空**时才回退到
+`screenshots`。
 
 **封面也会尊重用户**：`ensureCoverInRotation` 遇到 `slideshow_user_set = 1` 的行直接返回，
 不再强推。否则「用户取消勾选的正好是封面」时，每次刷新都会被改回来 —— 实测就是这样：
@@ -926,18 +941,18 @@ curl -s http://<主机>:3001/api/games/<gameId>/posters \
 
 ### 两个轮播互不相干
 
-「编辑海报」里的轮播勾选只决定**详情页大图区**显示哪些图；首页图库卡片用的是另一份
-数据，不受勾选影响。前端消费方式：
+「编辑海报」里的展现模式开关与轮播勾选只决定**首页图库卡片**（自动切换 + 显示箭头、
+集合成员）；详情页大图区恒定自动轮播**全部官方海报**，不受面板任何设置影响。消费方式：
 
 | 界面 | 数据源 | 自动切换 |
 | --- | --- | --- |
-| 首页图库卡片 `PosterCarousel` | `GameSummary.posters`（`slideshowPosters()` → **全部**登记海报，封面优先） | 由 `posterMode` 决定 |
-| 详情页大图区 `HeroPosterCarousel` | `posterList` 过滤 `inSlideshow`，并上封面 | 由 `posterMode` 决定，且带 `data-mode` |
+| 首页图库卡片 `PosterCarousel` | `GameSummary.posters` = `cardPosters()`（`in_slideshow = 1 OR is_selected = 1`，勾选 ∪ 当前封面，封面优先；空则回退 `games.poster_url`） | 由 `posterMode`（「首页卡片轮播」开关）决定；集合 ≤1 张时不渲染箭头 |
+| 详情页大图区 `HeroPosterCarousel` | `heroPosters()` = 全部官方海报（`source` 为 `scraped`/`upload`，不含 `media`），当前封面在前 | **恒定自动**（>1 张即轮播）；无 `mode`/`data-mode`，与面板无关 |
 | 详情页信息卡缩略图 | `detailPosters()`（全部登记海报 + 相册） | 由 `posterMode` 决定 |
 
-> 历史坑：`GameSummary.posters` 以前只返回 `in_slideshow` 的子集，而首页卡片消费的正是
-> 它 —— 于是「取消勾选」改的是**卡片能显示哪些图**，用户看到动的却是卡片，而勾选框声称
-> 控制的详情页大图什么都没变。现在按数据源分离，不靠约定。
+> 历史坑：`GameSummary.posters` 以前在「全部登记海报」与「`in_slideshow` 子集」之间来回
+> 摇摆，导致「勾选改的到底是哪套轮播」始终说不清。现在的分工是：**勾选 + 开关 = 首页卡片；
+> 全部官方 = 详情页大图**，各自数据源不同，不靠约定。
 
 弹窗本来就按 `source` 分组，所以官方海报会统一归入「官方刮取」一组。
 
@@ -1117,7 +1132,7 @@ curl 'http://127.0.0.1:3001/api/games/match/search?q=宝可梦%20紫'
 | GET | `/api/auth/session` | 当前会话与登录方式（公开）：`enabled`/`mode`/`provider`/`systemAvailable`/`reason`/`users`/`authenticated`/`user` |
 | POST | `/api/auth/login` | `{username, password, remember?}` → 成功后 `Set-Cookie` |
 | POST | `/api/auth/logout` | 销毁会话并清除 Cookie |
-| POST | `/api/auth/password` | `{current, next}` 修改**本地账户**密码（系统账户请在 NAS 上改） |
+| POST | `/api/auth/password` | `{current, next}` 修改**本地账户**密码（设置页「修改密码」调用的就是它）。成功 `{ok:true}`；失败**一律 2xx + `{ok:false, code, error}`**，`code` ∈ `unauthenticated` / `not_local` / `wrong_current` / `blank` / `too_short` / `too_long` / `same` —— 故意不用 401：Web 端把任何 401 当作「会话已失效」并跳回登录页，用户输错一次原密码就会被登出。新密码 4~128 位、不能与原密码相同；成功后**注销该账户的其它会话**（被盗 cookie 立刻失效），只保留发起改密的当前会话；NAS 系统账户返回 `not_local` |
 
 ```bash
 # 登录并保存 Cookie
@@ -1127,12 +1142,22 @@ curl -c /tmp/sp.jar -X POST http://127.0.0.1:3001/api/auth/login \
 
 # 之后带 Cookie 访问
 curl -b /tmp/sp.jar http://127.0.0.1:3001/api/games
+
+# 修改本地账户密码（设置页「修改密码」调用的就是它）
+curl -b /tmp/sp.jar -X POST http://127.0.0.1:3001/api/auth/password \
+  -H 'Content-Type: application/json' \
+  -d '{"current":"旧密码","next":"新密码"}'
+# 成功 → {"ok":true}；失败仍是 2xx，形如 {"ok":false,"code":"wrong_current","error":"…"}
 ```
 
 `user.provider` 为 `system`（NAS 系统账户）或 `local`（应用内账户）。
 密码使用本机 `crypt(3)` 哈希校验（`$6$` SHA-512 / `$5$` / `$1$`），
 **密码本身不落库、不记日志、不出现在任何响应中**；本地账户用 scrypt 哈希存储。
 `$y$`（yescrypt）无法在纯 JS 中校验，此时会返回明确提示而非"密码错误"。
+
+> **改了密码就不用再翻启动日志**：未设 `AUTH_ADMIN_PASSWORD` 时随机生成的 `admin` 初始密码
+> 只在首次灌库时打印一次。登录后在 **设置页 →「修改密码」** 填原密码 + 新密码即可改成自己的，
+> 立即生效、重启或重建容器后仍然是新密码（`AUTH_DISABLED=1` 只是应急免登录开关，不是改密替代）。
 
 ### 界面偏好
 
@@ -1164,7 +1189,7 @@ curl -b /tmp/sp.jar http://127.0.0.1:3001/api/games
 | `source` | `scraped` 官方刮削 / `upload` 用户上传 / `media` 相册截图 |
 | `isSelected` | 是否当前卡片封面 |
 | `isCover` | **用户自己**设定的封面（`is_selected=1` 且 `is_user_choice=1`）。界面据此显示「取消封面」 |
-| `inSlideshow` | 是否参与轮播 |
+| `inSlideshow` | 是否被用户勾选参与**首页卡片**轮播（详情页大图不受它影响） |
 
 > `isCover` 不看 `source`，而看一个独立的 `game_posters.is_user_choice` 标记：
 > 光看 source 是错的 —— 当游戏**没有官方海报**时，取消封面会回退到本地首图（一张 `media` 海报），
@@ -1181,10 +1206,10 @@ curl -b /tmp/sp.jar http://127.0.0.1:3001/api/games
 > 为什么需要 `thumbUrl`：给 90px 的小格子加载 4K 预览图，一个 120 张截图的相册弹窗
 > 首屏就要传 **607 MB**；改用 `thumbUrl` 后约 **5 KB**（实测相差 11375×），
 > 画面上看不出区别。
-| PATCH | `/api/games/:id/posters/:posterId` | 切换是否参与轮播 |
+| PATCH | `/api/games/:id/posters/:posterId` | 切换是否参与**首页卡片**轮播（勾选） |
 | DELETE | `/api/games/:id/posters/:posterId` | 删除海报 |
 | GET | `/api/posters/:posterId/image` | 读取海报图片 |
-| PATCH | `/api/games/:id` | `{"posterMode":"static"｜"slideshow"}` 展现模式 |
+| PATCH | `/api/games/:id` | `{"posterMode":"static"｜"slideshow"}` 首页卡片轮播开关（不影响详情页大图） |
 
 ### JXR 转码
 

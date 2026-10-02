@@ -873,8 +873,8 @@ export class MetadataService {
       this.replaceAchievements(game.id, fragment.achievements, null);
     }
 
-    // Seed the scraped poster as a first-class poster record so it can take
-    // part in slideshow rotation (feature 5).
+    // Register the provider's artwork as first-class poster records so every
+    // official image is selectable as cover and tickable in 「编辑海报」.
     //
     // Pass the PROVIDER's artwork, never whatever `poster_url` happens to hold:
     // for a game the provider has no image for, that column is the local
@@ -886,38 +886,17 @@ export class MetadataService {
       fragment.poster ??
       (game.poster_url && !isLocalFileUrl(game.poster_url) ? game.poster_url : null);
     // Register the cover AND every screenshot the provider returned. Only the
-    // cover used to be registered, so the rest of the official artwork could not be
-    // picked as cover or added to the rotation even though it had been scraped.
-    // The cover goes first: it is the only one allowed to claim the cover slot.
+    // cover used to be registered, so the rest of the official artwork could not
+    // be picked as cover or ticked even though it had been scraped. The cover goes
+    // first: it is the only one allowed to claim the cover slot.
+    //
+    // They are registered with `in_slideshow = 0`: the detail-page hero rotates
+    // the official set itself (no flag), and the home card only rotates what the
+    // user ticked — so nothing is enrolled in the card automatically.
     this.posters.ensureScrapedPosters(game.id, [
       ...(artwork ? [artwork] : []),
       ...(fragment.screenshots ?? []),
     ]);
-
-    // Every official image is now registered and in the rotation. If the official
-    // source only had one picture (its screenshot lookup is optional and some
-    // entities have none at all, e.g. 「宇宙机器人」), top the rotation up from the
-    // game's own album so the detail-page carousel is browsable for this game too —
-    // the requirement is that all games behave alike, not just the ones with rich
-    // artwork.
-    //
-    // Wrapped on purpose: a failure here must never abort metadata persistence, but
-    // it must also never disappear. An earlier version of this call referenced a
-    // column that does not exist; the exception was swallowed one level up and the
-    // feature silently did nothing.
-    try {
-      const floored = this.posters.ensureCoverInRotation(game.id);
-      if (floored > 0) {
-        this.logger.log(
-          `"${game.name}": added ${floored} local album screenshot(s) to the poster ` +
-            `rotation (official artwork alone left too few loadable frames).`,
-        );
-      }
-    } catch (err) {
-      this.logger.warn(
-        `Rotation top-up failed for "${game.name}": ${(err as Error)?.message}`,
-      );
-    }
   }
 
   /**

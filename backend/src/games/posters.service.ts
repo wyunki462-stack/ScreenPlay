@@ -2,8 +2,13 @@
  * Custom & multiple posters per game (features 4 and 5).
  *
  * A game can own several posters. Exactly one (at most) is marked selected —
- * that is what the gallery card shows in static mode. In slideshow mode every
- * poster with `inSlideshow` participates in the rotation.
+ * that is the game's cover, and it is always the first frame of the home-card
+ * carousel, whatever the 「轮播」 checkbox says.
+ *
+ * `inSlideshow` is the **home-card** switch: the user ticks a poster in
+ * 「编辑海报」to add it to the card rotation (`GamesService.cardPosters`). It does
+ * NOT control the detail-page hero carousel — that one auto-rotates every
+ * official poster (source `scraped`/`upload`) with no configuration.
  *
  * Three sources are supported:
  *   upload  — a file the user uploaded from their device (stored under DATA_DIR)
@@ -232,10 +237,14 @@ export class PostersService {
     await fs.writeFile(path.join(this.postersDir, `${id}.webp`), out);
 
     const hasAny = this.list(gameId).length > 0;
+    // An uploaded poster starts OUT of the card rotation (`in_slideshow = 0`):
+    // the card only rotates pictures the user ticked. The first upload becomes the
+    // cover (`select()` below), and the cover is in the card set structurally, so
+    // a fresh game still shows its one frame.
     this.db.run(
       `INSERT INTO game_posters
          (id, game_id, url, source, media_id, is_selected, in_slideshow, sort_order, created_at)
-       VALUES (?, ?, ?, 'upload', NULL, ?, 1, ?, ?)`,
+       VALUES (?, ?, ?, 'upload', NULL, ?, 0, ?, ?)`,
       [id, gameId, `/api/posters/${id}/image`, hasAny ? 0 : 1, this.nextOrder(gameId), Date.now()],
     );
     this.logger.log(`Uploaded poster for game ${gameId} (${width}x${height ?? '?'})`);
@@ -265,19 +274,19 @@ export class PostersService {
 
     const id = uuidv5(`poster:media:${gameId}:${mediaId}`, UUID_NAMESPACE);
     const hasAny = this.list(gameId).length > 0;
-    // A poster the user adds from the album starts OUT of the rotation, and that
-    // decision is recorded as the user's own (`slideshow_user_set = 1`).
+    // A poster the user adds from the album starts OUT of the card rotation, and
+    // that decision is recorded as the user's own (`slideshow_user_set = 1`).
     //
     // Why the default is 0: 「从相册添加」is how a screenshot becomes *available*
-    // as a poster. Silently enrolling it in the rotation changed what the detail
-    // page showed without the user asking — 需求 21 puts it plainly: 「只有封面默认
-    // 加入轮播…需求要的是「**可以**加入」，不是「自动加入」」. The checkbox in
-    // 「编辑海报」is the user's switch, so it has to start off.
+    // as a poster. Silently enrolling it in the card rotation changed what the
+    // home card showed without the user asking — the requirement is that the card
+    // only rotates the pictures the user ticked. The checkbox in 「编辑海报」is the
+    // user's switch, so it has to start off.
     //
     // Why `slideshow_user_set = 1` matters as much as the 0: it records that this
-    // row is already decided, so `ensureCoverInRotation` and the boot-time repair
-    // leave it alone. Without it the row would be treated as "auto-included, safe
-    // to switch back on", which is what made unticking appear to do nothing.
+    // row is already decided, so the boot-time `removeAutoAddedFramesFromRotation`
+    // leaves it alone. Without it the row would look "auto-included, safe to
+    // switch back on", which is what made unticking appear to do nothing.
     this.db.run(
       `INSERT INTO game_posters
          (id, game_id, url, source, media_id, is_selected, in_slideshow, slideshow_user_set, sort_order, created_at)
@@ -295,68 +304,6 @@ export class PostersService {
     const created = this.list(gameId).find((p) => p.id === id)!;
     if (!hasAny) await this.select(gameId, id);
     return created;
-  }
-
-  /**
-   * Guarantee the cover participates in the rotation — and nothing else.
-   *
-   * ## What changed and why
-   *
-   * This used to top the rotation up with the game's own album screenshots
-   * (`min(2 + albumCount, 8)`) so that every game had several browseable frames
-   * even when the provider CDN was unreachable. The intent was good, but it was
-   * the direct cause of the reported defect 「相册截图默认自动加入轮播」: an album
-   * screenshot the user never picked appeared in the carousel, and because it was
-   * auto-added it was not marked as a user decision — so unticking it was undone
-   * by the next refresh, which read as 「勾选后无法取消」.
-   *
-   * The rule now is the one 需求 21 states explicitly: 「只有封面默认加入轮播。
-   * 把每张截图都自动塞进轮播会悄悄改变用户看到的东西；需求要的是「**可以**加入」，
-   * 不是「自动加入」」. Album screenshots join the rotation **only** when the user
-   * ticks them in 「编辑海报」.
-   *
-   * ## Trade-off (accepted, and it is a real one)
-   *
-   * A game whose provider returns a single image and whose user has ticked nothing
-   * now shows one frame in the detail hero carousel, where before it showed several
-   * local album frames. That is the deliberate cost of "nothing joins unless you say
-   * so". Richness is not lost entirely: `games.posterList` always carries every
-   * registered poster plus the album, so 「编辑海报」can still offer them, and the
-   * detail carousel falls back to `screenshots` when the curated set is empty.
-   *
-   * The cover is still force-included because a detail page with no frame at all is
-   * a bug, not a preference.
-   *
-   * @returns how many rows this call actually changed.
-   */
-  ensureCoverInRotation(gameId: string): number {
-    const cover = this.db.get<PosterRow>(
-      `SELECT * FROM game_posters
-        WHERE game_id = ? AND is_selected = 1
-        LIMIT 1`,
-      [gameId],
-    );
-    if (!cover) return 0;
-    if (cover.in_slideshow) return 0;
-    // The user has already answered for this exact row — respect it.
-    //
-    // This guard used to be missing, and it was the last surviving way for an
-    // untick to be undone: the cover is normally force-included ("a detail page
-    // with no frame at all is a bug"), but when the row the user unticked *is* the
-    // cover, force-including it silently reverses their click on every refresh.
-    // Measured before the fix:
-    //
-    //   取消勾选后   slide=0 uset=1   ← 用户的选择
-    //   重新匹配后   slide=1 uset=1   ← 被兜底逻辑改回
-    //
-    // 需求 is explicit that nothing joins the rotation unless the user ticks it,
-    // so a decision — in either direction — wins over the default. The default
-    // still applies to a cover the user has never touched, which is what keeps a
-    // fresh library from rendering an empty hero.
-    if (cover.slideshow_user_set) return 0;
-
-    this.db.run('UPDATE game_posters SET in_slideshow = 1 WHERE id = ?', [cover.id]);
-    return 1;
   }
 
   /** Mark one poster as the selected cover (mirrored onto games.poster_url). */
@@ -560,11 +507,13 @@ export class PostersService {
   }
 
   /**
-   * Toggle whether a poster participates in the slideshow.
+   * Toggle whether a poster participates in the **home-card** rotation.
    *
-   * Records the decision as the user's (`slideshow_user_set`), so a later
-   * re-scrape will not switch a poster the user turned OFF back on. Scraped
-   * artwork is otherwise added to the rotation automatically.
+   * This is the 「轮播」 checkbox in 「编辑海报」. Records the decision as the
+   * user's (`slideshow_user_set = 1`), so the boot-time auto-added-frame cleanup
+   * never switches a poster the user turned OFF back on. Nothing enrolls a poster
+   * automatically any more: only this call adds one to the card set — the cover is
+   * there structurally (`is_selected`), not through this flag.
    */
   setSlideshow(gameId: string, posterId: string, inSlideshow: boolean): { updated: boolean } {
     this.assertGame(gameId);
@@ -625,40 +574,27 @@ export class PostersService {
   }
 
   /**
-   * Make a provider-scraped poster a first-class record so the official artwork
-   * can be selected as cover and take part in slideshow rotation (problem 3).
+   * Register every piece of provider artwork as a first-class poster record, so
+   * each official image is selectable as cover and tickable in 「编辑海报」.
    *
-   * The previous implementation bailed out whenever the game already had ANY
-   * poster, so as soon as a user uploaded a custom poster (or an album image was
-   * added), the official artwork silently stopped being registered and could no
-   * longer be chosen. It also never registered a *changed* official poster.
+   * Providers return one cover plus a set of screenshots. Only the cover used to
+   * be registered, so the rest of the official artwork could be seen nowhere and
+   * managed nowhere even though it had been scraped. The previous implementation
+   * also bailed out whenever the game already had ANY poster, so a single user
+   * upload stopped the official artwork from ever being registered.
    *
-   * New rules:
-   *  - always register/refresh the current scraped poster;
-   *  - replace a stale scraped poster from a previous scrape of a DIFFERENT
-   *    identity (matched via the source→url identity, so a re-scrape updates in
-   *    place instead of accumulating duplicates);
-   *  - a user-selected poster always wins: the scraped poster is only made
-   *    `is_selected` when the game has no selected poster yet.
-   */
-  /**
-   * Register EVERY piece of provider artwork, not just the cover.
-   *
-   * Providers return one cover plus a set of screenshots, and only the cover used
-   * to be registered — so the other official posters could not be chosen as cover
-   * or added to the rotation even though they were already in the database. The
-   * user could see them nowhere and manage them nowhere.
-   *
-   * Order matters: `urls[0]` is the cover artwork and is the one that may take the
-   * cover when the user has not chosen one. Every URL joins the slideshow.
-   *
-   * Nothing is ever deleted here. Existing rows keep their identity and their
-   * COVER state — that is what keeps a user's cover choice alive across a
-   * re-scrape. Slideshow membership is brought up to date for rows the user has
-   * never touched (see the backfill below), which is what makes the fix apply to a
-   * library that was scanned before it shipped. Identity changes (a manual
-   * re-match) are handled by `resetForRematch()`, which is the only place that
-   * knows the game really became a different game.
+   * Rules:
+   *  - always register every provider URL, never bail out;
+   *  - `urls[0]` is the cover and is the only one that may take `is_selected`
+   *    when the user has not chosen a cover themselves;
+   *  - a new scraped row starts OUT of the card rotation (`in_slideshow = 0`).
+   *    The detail-page hero rotates the official set itself (no flag), and the
+   *    home card only rotates what the user ticked — so nothing may enter the card
+   *    rotation without an explicit tick;
+   *  - nothing is ever deleted here. Existing rows keep their identity, their
+   *    cover state, and any slideshow decision the user already made. Identity
+   *    changes (a manual re-match) are handled by `resetForRematch()`, the only
+   *    place that knows the game really became a different game.
    */
   ensureScrapedPosters(gameId: string, urls: string[]): void {
     // Only real provider artwork may become a `scraped` row.
@@ -716,38 +652,27 @@ export class PostersService {
     );
     let userOwnsCover = (selected?.c ?? 0) > 0;
 
-    // Rows the provider still lists but that were registered BEFORE this change
-    // carry `in_slideshow = 0` (only the cover used to join the rotation). Bring
-    // them in now, unless the user has explicitly made a slideshow decision about
-    // that row — their choice always wins.
+    // No slideshow backfill here any more.
     //
-    // Without this backfill the fix would only apply to games scraped after the
-    // upgrade, and every game already in the library would keep showing a single
-    // poster in the detail carousel.
-    for (const row of existing) {
-      if (row.in_slideshow) continue;
-      if (row.slideshow_user_set) continue;
-      this.db.run('UPDATE game_posters SET in_slideshow = 1 WHERE id = ?', [row.id]);
-    }
+    // An older revision enrolled every existing scraped row with
+    // `slideshow_user_set = 0` into the rotation. Under the card-is-the-ticked-set
+    // model that is exactly backwards — it would tick the card for the user. Rows
+    // the old rule already enrolled are taken back out once by the boot-time
+    // `removeAutoAddedFramesFromRotation`, not re-enrolled here.
 
     for (const [index, url] of wanted.entries()) {
       if (present.has(url)) continue;
       const id = uuidv5(`poster:scraped:${gameId}:${url}`, UUID_NAMESPACE);
-      // Every official image the provider returned joins the rotation — cover
-      // first, then each official screenshot. The requirement is that the detail
-      // page carousel behaves the same for every game: a game with 7 scraped
-      // images must be browsable as 7, not reduced to its cover.
-      //
-      // This previously added only the cover, on the theory that auto-adding the
-      // rest "would silently change what the user sees". In practice it made the
-      // carousel a no-op: the identical set of games showed a single image while
-      // the artwork sat unused in the database. Unticking is still possible and is
-      // remembered via `slideshow_user_set`; auto-inclusion is the default.
+      // Register every official image the provider returned — cover first, then
+      // each screenshot — so all of them exist and can be ticked. They start OUT
+      // of the card rotation (`in_slideshow = 0`); the detail-page hero rotates
+      // the official set itself, so a game with 7 scraped images is still
+      // browsable as 7 without the user ticking anything.
       const isCover = index === 0 && !userOwnsCover;
       this.db.run(
         `INSERT OR IGNORE INTO game_posters
            (id, game_id, url, source, media_id, is_selected, in_slideshow, slideshow_user_set, sort_order, created_at)
-         VALUES (?, ?, ?, 'scraped', NULL, ?, 1, 0, ?, ?)`,
+         VALUES (?, ?, ?, 'scraped', NULL, ?, 0, 0, ?, ?)`,
         [
           id,
           gameId,
@@ -769,7 +694,7 @@ export class PostersService {
    * Drop the auto-scraped poster(s) for a game.
    *
    * Called on a manual re-match: the scraped poster belongs to the OLD identity,
-   * so keeping it would leave a foreign cover (and a foreign rotation frame)
+   * so keeping it would leave a foreign cover (and a foreign card frame)
    * behind. User uploads and album-derived posters are deliberately preserved —
    * those were chosen by hand and are not tied to provider metadata.
    *

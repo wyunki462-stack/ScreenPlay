@@ -8,8 +8,9 @@
  *   · 「编辑海报」里相册截图默认不勾选、勾选框**在任何模式下都渲染且可点**
  *     （旧实现把它包在 `mode === "slideshow"` 里，静态模式下控件根本不存在，
  *      这才是「勾选后无法取消」的直接原因）
- *   · 详情页大图区（`HeroPosterCarousel`）现在按展现模式自动轮播，
- *     且带 `data-mode` 供断言
+ *   · 详情页大图区（`HeroPosterCarousel`）**恒定自动轮播全部官方海报**，与
+ *     「编辑海报」面板彻底解耦 —— 组件已删除 `mode` prop 与 `data-mode` 属性，
+ *     所以这里断言的是「只看张数」：3 张时容器 / 箭头 / 计数都在，1 张时一个都不出现
  *
  * 为什么用 SSR 而不是浏览器：这台机器上没有可用的 Chromium 二进制（Playwright
  * 的下载缓存在这个环境里是空的），装一个不合适。SSR 渲染的是**真实源码组件**
@@ -77,11 +78,14 @@ export function renderDialog(mode) {
   );
 }
 
-export function renderHero(mode, images) {
+// 这段代码在 ENTRY 模板字符串里，所以不能出现反引号（会截断模板）。
+// 大图区组件没有 mode prop（DOM 里也不再有 data-mode）：详情页大图恒定自动轮播
+// 全部官方海报，与首页卡片的展现模式 / 轮播勾选无关。
+export function renderHero(images) {
   return renderToStaticMarkup(
     React.createElement(QueryClientProvider, { client: qc },
       React.createElement(I18nProvider, { children:
-        React.createElement(HeroPosterCarousel, { images, alt: "测试游戏", mode }),
+        React.createElement(HeroPosterCarousel, { images, alt: "测试游戏" }),
       }),
     ),
   );
@@ -178,53 +182,53 @@ for (const mode of ['static', 'slideshow']) {
 }
 
 // ---------------------------------------------------------------------------
-step('问题 3 · 详情页大图区轮播');
+step('问题 3 · 详情页大图区轮播（只看张数，不看任何模式开关）');
 
-for (const mode of ['static', 'slideshow']) {
-  const html = mod.renderHero(mode, ['/a.png', '/b.png', '/c.png']);
-  const m = /data-testid="hero-carousel"([^>]*)data-mode="([^"]*)"/.exec(html)
-    ?? /data-mode="([^"]*)"[^>]*data-testid="hero-carousel"/.exec(html);
+// 判据用 aria-label 精确定位「上一张 / 下一张」，不是数所有 <button>：
+// 大图区里还有别的按钮（圆点、缩略图等），数总量会把它们一起算进来。
+const arrowsIn = (html) =>
+  [...html.matchAll(/<button[^>]*aria-label="([^"]*)"/g)]
+    .map((m) => m[1])
+    .filter((l) => /上一张|下一张|prev|next/i.test(l)).length;
 
-  if (!m) {
-    bad(`大图区缺少 data-mode（mode=${mode}）`);
-    continue;
-  }
-  const actual = /data-mode="([^"]+)"/.exec(html)?.[1];
-  actual === mode
-    ? ok(`大图区 data-mode="${actual}"（mode=${mode} 正确透传，轮播模式由它驱动自动切换）`)
-    : bad(`大图区 data-mode="${actual}"，期望 "${mode}"`);
-}
-
+// 多张图：容器 / 两个箭头 / 计数器都要在，且**不依赖任何模式开关** ——
+// 组件已经没有 `mode` 可传，「传哪种模式」这件事本身不再存在。
 {
-  const html = mod.renderHero('slideshow', ['/a.png', '/b.png', '/c.png']);
-  html.includes('data-testid="hero-counter"')
-    ? ok('大图区有计数器（多张时可翻页）')
-    : bad('大图区缺少计数器');
+  const html = mod.renderHero(['/a.png', '/b.png', '/c.png']);
+
   html.includes('data-testid="hero-carousel"')
     ? ok('大图区容器存在（详情页大图轮播挂载点）')
     : bad('大图区容器缺失');
+  html.includes('data-testid="hero-counter"')
+    ? ok('大图区有计数器（3 张图 → 多张时可翻页）')
+    : bad('大图区缺少计数器');
+
+  const a3 = arrowsIn(html);
+  a3 === 2
+    ? ok('3 张图时渲染上一张/下一张两个箭头（箭头常驻，不靠 hover）')
+    : bad(`3 张图应渲染 2 个箭头，实际 ${a3} 个`);
+
+  // 回归断言：`mode` / `data-mode` 已删除，不该再出现在 DOM 里。
+  !html.includes('data-mode')
+    ? ok('大图区不再渲染 data-mode（没有「模式」这一维，恒定自动轮播）')
+    : bad('大图区仍在渲染 data-mode —— mode 语义应已删除');
 }
 
 // 单张图不应产生可翻页的错觉。
 //
 // 这两条以前只是 `info()` 打印，没有断言 —— 于是「单张图仍渲染出箭头」这种回归
 // 会静静地打印一行 "按钮数 = 2" 然后报「8 项通过 / 0 项失败」。现在改成真断言。
-//
-// 判据用 aria-label 精确定位「上一张 / 下一张」，不是数所有 <button>：
-// 大图区里还有别的按钮（如打开海报弹窗），数总量会把它们一起算进来。
-const arrowsIn = (html) =>
-  [...html.matchAll(/<button[^>]*aria-label="([^"]*)"/g)]
-    .map((m) => m[1])
-    .filter((l) => /上一张|下一张|prev|next/i.test(l)).length;
-
 {
-  const html1 = mod.renderHero('slideshow', ['/only.png']);
+  const html1 = mod.renderHero(['/only.png']);
   const a1 = arrowsIn(html1);
   if (a1 === 0) ok('单张图时不渲染翻页箭头（不会造成可翻页的错觉）');
   else bad(`单张图却渲染了 ${a1} 个翻页箭头`);
+  !html1.includes('data-testid="hero-counter"')
+    ? ok('单张图时不渲染计数器（1/1 没有意义）')
+    : bad('单张图却渲染了计数器');
 
   // 多于一张时才该出现箭头 —— 否则上一条可能只是「箭头压根不渲染」而恒真。
-  const html2 = mod.renderHero('slideshow', ['/a.png', '/b.png']);
+  const html2 = mod.renderHero(['/a.png', '/b.png']);
   const a2 = arrowsIn(html2);
   if (a2 === 2) ok('两张图时渲染上一张/下一张两个箭头');
   else bad(`两张图应渲染 2 个箭头，实际 ${a2} 个`);

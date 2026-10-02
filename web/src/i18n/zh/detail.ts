@@ -166,11 +166,11 @@ export const detailZh: Record<string, string> = {
   "detail.nav.position": "第 {index} / {total} 个（按当前排序）",
   "detail.nav.loading": "正在读取相邻游戏…",
 
-  // 详情页官方海报轮播（大图区）
+  // 详情页官方海报轮播（大图区，恒定自动轮播）
   "detail.poster.prev": "上一张海报",
   "detail.poster.next": "下一张海报",
   "detail.poster.goto": "查看第 {index} 张海报",
-  "detail.poster.official": "官方海报 / 截图",
+  "detail.poster.official": "官方海报 · 自动轮播",
   "detail.poster.alt": "官方海报",
   "detail.poster.empty": "暂无海报，点「编辑海报」添加",
 };

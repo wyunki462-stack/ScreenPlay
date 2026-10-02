@@ -1,5 +1,5 @@
 /**
- * 轮播归属验证：相册截图默认不勾选 / 可取消 / 不被兜底逻辑重新加回。
+ * 轮播归属验证：两套轮播彻底拆开 —— 首页卡片=封面+用户勾选，详情页大图=全部官方海报。
  * ============================================================================
  *
  * 跑法：node backend/scripts/verify/poster-rotation-e2e.mjs
@@ -14,8 +14,8 @@
  *     官方海报大图轮播」
  *
  * 为什么必须跑真实服务 + 真库：这套逻辑的坑全在**状态写回**上 ——
- * `slideshow_user_set` 有没有被置上、启动期修复会不会把取消掉的又打开、
- * 摘要接口返回的是完整集还是轮播集。纯函数测试覆盖不到这些。
+ * `slideshow_user_set` 有没有被置上、启动期清理会不会把取消掉的又打开、
+ * 摘要接口返回的是不是「封面 + 勾选」的卡片集。纯函数测试覆盖不到这些。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -78,9 +78,10 @@ function posterRows(gameId) {
   } finally { d.close(); }
 }
 
-/** A tiny valid PNG so the scanner registers it as an image. */
+/** A tiny valid PNG (16×16 RGB) so both the scanner and the upload path accept it. */
 const PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAI0lEQVR42mNgEFAwcAhIKGiYsGDDgQsPPhDkj2oY1TB8NQAAZx1o' +
+    'EPUl+hUAAAAASUVORK5CYII=',
   'base64',
 );
 
@@ -161,6 +162,14 @@ if (!game) { console.error('  没有扫描到游戏，退出'); killAll(); proce
 const gameId = game.id;
 info(`游戏：${game.name}（${gameId}）`);
 
+/** 当前的首页卡片集（摘要接口 `game.posters`）。默认 `GET /api/games` 返回裸数组。 */
+async function cardSetNow() {
+  const body = (await api.get('/api/games')).body;
+  const list = body?.games ?? body ?? [];
+  const g = Array.isArray(list) ? list.find((x) => x.id === gameId) : null;
+  return g?.posters ?? [];
+}
+
 const album = await api.get(`/api/games/${gameId}/media`);
 const images = (album.body?.media ?? album.body ?? []).filter((m) => m.type !== 'video');
 info(`相册图片 ${images.length} 张`);
@@ -237,24 +246,32 @@ afterRefresh && afterRefresh.in_slideshow === 0
   ? ok('重新刮削/刷新后取消状态保留（in_slideshow 仍为 0）')
   : bad(`刷新后被改回 in_slideshow=${afterRefresh?.in_slideshow}`);
 
-// 造一条「旧规则遗留」的行，验证启动期清理会把它从轮播里摘掉。
+// 造「旧规则遗留」的行，验证启动期清理会把它从轮播里摘掉。
 //
-// 旧实现（ensureRotationFloor / 启动期修复）插入相册帧时写的是
-// `in_slideshow = 1, slideshow_user_set = 0` —— 实测线上库就是
+// 旧实现插入帧时写的是 `in_slideshow = 1, slideshow_user_set = 0` —— 实测线上库就是
 // 「topped up for 39 game(s) (+268 frame(s))」。去掉规则不会撤回已经写下的数据，
 // 所以必须有一次清理，否则用户看到的仍是「相册截图自动进了轮播」。
+//
+// **两条行、两个来源**：`media` 是当年那条规则的目标，`scraped` 不是。清理已从
+// 「只看 `source = 'media'`」泛化到**所有来源**（`removeAutoAddedFramesFromRotation`）；
+// 只造 media 行的话，旧的 `purgeAutoAddedAlbumFrames` 也能让断言通过 —— 那样这条
+// 断言对「泛化」等于没有把关（这正是评审指出的空转点）。
 {
   const d = db();
   try {
     const px = posterRows(gameId).find((r) => r.source === 'media');
-    const id = `legacy-auto-${Date.now()}`;
-    d.prepare(
+    const insert = d.prepare(
       `INSERT INTO game_posters
          (id, game_id, url, source, media_id, is_selected, in_slideshow, slideshow_user_set, sort_order, created_at)
-       VALUES (?, ?, ?, 'media', ?, 0, 1, 0, 999, ?)`,
-    ).run(id, gameId, '/legacy-auto.png', px?.media_id ?? null, Date.now());
-    globalThis.__legacyId = id;
-    info(`已造一条旧规则遗留行（in_slideshow=1, slideshow_user_set=0）：${id.slice(0, 18)}…`);
+       VALUES (?, ?, ?, ?, ?, 0, 1, 0, 999, ?)`,
+    );
+    const stamp = Date.now();
+    const legacyMedia = `legacy-auto-media-${stamp}`;
+    const legacyScraped = `legacy-auto-scraped-${stamp}`;
+    insert.run(legacyMedia, gameId, '/legacy-auto-media.png', 'media', px?.media_id ?? null, stamp);
+    insert.run(legacyScraped, gameId, '/legacy-auto-scraped.png', 'scraped', null, stamp + 1);
+    globalThis.__legacyIds = [legacyMedia, legacyScraped];
+    info('已造 2 条旧规则遗留行（in_slideshow=1, slideshow_user_set=0）：media + scraped');
   } finally { d.close(); }
 }
 
@@ -282,15 +299,15 @@ if (await waitUp(`${BASE}/api/health`, 80)) {
   // 而 health 接口在那之前就已经应答了。直接查库会读到「还没修」的状态 ——
   // 这不是缺陷，是测试的竞态。轮询等它落地。
   const purgeDeadline = Date.now() + 60_000;
-  let purged = false;
-  while (Date.now() < purgeDeadline) {
-    if (posterRows(gameId).find((r) => r.id === globalThis.__legacyId)?.in_slideshow === 0) {
-      purged = true;
-      break;
-    }
-    await sleep(500);
-  }
-  info(`启动期清理${purged ? '已完成' : '在 60s 内未完成'}`);
+  const stillIn = () =>
+    globalThis.__legacyIds.filter(
+      (id) => posterRows(gameId).find((r) => r.id === id)?.in_slideshow !== 0,
+    );
+  while (Date.now() < purgeDeadline && stillIn().length > 0) await sleep(500);
+  const leftover = stillIn();
+  info(
+    `启动期清理${leftover.length === 0 ? '已完成（两条遗留行都已移出轮播）' : `在 60s 内未完成（剩 ${leftover.length} 条）`}`,
+  );
 
   const afterBoot = posterRows(gameId).find((r) => r.id === target?.id);
   afterBoot && afterBoot.in_slideshow === 0
@@ -302,87 +319,132 @@ if (await waitUp(`${BASE}/api/health`, 80)) {
     ? ok('没有任何相册截图被自动加进轮播（用户一张都没勾）')
     : bad(`启动后有 ${onCount} 张相册截图被自动加进轮播`);
 
-  // 旧规则遗留的自动补帧应被清理掉
-  const legacy = posterRows(gameId).find((r) => r.id === globalThis.__legacyId);
-  if (!legacy) {
-    bad('旧规则遗留行不见了（不该被删除，只应被移出轮播）');
-  } else if (legacy.in_slideshow === 0) {
-    ok('旧规则自动加入的相册帧已被启动期清理移出轮播（用户不必手动取消 268 帧）');
-  } else {
-    bad('旧规则遗留行仍在轮播里 —— 线上库会保持「相册截图自动进轮播」的旧状态');
+  // 旧规则遗留的自动补帧应被清理掉 —— 两个来源都要清，这才是「泛化到所有来源」。
+  const legacyRows = globalThis.__legacyIds.map((id) =>
+    posterRows(gameId).find((r) => r.id === id),
+  );
+  const vanished = legacyRows.filter((r) => !r).length;
+  if (vanished > 0) {
+    bad(`旧规则遗留行不见了 ${vanished} 条（不该被删除，只应被移出轮播）`);
+  }
+  for (const [i, src] of ['media', 'scraped'].entries()) {
+    const row = legacyRows[i];
+    if (!row) continue;
+    row.in_slideshow === 0
+      ? ok(`启动期清理把 source=${src} 的遗留帧移出轮播（泛化到所有来源，不只相册截图）`)
+      : bad(`source=${src} 的遗留帧仍在轮播里（in_slideshow=${row.in_slideshow}）`);
   }
 
-  // 这条行是测试自己造的假数据（url 是 /legacy-auto.png），留着会污染后面
+  // 这两条行是测试自己造的假数据（url 是 /legacy-auto-*.png），留着会污染后面
   // 「摘要海报数 == 登记海报数」的断言 —— 那是测试的账不平，不是产品的问题。
   {
     const d = db();
     try {
-      d.prepare('DELETE FROM game_posters WHERE id = ?').run(globalThis.__legacyId);
+      const del = d.prepare('DELETE FROM game_posters WHERE id = ?');
+      for (const id of globalThis.__legacyIds) del.run(id);
     } finally { d.close(); }
-    info('已删除测试用的遗留行，避免影响后续断言');
+    info('已删除测试用的 2 条遗留行，避免影响后续断言');
   }
 } else {
   hint('实例重启超时，启动期修复断言已跳过');
 }
 
 // ---------------------------------------------------------------------------
-step('问题 3 · 首页卡片集与详情页大图轮播集已分离');
+step('问题 3-A · 新上传的官方海报默认不勾选轮播（in_slideshow=0）');
+
+// 上传是离线造出 source='upload'（官方图）的唯一途径：元数据桩服不产出海报/截图，
+// 而相册图是 source='media'。契约要求「新登记/刮削/上传的官方图默认 in_slideshow=0」，
+// 正好在这里覆盖。
+{
+  const fd = new FormData();
+  fd.append('file', new Blob([PNG], { type: 'image/png' }), 'uploaded-cover.png');
+  const r = await fetch(`${BASE}/api/games/${gameId}/posters/upload`, { method: 'POST', body: fd });
+  if (r.status >= 400) {
+    bad(`上传海报失败：${r.status} ${JSON.stringify(await r.text().catch(() => null))}`);
+  } else {
+    const poster = (await r.json().catch(() => null))?.poster ?? null;
+    ok(`上传成功（${r.status}）`);
+    const row = posterRows(gameId).find((x) => x.id === poster?.id);
+    row && row.source === 'upload'
+      ? ok('登记的是官方图（source=upload）')
+      : bad(`source=${row?.source}，期望 upload`);
+    row && row.in_slideshow === 0
+      ? ok('新上传的官方图默认 in_slideshow=0（不再默认进卡片轮播）—— 修复前是 1')
+      : bad(`新上传的官方图 in_slideshow=${row?.in_slideshow}，期望 0`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+step('问题 3-B · 首页卡片集 = 封面 + 勾选；详情页大图 = 全部官方海报');
 
 const detail = await api.get(`/api/games/${gameId}`);
 const d = detail.body ?? {};
-
-// 摘要（首页卡片用的字段）：应为**完整海报集**，与是否勾选轮播无关。
-const summary = await api.get('/api/games');
-const sList = summary.body?.games ?? summary.body ?? [];
-const sGame = Array.isArray(sList) ? sList.find((g) => g.id === gameId) : null;
-const cardSet = sGame?.posters ?? [];
 const all = posterRows(gameId);
-info(`摘要 posters=${cardSet.length}，登记海报总数=${all.length}，其中轮播中=${all.filter((r) => r.in_slideshow === 1).length}`);
 
-cardSet.length === all.length
-  ? ok('摘要 posters 返回完整海报集（首页卡片不再受轮播勾选影响）')
-  : bad(`摘要 posters=${cardSet.length} 但登记了 ${all.length} 张 —— 首页卡片集仍被轮播勾选过滤`);
+// 摘要（首页卡片用的 game.posters）：封面 + 勾选行，未勾选的非封面行不在其中。
+const cardSet = await cardSetNow();
+// 卡片集里的 url 会被 `proxyImage` 换成 `/api/media/proxy?url=<encoded>`（scraped 行），
+// 所以不能比字面相等 —— 解码后再做包含判断，否则会假报「未勾选的行泄漏进卡片集」。
+const decode = (u) => { try { return decodeURIComponent(u); } catch { return u; } };
+const cardHas = (list, r) =>
+  list.some((u) => u === r.url || decode(u).includes(r.url));
+const inCard = (r) => cardHas(cardSet, r);
+info(
+  `摘要 posters=${cardSet.length}；登记总数=${all.length}；封面=${all.filter((r) => r.is_selected === 1).length}；` +
+    `勾选中=${all.filter((r) => r.in_slideshow === 1).length}`,
+);
 
-// 详情页大图集合：只认 in_slideshow + 封面。
-const pl = d.posterList ?? [];
-const curated = pl.filter((p) => p.inSlideshow).map((p) => p.url);
-const selected = pl.filter((p) => p.isSelected).map((p) => p.url);
-const heroSet = [...new Set([...selected, ...curated])];
-info(`详情页大图集合 ${heroSet.length} 张（封面 ${selected.length} + 勾选 ${curated.length}）`);
+// ① 封面结构性在卡片集内（judgement: is_selected=1 OR in_slideshow=1），不靠标志位。
+const cover = all.find((r) => r.is_selected === 1);
+cover && inCard(cover)
+  ? ok('封面在首页卡片集内（结构性：封面永远是第一帧，不靠 in_slideshow）')
+  : bad(`封面（${cover?.id?.slice(0, 12)}）不在卡片集里`);
 
-const mediaTicked = all.filter((r) => r.source === 'media' && r.in_slideshow === 1).length;
-mediaTicked === 0
-  ? ok('详情页大图集合不含任何「用户未勾选」的相册截图')
-  : bad(`详情页集合含 ${mediaTicked} 张未勾选的相册截图`);
+// ① 未勾选且非封面的行不出现在卡片集里。
+const outRows = all.filter((r) => r.is_selected === 0 && r.in_slideshow === 0);
+const leaked = outRows.filter((r) => inCard(r));
+leaked.length === 0
+  ? ok(`未勾选的行全部不在卡片集里（封面以外、未勾选共 ${outRows.length} 张）`)
+  : bad(`有 ${leaked.length} 张未勾选的行仍出现在卡片集里`);
 
-// 正面验证：勾一张，详情集合应该随之 +1；首页卡片集不变。
-const cardBefore = cardSet.length;
-// 必须挑一张**不是封面**的相册海报。
-  //
-  // 封面永远在集合里（封面优先），勾上它不会让集合变大 —— 第一版就是挑了封面，
-  // 于是「勾选后 +1」这条断言必然失败，而那是测试自己的问题，不是产品的。
-  const pick = all.find((r) => r.source === 'media' && r.is_selected === 0);
-if (pick) {
-  await api.patch(`/api/games/${gameId}/posters/${pick.id}`, { inSlideshow: true });
-  const detail2 = (await api.get(`/api/games/${gameId}`)).body ?? {};
-  const pl2 = detail2.posterList ?? [];
-  const curated2 = pl2.filter((p) => p.inSlideshow).map((p) => p.url);
-  const selected2 = pl2.filter((p) => p.isSelected).map((p) => p.url);
-  const hero2 = [...new Set([...selected2, ...curated2])];
+// ② 勾选后进入卡片集、取消后退出（用一张非封面的相册图）。
+const pick = all.find((r) => r.source === 'media' && r.is_selected === 0 && r.in_slideshow === 0);
+if (!pick) {
+  hint('没有可勾选的非封面相册行，跳过「勾选进入卡片集」断言');
+} else {
+  const on3 = await api.patch(`/api/games/${gameId}/posters/${pick.id}`, { inSlideshow: true });
+  const card2 = await cardSetNow();
+  on3.status === 200 && cardHas(card2, pick)
+    ? ok(`勾选后该行进入首页卡片集（${cardSet.length} → ${card2.length}）`)
+    : bad(`勾选后该行未进入首页卡片集（PATCH ${on3.status}，card2=${JSON.stringify(card2)}）`);
 
-  hero2.length === heroSet.length + 1
-    ? ok(`勾选一张后详情页大图集合 ${heroSet.length} → ${hero2.length}（勾选真的控制大图轮播）`)
-    : bad(`勾选后详情页集合 ${heroSet.length} → ${hero2.length}，期望 +1`);
-
-  const summary2 = await api.get('/api/games');
-  const s2 = (summary2.body?.games ?? summary2.body ?? []).find?.((g) => g.id === gameId);
-  const cardAfter = s2?.posters?.length ?? -1;
-  cardAfter === cardBefore
-    ? ok(`首页卡片集保持 ${cardAfter} 张不变（两个轮播互不干扰）`)
-    : bad(`首页卡片集从 ${cardBefore} 变成了 ${cardAfter} —— 仍然被轮播勾选牵动`);
-
-  // 收尾：恢复未勾选，避免影响后续断言
   await api.patch(`/api/games/${gameId}/posters/${pick.id}`, { inSlideshow: false });
+  const card3 = await cardSetNow();
+  !cardHas(card3, pick)
+    ? ok('取消勾选后该行退出首页卡片集')
+    : bad('取消勾选后该行仍在首页卡片集里');
+}
+
+// 详情页大图集合：posterList 里的**全部官方海报**（scraped/upload），与 in_slideshow 无关。
+const pl = d.posterList ?? [];
+const officialInList = pl.filter((p) => p.source === 'scraped' || p.source === 'upload');
+const officialRows = all.filter((r) => r.source === 'scraped' || r.source === 'upload');
+info(`posterList 共 ${pl.length} 条；官方海报 ${officialInList.length}/${officialRows.length}`);
+officialRows.length === 0
+  ? hint('库里没有官方海报（桩服不产出 artwork 且未成功上传），官方全集断言跳过')
+  : officialInList.length === officialRows.length
+    ? ok('posterList 含全部官方海报（详情页大图用全集，不经 in_slideshow 过滤）')
+    : bad(
+        `posterList 官方 ${officialInList.length} 条，登记官方 ${officialRows.length} 条 —— 大图集被过滤了`,
+      );
+
+const untickedOfficial = officialInList.filter((p) => !p.inSlideshow);
+if (officialInList.length === 0) {
+  // 已 hint
+} else if (untickedOfficial.length > 0) {
+  ok(`未勾选的官方海报仍在 posterList（${untickedOfficial.length} 条）—— 大图默认全轮播，不靠勾选`);
+} else {
+  hint('官方海报全部被勾选，无法验证「未勾选仍在」—— 但官方全集断言已覆盖');
 }
 
 // ---------------------------------------------------------------------------

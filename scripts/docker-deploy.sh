@@ -164,8 +164,11 @@ fi
   # 之前就成立了，于是这道检查对**本轮**改动等于没有把关：一个不含本轮修复的旧镜像
   # 照样能通过。新增的两项才是本轮独有的：
   #
-  #   · slideshowItemHint         —— 本轮新增的 i18n 文案（前端产物里）
-  #   · purgeAutoAddedAlbumFrames —— 本轮新增的旧规则遗留帧清理（后端产物里）
+  #   · slideshowItemHint         —— i18n 文案（前端产物里）
+  #   · removeAutoAddedFramesFromRotation —— 启动期清理「没人手动勾选过」的轮播帧
+  #     （后端产物里）。本轮起清理从 `purgeAutoAddedAlbumFrames`（只看相册截图）
+  #     泛化到所有来源并改名，旧名字已不在产物里 —— 继续查旧名字会把新镜像
+  #     误判成「不是本轮版本」。
   #
   # 每项分开放进 `&&` 链，失败时能指出是哪一项，不必再摸黑猜。
   if ! docker run --rm --entrypoint sh "$IMAGE_TAG" -c \
@@ -175,8 +178,8 @@ fi
     exit 1
   fi
   if ! docker run --rm --entrypoint sh "$IMAGE_TAG" -c \
-       'grep -rqF "purgeAutoAddedAlbumFrames" /app/backend/dist'; then
-    err "镜像里缺少本轮的后端产物（purgeAutoAddedAlbumFrames —— 旧规则遗留帧清理）"
+       'grep -rqF "removeAutoAddedFramesFromRotation" /app/backend/dist'; then
+    err "镜像里缺少本轮的后端产物（removeAutoAddedFramesFromRotation —— 启动期清理自动加入的轮播帧）"
     err "镜像不是本轮版本。请用 scripts/docker-build.sh --no-cache 重建后重试。"
     exit 1
   fi

@@ -3,7 +3,7 @@
  */
 import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { AuthService } from './auth.service';
+import { AuthService, type PasswordChangeResult } from './auth.service';
 import { readCookie } from './auth.guard';
 import { SESSION_COOKIE } from './session-cookie';
 
@@ -57,14 +57,24 @@ export class AuthController {
     return { ok: true };
   }
 
-  /** Change the app-local password. System accounts are changed on the NAS. */
+  /**
+   * Change the app-local password. System accounts are changed on the NAS.
+   *
+   * Everything — including a wrong current password — comes back as HTTP 200
+   * with `{ ok: false, code, error }`. A 401 here would be read by the Web
+   * client as "the session went away" (it broadcasts 401 to the login gate), so
+   * a simple typo must not be able to sign the user out.
+   */
   @Post('password')
-  async password(@Req() req: Request, @Body() body: { current?: string; next?: string }) {
+  async password(
+    @Req() req: Request,
+    @Body() body: { current?: string; next?: string },
+  ): Promise<PasswordChangeResult> {
     const token = readCookie(req.headers.cookie, SESSION_COOKIE);
     const user = this.auth.resolve(token);
-    if (!user) return { ok: false, error: '未登录' };
-    if (!body?.next || body.next.length < 4) return { ok: false, error: '新密码至少 4 位' };
-    await this.auth.changePassword(user.username, body.current ?? '', body.next);
-    return { ok: true };
+    if (!user) {
+      return { ok: false, code: 'unauthenticated', error: '未登录或会话已过期，请重新登录' };
+    }
+    return this.auth.changePassword(user, body?.current ?? '', body?.next ?? '', token);
   }
 }

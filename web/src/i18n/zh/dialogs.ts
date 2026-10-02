@@ -2,13 +2,13 @@
 export const dialogsZh: Record<string, string> = {
   // PosterDialog — "编辑海报"
   "dialogs.poster.title": "编辑海报 · {name}",
-  "dialogs.poster.displayMode": "详情页大图轮播",
+  "dialogs.poster.displayMode": "首页卡片轮播",
   "dialogs.poster.modeStatic": "静态（单张）",
   "dialogs.poster.modeSlideshow": "轮播（自动切换）",
-  "dialogs.poster.slideshowCount": "已勾选 {n} 张参与详情页大图轮播",
+  "dialogs.poster.slideshowCount": "已勾选 {n} 张参与首页卡片轮播",
   "dialogs.poster.slideshowHint":
-    "下面「轮播」勾选决定哪些图进入**详情页大图区**的轮播（首页卡片用的是全部海报，不受这里影响）。相册截图默认不勾选，只有你主动勾选才会加入。上面的展现模式也会影响首页卡片：选「轮播」才会在卡片封面上显示上一张/下一张，静态封面不显示这两枚箭头。",
-  "dialogs.poster.slideshowItemHint": "勾选后这张进入详情页大图轮播；取消勾选即移出，不会被重新加回。",
+    "下面「轮播」勾选决定哪些图进入**首页卡片轮播**（当前封面 + 勾选项，没勾的不会出现）。相册截图默认不勾选，只有你主动勾选才会加入。上面的展现模式也作用于首页卡片：选「轮播」才会自动切换并在卡片封面上显示上一张/下一张，静态封面不显示这两枚箭头。详情页大图默认使用全部官方海报自动轮播，与这里的设置无关，无需配置。",
+  "dialogs.poster.slideshowItemHint": "勾选后这张加入首页卡片轮播；取消勾选即移出，不会被重新加回。",
   "dialogs.poster.tabUpload": "本地图片",
   "dialogs.poster.tabAlbum": "从相册选择",
   "dialogs.poster.chooseFile": "选择图片上传",

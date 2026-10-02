@@ -83,18 +83,17 @@ const timelineLabels: Record<TimelineType, string> = {
 };
 
 /**
- * Posters for the detail header: the selected cover first, then every other
- * poster the user can manage, then the game's screenshots.
+ * Poster list behind the detail page's left cover tile.
  *
- * This must be the full set, not just the rotation queue. `game.posters` now
- * carries every registered poster (it feeds the gallery card — see
- * `GamesService.slideshowPosters`), but the detail header's *curated* set is
- * `posterList` filtered on `inSlideshow`, i.e. exactly what 「编辑海报」shows
- * ticked. This list is the browsable one: the arrows walk every image so none
- * sits unreachable in the big picture, while `heroPosters()` below is the
- * curated set the slideshow rotates. Keeping the two apart is what makes the
- * checkbox mean 「这张进详情页大图轮播」without also changing which pictures the
- * gallery card can show.
+ * Order: the selected cover first, then every other registered poster, then the
+ * scraped `posters`/`screenshots`. The tile renders **only the first entry** — it
+ * is a plain static cover, not a viewer — but the ordering is what keeps that one
+ * picture the cover the user picked.
+ *
+ * The browsable, rotating surface on this page is the large image below
+ * (`heroPosters()`), which follows a different rule: every official poster, always
+ * auto-rotating. The 「编辑海报」 ticks and `posterMode` do not reach either of
+ * them — they belong to the homepage card slideshow.
  */
 function detailPosters(game: GameDetailType): string[] {
   const selected = (game.posterList ?? []).filter((p) => p.isSelected).map((p) => p.url);
@@ -646,38 +645,35 @@ export default function GameDetail() {
   const tabs = tabItems.map((item) => ({ value: item.value, label: t(item.labelKey) }));
 
   /**
-   * 大图区轮播的图片集合。
+   * 详情页大图区的图片集合。
    *
-   * 顺序：当前封面 → 用户配置参加轮播的海报（后端 `in_slideshow`）。
-   * 与 `detailPosters()` 同源（都基于后端的 `posterList`），区别只在排序：
-   * 封面必须第一张。
+   * 新语义：大图区 = **全部官方海报**（`source` 为 `scraped` / `upload`，不含
+   * `source === 'media'` 的相册截图），**恒定自动轮播**，不读 `inSlideshow`、
+   * 也不读 `posterMode` —— 那两个设置只作用于**首页卡片轮播**（GameCard /
+   * PosterDialog）。
    *
-   * 「官方刮取到的海报/截图全部进轮播」是**后端**的职责（登记时就默认
-   * `in_slideshow = 1`）。前端这里必须老老实实尊重用户配置，否则「编辑海报」里
-   * 取消勾选就不生效了 —— 见下方注释里的实测数据。
+   * 顺序：当前封面（`isSelected`）排在最前，用户先看到它；其余保持后端返回的
+   * 原有顺序。去重后交给 `HeroPosterCarousel`。
+   *
+   * 为什么要改：以前这里按 `in_slideshow` 过滤，于是「编辑海报」里取消勾选会让
+   * **详情页大图**少一张 —— 用户以为自己在关首页卡片轮播，实际关掉了详情页大图。
+   * 这正是「轮播逻辑混淆」这个报告的核心，现在两条体系各自解耦。
+   *
+   * 只有在一张官方/上传海报都没有时，才回退到 `posterUrl` + `screenshots`，
+   * 保证大图区不空白。
    */
   const heroPosters = useMemo(() => {
     if (!game) return [];
-    const list = game.posterList ?? [];
-    const selected = list.filter((p) => p.isSelected).map((p) => p.url);
-    const curated = list.filter((p) => p.inSlideshow).map((p) => p.url);
+    const official = (game.posterList ?? []).filter((p) => p.source !== "media");
+    const selected = official.filter((p) => p.isSelected).map((p) => p.url);
+    const rest = official.filter((p) => !p.isSelected).map((p) => p.url);
 
-    // 大图区 = 用户配置的轮播集合（后端 `in_slideshow`），封面永远第一张。
-    //
-    // 曾经这里刻意**不做 in_slideshow 过滤**，把 `posterList` 里所有条目都塞进来，
-    // 为的是让「刮取到 7 张官方海报却只显示 1 张」的游戏能翻页。那是治错了地方：
-    // 真正的原因在后端（多 provider 刮削时把刚登记的官方截图删掉了），修好之后
-    // 再无条件追加所有条目就变成了另一个 bug —— 「编辑海报」里被用户取消勾选的
-    // 那张仍然会出现在大图区（实测页面 12 张 vs 配置 11 张），等于取消按钮无效。
-    //
-    // 现在：官方刮取的图文默认全部进轮播（后端负责），前端只认用户配置。
-    // 只有在一张官方/相册海报都没有时，才回退到 `screenshots`，保证大图区不空白。
-    const curatedSet = [...new Set([...selected, ...curated])];
+    // 官方集合为空（老数据 / 全是相册截图）时才用回退集合。
     const fallback = [
       ...(game.posterUrl ? [game.posterUrl] : []),
       ...(game.screenshots ?? []),
     ];
-    const source = curatedSet.length > 0 ? curatedSet : fallback;
+    const source = official.length > 0 ? [...selected, ...rest] : fallback;
     return [...new Set(source)].filter((u): u is string => typeof u === "string" && u.length > 0);
   }, [game]);
 
@@ -706,11 +702,15 @@ export default function GameDetail() {
         <CardContent className="flex flex-col gap-5 p-5 sm:flex-row">
           <div className="w-full shrink-0 sm:w-64">
             <div className="group relative">
-              {/* Feature 5: honours the same static/slideshow mode as the card. */}
+              {/* 左侧只放当前封面：静态单图，不自动切换、也没有上一张/下一张。
+                  `posterMode` 现在只属于**首页卡片轮播**，详情页上的任何轮播都不
+                  应受它影响；详情页真正的浏览/轮播面是下面的大图区（全部官方海报、
+                  恒定自动轮播）。`detailPosters()` 已把当前封面排在第一位，取第一张
+                  即封面；单元素列表也让 PosterCarousel 不渲染箭头/圆点/计数。 */}
               <div className="aspect-video overflow-hidden rounded-lg bg-zinc-900">
                 <PosterCarousel
-                  images={detailPosters(game)}
-                  mode={game.posterMode ?? "static"}
+                  images={detailPosters(game).slice(0, 1)}
+                  mode="static"
                   name={game.name}
                 />
               </div>
@@ -838,11 +838,8 @@ export default function GameDetail() {
         </CardContent>
       </Card>
 
-      <HeroPosterCarousel
-                images={heroPosters}
-                alt={game.name}
-                mode={game.posterMode ?? "static"}
-              />
+      {/* 详情页大图：全部官方海报，恒定自动轮播、箭头常驻，无 mode 可配。 */}
+      <HeroPosterCarousel images={heroPosters} alt={game.name} />
 
       <Card>
         <CardHeader>

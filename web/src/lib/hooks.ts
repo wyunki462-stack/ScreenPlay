@@ -1,9 +1,12 @@
 /**
  * Small hooks shared by the dialogs and the carousels.
  *
- * Both carousels drive the same loop — "advance every N ms, but hold off while the
- * user is looking at a slide" — and both dialogs close on Escape in the same way.
- * The per-component copies of these two pieces had already drifted once.
+ * The two carousels drive different rotations — the homepage card advances only
+ * when the user turns card slideshow on, while the detail page's large image
+ * always rotates through every official poster — but they share the same timing
+ * rule ("advance every N ms, but hold off while the user is looking at a slide"),
+ * and both dialogs close on Escape in the same way. The per-component copies of
+ * these two pieces had already drifted once.
  */
 import { useEffect, useRef } from "react";
 

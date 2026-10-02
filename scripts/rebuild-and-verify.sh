@@ -35,9 +35,18 @@ LOG="$LOG_DIR/rebuild-$STAMP.log"
 
 # 本轮新增的 feature 标记。出现这些 = 镜像里有本轮修复。
 EXPECTED_FEATURES=(
-  poster-rotation-cover-only
-  poster-rotation-user-decided
+  # 第十轮：两套轮播拆分（勾选/开关只管首页卡片；详情页大图 = 全部官方海报恒定自动）。
+  # `poster-rotation-cover-only` / `poster-rotation-user-decided` / `card-arrows-need-slideshow`
+  # 三个旧标记已退役（封面改为结构性、开关与标记改名），继续期待它们只会让体检假失败。
+  card-rotation-user-ticks
+  card-rotation-cover-always
+  card-rotation-user-decided
+  hero-rotation-all-official
   card-carousel-vs-hero-carousel
+  card-arrows-need-slideshow-mode
+  # 第十轮：设置页「修改密码」（接口 + 界面）。缺任意一条都说明镜像不是这一版。
+  password-change-api
+  password-change-ui
   review-pagination
   # 0.6.2：评价抓全的第二层修复 + 平台切换。缺了这两条就说明镜像不是这一版。
   review-listing-fallback
@@ -46,7 +55,6 @@ EXPECTED_FEATURES=(
   # 展现模式。缺了这两条，说明容器跑的仍是 0.6.2 —— 那个版本在这个站点形态下抓不到
   # 完整评价（这正是「怎么修都只有一条」的原因）。
   reviews-api-source
-  card-arrows-need-slideshow
   # 0.6.4：详情页评分区与评价面板的三处界面改动（去掉用户评分列 / 搜索+排序 / 点页码跳页）。
   ratings-no-user-score
   reviews-ui-search-sort

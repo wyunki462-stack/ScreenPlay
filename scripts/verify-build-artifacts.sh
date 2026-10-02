@@ -112,11 +112,13 @@ expect_in_file "$BACKEND_DIST/metadata/providers/metacritic-reviews.js" \
   "__NEXT_DATA__" "页面内嵌 JSON 解析策略（__NEXT_DATA__）"
 expect_in_file "$BACKEND_DIST/metadata/providers/metacritic-reviews.js" \
   "isPlausibleOutlet" "媒体名合理性校验"
-# 符号名跟着实现走：`ensureRotationFloor`（兜底把相册截图填满轮播）已按需求 21
-# 改为 `ensureCoverInRotation`（只保证封面在轮播里，其余一律等用户勾选）。
-# 这里检的是「产物是新的」，所以必须盯当前符号名，否则每次改名都会假报缺失。
+# 符号名跟着实现走：`ensureRotationFloor`（兜底把相册截图填满轮播）与
+# `ensureCoverInRotation`（只保证封面进轮播）都已是历史 —— 封面现在是**结构性**的
+# （卡片集合的判据 `is_selected = 1 OR in_slideshow = 1`），启动期只保留一件事：
+# 把 `slideshow_user_set = 0` 的行从轮播里摘掉。这里检的是「产物是新的」，所以必须盯
+# 当前符号名/列名；旧写法检 `ensureCoverInRotation` 已退化成只匹配到一条注释（空转通过）。
 expect_in_file "$BACKEND_DIST/maintenance/maintenance.service.js" \
-  "ensureCoverInRotation" "启动期封面轮播修复"
+  "slideshow_user_set" "用户勾选判定列（启动期清理不覆盖用户决定）"
 expect_in_file "$BACKEND_DIST/maintenance/maintenance.service.js" \
   "backfillDurations" "启动期通关时长补全"
 
@@ -150,8 +152,39 @@ expect_in_tree "$WEB_DIST" "detail.reviews.pageOf" "分页 i18n 键（确认打�
 
 head_ "== 6. 后端仍保留启动期清理（本轮的核心数据修复）=="
 # 只查字符串本身，不查缩进或函数体 —— 它只要在产物里就说明这版代码带着清理逻辑。
+# 本轮清理**泛化到所有来源**（不再只看 `source = 'media'`）并因此改名：从此盯新函数名，
+# 而不是已从产物里消失的 `purgeAutoAddedAlbumFrames`。
 expect_in_file "$BACKEND_DIST/maintenance/maintenance.service.js" \
-  "purgeAutoAddedAlbumFrames" "启动期清理旧规则自动加入轮播的相册截图"
+  "removeAutoAddedFramesFromRotation" "启动期清理：摘掉没人手动勾选过的轮播帧"
+expect_in_file "$BACKEND_DIST/maintenance/maintenance.service.js" \
+  "auto-added frames removed" "清理条数日志（确认泛化后的清理逻辑在产物里）"
+
+# ---- 本轮新增：设置页改密码 / 两套轮播职责拆分 ---------------------------------
+#
+# 改密码是「接口 + 界面」两条线，所以后端查 `changePassword` 与三个失败码
+# （`wrong_current` / `not_local` / `same`），前端查卡片的测试锚点与 i18n 键。
+# 轮播拆分两套体系，后端查产物里「卡片集合」的取数方法已改名 `cardPosters`，
+# 前端查大图轮播的锚点 `hero-carousel`。
+head_ "== 7. 本轮新增的改密码 / 轮播拆分在产物里 =="
+expect_in_file "$BACKEND_DIST/auth/auth.service.js" \
+  "changePassword" "改密码业务方法（原密码校验 + 重新 setLocalPassword）"
+expect_in_file "$BACKEND_DIST/auth/auth.service.js" \
+  "wrong_current" "原密码错误的失败码（2xx + code，不许用 401）"
+expect_in_file "$BACKEND_DIST/auth/auth.service.js" \
+  "revokeOtherSessions" "改密成功后注销其它会话"
+expect_in_file "$BACKEND_DIST/auth/auth.controller.js" \
+  "password" "改密码路由 POST /api/auth/password"
+expect_in_file "$BACKEND_DIST/auth/auth.guard.js" \
+  "/api/auth/password" "改密码路由列入 PUBLIC_PATHS（未登录也返回统一 JSON）"
+expect_in_file "$BACKEND_DIST/games/games.service.js" \
+  "cardPosters" "首页卡片轮播取数（原 slideshowPosters，已按职责改名）"
+expect_in_file "$BACKEND_DIST/app.controller.js" \
+  "card-carousel-vs-hero-carousel" "features 标记：两套轮播互不相干"
+expect_in_file "$BACKEND_DIST/app.controller.js" \
+  "password-change-api" "features 标记：改密码接口"
+expect_in_tree "$WEB_DIST" "change-password" "设置页改密码卡片锚点"
+expect_in_tree "$WEB_DIST" "errWrongCurrent" "原密码错误的 i18n 键（前端按 code 映射文案）"
+expect_in_tree "$WEB_DIST" "hero-carousel" "详情页官方海报大图轮播锚点"
 
 printf '\n\033[1m结果：%s 项命中 / %s 项缺失\033[0m\n' "$pass" "$fail"
 if [ "$fail" -gt 0 ]; then

@@ -7,13 +7,17 @@ import { useRotationTimer } from "../lib/hooks";
 /**
  * 详情页大图区域的「官方海报轮播」。
  *
- * 为什么单独写一个组件而不是复用旧的截图轮播：
+ * 新语义（与「编辑海报」面板彻底解耦）：详情页大图 = **全部官方海报**（刮取 +
+ * 用户上传），**默认自动轮播**，不受面板里的展现模式/轮播勾选影响 —— 那两个设置
+ * 管的是**首页卡片轮播**（见 GameCard / PosterDialog）。所以这里没有 `mode`：
+ * 只要图片多于一张就自动切换。
+ *
+ * 为什么单独写一个组件而不是复用截图轮播：
  *
  *  1. 旧的大图区用的是截图轮播：箭头在**第一张/最后一张会 disable**，所以用户
  *     点两下就再也翻不动，看起来「没有轮播」。这里改成**循环**，永远不会卡死。
- *  2. 旧大图区把 `posterUrl` + 截图拼成一份临时列表，与用户在海报管理里配置的
- *     集合无关。这里只吃后端 `posterList`（刮取到的官方海报/截图 + 用户上传），
- *     所以「编辑海报」里看到什么，大图区就能翻到什么。
+ *  2. 图片集合由调用方给（`heroPosters()`：官方刮取 + 用户上传，当前封面在前），
+ *     不读 `inSlideshow`，所以官方海报有多少张，大图区就能翻到多少张。
  *  3. 箭头与计数**默认可见**，不依赖 hover —— hover 才出现的控件在验收时就是
  *     「页面上看不到」。
  *
@@ -23,24 +27,11 @@ import { useRotationTimer } from "../lib/hooks";
 export default function HeroPosterCarousel({
   images,
   alt,
-  mode = "static",
   intervalMs = 3500,
 }: {
   /** 有序海报 URL；调用方保证第一张是当前封面。 */
   images: string[];
   alt?: string;
-  /**
-   * 展现模式。`slideshow` 时自动轮播这套图片。
-   *
-   * 为什么大图区需要它：这里以前只有左右箭头，**永远不会自动切换**。而
-   * 「编辑海报」的轮播勾选控制的正是这套图片，于是用户勾了半天，页面上唯一
-   * 会自动动的东西是首页图库卡片 —— 这就成了「编辑海报的轮播设置控制的是首页
-   * 卡片轮播，而不是详情页大图轮播」这个报告。
-   *
-   * 现在两件事分开：勾选决定**哪些图进这套集合**，本模式决定**这套集合是否自动
-   * 切换**。首页卡片用另一个数据源（完整海报集），互不影响。
-   */
-  mode?: "static" | "slideshow";
   intervalMs?: number;
 }) {
   const t = useT();
@@ -80,8 +71,8 @@ export default function HeroPosterCarousel({
     [count, intervalMs],
   );
 
-  // 自动轮播：只有 `slideshow` 模式且确实有多张时才启动。
-  const rotating = mode === "slideshow" && count > 1;
+  // 详情页大图恒定自动轮播：有多张就转，不看任何配置（`mode` 已删除）。
+  const rotating = count > 1;
   useRotationTimer({
     active: rotating,
     paused,
@@ -107,7 +98,6 @@ export default function HeroPosterCarousel({
   return (
     <div
       data-testid="hero-carousel"
-      data-mode={mode}
       className="group/hero relative aspect-video w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}

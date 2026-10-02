@@ -79,10 +79,19 @@ export function useLogout() {
   });
 }
 
+/** Business outcome of `POST /auth/password`; the backend always answers 200. */
+export interface ChangePasswordResult {
+  ok: boolean;
+  /** Stable reason code, e.g. "wrong_current", "too_short", "not_local". */
+  code?: string;
+  /** Human-readable (Chinese) reason, already translated by the backend. */
+  error?: string;
+}
+
 export function useChangePassword() {
   return useMutation({
     mutationFn: (input: { current: string; next: string }) =>
-      apiFetch<{ ok: boolean; error?: string }>("/auth/password", {
+      apiFetch<ChangePasswordResult>("/auth/password", {
         method: "POST",
         body: JSON.stringify(input),
       }),

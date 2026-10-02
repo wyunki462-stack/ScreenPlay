@@ -84,6 +84,32 @@ export const settingsZh: Record<string, string> = {
   "settings.howTo.tip":
     "提示：保存密钥后点击「立即刮削全部游戏」；也可在卡片上点「···」→「刷新元数据」单独刮削。",
 
+  // 修改密码：本地账户的密码存在本机 SQLite 里，改完即生效
+  "settings.password.title": "修改密码",
+  "settings.password.intro":
+    "本地账户（admin 等）的密码保存在本机数据库中，修改后立即生效、容器重启也依然有效 —— 不再需要从容器启动日志里翻初始密码。",
+  "settings.password.current": "原密码",
+  "settings.password.next": "新密码",
+  "settings.password.confirm": "确认新密码",
+  "settings.password.hint":
+    "新密码至少 4 位。修改成功后，其它设备上的登录会失效，当前页面保持登录。",
+  "settings.password.submit": "修改密码",
+  "settings.password.submitting": "提交中…",
+  "settings.password.success": "密码已修改 ✓ 请使用新密码登录。",
+  "settings.password.failed": "修改失败，请重试。",
+  "settings.password.errCurrent": "请输入原密码。",
+  "settings.password.errTooShort": "新密码至少 4 位。",
+  "settings.password.errMismatch": "两次输入的新密码不一致。",
+  "settings.password.errWrongCurrent": "原密码不正确。",
+  "settings.password.errNotLocal": "当前登录的是 NAS 系统账户，其密码由 NAS 管理。",
+  "settings.password.errBlank": "新密码不能全为空格。",
+  "settings.password.errTooLong": "新密码不能超过 128 位。",
+  "settings.password.errSame": "新密码不能与原密码相同。",
+  "settings.password.unauth": "需登录后才能修改密码。",
+  "settings.password.disabled": "当前已关闭登录（AUTH_DISABLED=1），没有可修改的密码。",
+  "settings.password.systemHint":
+    "当前以 NAS 系统账户登录，其密码由 NAS 管理，请在本机系统账户设置中修改。",
+
   "library.title": "媒体库管理",
   "library.count": "{count} 个",
   "library.rescan": "重新扫描",

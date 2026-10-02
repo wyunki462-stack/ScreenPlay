@@ -8,7 +8,14 @@ import PosterCarousel from "./PosterCarousel";
 import { MetacriticBadge } from "./MetacriticBadge";
 import GameMenu from "./GameMenu";
 
-/** Posters for the card: the selected one first, then the rotation set. */
+/**
+ * Posters for the card cover: the selected one first, then the rotation set.
+ *
+ * The backend already hands us the rotation set this way — `game.posters` is
+ * "current cover first, then the rows ticked with 轮播 (`in_slideshow = 1`)" —
+ * so the tick boxes in 「编辑海报」 decide exactly which images the card can show.
+ * A game with nothing ticked yields a single-image card.
+ */
 function cardPosters(game: GameSummary): string[] {
   const list = [game.posterUrl, ...(game.posters ?? [])].filter(
     (u): u is string => typeof u === "string" && u.length > 0,
@@ -128,7 +135,8 @@ export default function GameCard({
       >
         {/* 16:9 横向比例：横版海报完整入画，竖版海报居中裁切，不拉伸变形。 */}
         <div className="relative aspect-video overflow-hidden bg-zinc-900">
-          {/* Feature 5: static shows the selected poster, slideshow rotates. */}
+          {/* Feature 5: the cover shows one image or the ticked rotation set;
+              `posterMode` decides whether that set auto-switches here. */}
           <PosterCarousel
             images={cardPosters(game)}
             mode={game.posterMode ?? "static"}
@@ -136,13 +144,13 @@ export default function GameCard({
             className="transition-transform duration-300 group-hover:scale-105"
             // No dots on a card — see the `showDots` docblock in PosterCarousel.
             showDots={false}
-            // 卡片上的上一张/下一张只在**设为轮播**时出现。
+            // 卡片上的上一张/下一张只在**首页卡片轮播**（设为轮播）时出现。
             //
             // 静态模式下这张卡就是一张封面，真正的操作是「点开详情」；两枚浮在
             // 300px 卡片上的箭头既挡画面，又暗示这里能就地翻图（不能——卡片比详情
             // 大图小得多，翻起来看不见细节）。而「设为轮播」本身就是用户说「这张
-            // 封面是一组轮播」，那时箭头才有意义。详情页大图不受影响，两种模式都
-            // 保留箭头（见 PosterCarousel 的 showArrows 文档）。
+            // 封面是一组轮播」，那时箭头才有意义。详情页大图是另一套体系：它读的是
+            // 全部官方海报、恒定自动轮播、箭头常驻，与这里的设置无关。
             showArrows={(game.posterMode ?? "static") === "slideshow"}
           />
         </div>

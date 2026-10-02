@@ -70,7 +70,7 @@ window.renderReviews = () => {
   );
 };
 
-/** posters 就是首页卡片的轮播队列 —— 封面优先、已去重（后端 slideshowPosters 保证）。 */
+/** posters 就是首页卡片的轮播队列 —— 封面优先、已去重（后端 cardPosters 保证）。 */
 function makeGame(posterUrls, posterMode) {
   return {
     id: "g-1",

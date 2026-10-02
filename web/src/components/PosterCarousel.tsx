@@ -40,9 +40,10 @@ export default function PosterCarousel({
    *
    * On a card they are noise: the tile is ~300px wide, sits in a grid of dozens,
    * and nobody clicks a 6px dot there — they click the card itself, which opens
-   * the detail page. On the detail hero the same dots sit above a large image the
-   * user is actually studying, and the counter in the corner reads as clutter
-   * next to them, so there they stay useful.
+   * the detail page. They stay on by default because a large image the user is
+   * actually studying is where they help; the detail page's large image draws its
+   * own dots and counter though (see HeroPosterCarousel), so the only surfaces
+   * using this component now are the gallery card and the small static cover.
    */
   showDots?: boolean;
   /**
@@ -55,9 +56,10 @@ export default function PosterCarousel({
    * cover the artwork. Turning slideshow on is the user saying "this cover is a
    * rotation", so that is exactly when the arrows become meaningful there.
    *
-   * The detail hero keeps them in both modes: a large image the user is studying
-   * is where manual browsing belongs, and in `static` the arrows are the only way
-   * to reach the other posters at all.
+   * Left on by default so a `static` cover still lets the user reach the other
+   * posters by hand. On the detail page the browsable surface is the large image
+   * below (HeroPosterCarousel); the small cover tile there is a single static
+   * picture, so it renders no arrows at all.
    */
   showArrows?: boolean;
 }) {

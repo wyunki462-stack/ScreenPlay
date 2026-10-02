@@ -347,8 +347,12 @@ await openDetail(detailId);
 await page.screenshot({ path: path.join(OUT, '1-detail-nav.png'), fullPage: false });
 
 // ---------------------------------------------------------------------------
-step('需求 2 · 官方海报轮播（大图区左右箭头）');
+step('需求 2 · 官方海报轮播（大图区左右箭头；全部官方海报、恒定自动、与「编辑海报」面板无关）');
 await openDetail(detailId);
+
+// 新语义：详情页大图 = 全部官方海报（source 为 scraped/upload，不含 media），张数 >1 即自动轮播；
+// 箭头与 x/y 计数常驻、可循环。它不再由 posterMode / inSlideshow / data-mode 决定，
+// 因此下面的断言不读取这些设置。
 
 const posterCount = await getJson(`/api/games/${detailId}/posters`);
 info(`后端海报记录：${posterCount.length} 条（source=${[...new Set(posterCount.map((p) => p.source))].join(',')}）`);
@@ -429,7 +433,7 @@ const keepId = posterCount[1].id;
 const markResp = await page.request.patch(`${BASE}/api/games/${detailId}/posters/${keepId}`, {
   data: { inSlideshow: true },
 });
-info(`把第 2 张海报加入轮播：HTTP ${markResp.status()}`);
+info(`把第 2 张海报勾选进首页卡片轮播集合（inSlideshow=true）：HTTP ${markResp.status()}`);
 // 再触发一次完整重新刮削
 const refreshResp = await page.request.post(`${BASE}/api/games/${detailId}/refresh`);
 info(`重新刮削：HTTP ${refreshResp.status()}`);
@@ -437,7 +441,7 @@ await page.waitForTimeout(4000);
 const afterScrape = await getJson(`/api/games/${detailId}/posters`);
 const survivor = afterScrape.find((p) => p.id === keepId);
 info(`重新刮削后海报数=${afterScrape.length}，被勾选的那张：${survivor ? `仍在（inSlideshow=${survivor.inSlideshow}）` : '已丢失'}`);
-survivor && survivor.inSlideshow ? ok('重新刮削没有删除用户勾选加入轮播的图片') : bad('用户配置的轮播海报被刮削删除/重置');
+survivor && survivor.inSlideshow ? ok('重新刮削没有删除用户勾选（inSlideshow）的图片') : bad('用户勾选的轮播归属被刮削删除/重置');
 afterScrape.length >= posterCount.length
   ? ok('重新刮削没有丢失官方海报')
   : info(`注意：海报数量 ${posterCount.length} → ${afterScrape.length}`);

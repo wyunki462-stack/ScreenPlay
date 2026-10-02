@@ -43,6 +43,32 @@ export interface LoginResult {
   user: SessionUser;
 }
 
+/** Shortest password the API accepts (`POST /api/auth/password`). */
+export const PASSWORD_MIN_LENGTH = 4;
+/** Sane upper bound; scrypt cost grows with the input, nothing real is this long. */
+export const PASSWORD_MAX_LENGTH = 128;
+
+/**
+ * Outcome of a password change. Business failures are values, not exceptions: a
+ * mistyped current password must not surface as HTTP 401, because the Web client
+ * treats any 401 as "the session is gone" and would bounce the user to the login
+ * screen.
+ */
+export interface PasswordChangeResult {
+  ok: boolean;
+  /** Stable machine-readable reason, present only when `ok === false`. */
+  code?:
+    | 'unauthenticated'
+    | 'not_local'
+    | 'wrong_current'
+    | 'blank'
+    | 'too_short'
+    | 'too_long'
+    | 'same';
+  /** Human-readable (Chinese) reason for the UI. */
+  error?: string;
+}
+
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
@@ -285,13 +311,69 @@ export class AuthService implements OnModuleInit {
     return this.createSession(username, 'local', userAgent);
   }
 
-  async changePassword(username: string, current: string, next: string): Promise<void> {
-    const local = this.findLocal(username);
-    if (!local) throw new UnauthorizedException('该账户不是本地账户，请在 NAS 上修改密码');
-    if (!(await this.verifyScrypt(current, local.password_hash))) {
-      throw new UnauthorizedException('当前密码不正确');
+  /**
+   * Change the password of an app-local account.
+   *
+   * System (NAS) accounts are refused with an explicit reason instead of a silent
+   * no-op: their password lives in the host shadow file, so writing a local hash
+   * for the same username would not change how they sign in.
+   *
+   * On success every *other* session of this user is revoked, so a password
+   * change really does lock out anyone holding a stolen cookie — while the
+   * caller's own session (`keepToken`) stays valid, so the tab that made the
+   * change is not signed out.
+   */
+  async changePassword(
+    user: SessionUser,
+    current: string,
+    next: string,
+    keepToken?: string,
+  ): Promise<PasswordChangeResult> {
+    if (user.provider === 'system') {
+      return {
+        ok: false,
+        code: 'not_local',
+        error: '当前登录的是 NAS 系统账户，其密码请在 NAS 上修改',
+      };
     }
-    await this.setLocalPassword(username, next);
+
+    const local = this.findLocal(user.username);
+    if (!local) {
+      return { ok: false, code: 'not_local', error: '该账户不是本地账户，请在 NAS 上修改密码' };
+    }
+    if (!(await this.verifyScrypt(current, local.password_hash))) {
+      return { ok: false, code: 'wrong_current', error: '当前密码不正确' };
+    }
+    if (!next || next.trim().length === 0) {
+      return { ok: false, code: 'blank', error: '新密码不能为空' };
+    }
+    if (next.length < PASSWORD_MIN_LENGTH) {
+      return { ok: false, code: 'too_short', error: `新密码至少 ${PASSWORD_MIN_LENGTH} 位` };
+    }
+    if (next.length > PASSWORD_MAX_LENGTH) {
+      return { ok: false, code: 'too_long', error: `新密码不能超过 ${PASSWORD_MAX_LENGTH} 位` };
+    }
+    if (next === current) {
+      return { ok: false, code: 'same', error: '新密码不能与原密码相同' };
+    }
+
+    await this.setLocalPassword(user.username, next);
+    const dropped = this.revokeOtherSessions(user.username, keepToken);
+    this.logger.log(
+      `本地账户 ${user.username} 已修改密码${dropped > 0 ? `，并注销了 ${dropped} 个其它会话` : ''}`,
+    );
+    return { ok: true };
+  }
+
+  /**
+   * Drop every session of `username` except `keepToken` (the one that asked for
+   * the change). Returns how many sessions were removed.
+   */
+  revokeOtherSessions(username: string, keepToken?: string): number {
+    const res = keepToken
+      ? this.db.run('DELETE FROM auth_sessions WHERE username = ? AND token != ?', [username, keepToken])
+      : this.db.run('DELETE FROM auth_sessions WHERE username = ?', [username]);
+    return res.changes;
   }
 
   /** Everything the login page needs to render itself. */

@@ -9,7 +9,7 @@ import { Controller, Get } from '@nestjs/common';
 export const BACKEND_FEATURES = [
   'game-neighbors',
   'duration-backfill',
-  'scraped-posters-all',
+  'scraped-posters-all', // 刮削到的海报/截图全部**登记**（只讲登记，不含「默认进轮播」——那是已退役的 poster-rotation-all-games）
   'duration-cache-guard',
   // 本轮新增/明确的能力。单独列出来，是为了让「部署的镜像是不是这一版」变成
   // 一条 curl 就能判断的事：前端产物在 public/ 里，后端产物在 dist/ 里，
@@ -17,16 +17,22 @@ export const BACKEND_FEATURES = [
   'hero-poster-carousel', // 详情页大图区官方海报轮播（左右箭头 + x/y 计数，循环）
   'duration-coverage-api', // GET /api/games/duration-coverage（设置页补全卡片的数据源）
   'duration-backfill-ui', // 设置页「一键批量补全通关时长」按钮
-  // 本轮（第四轮）修「只有个别游戏能翻页」时新增的能力。
-  'poster-rotation-all-games', // 官方刮取到的海报/截图全部登记且默认进轮播
-  // 第五轮：按需求 21 收口轮播归属。
+  // 第四轮修「只有个别游戏能翻页」时新增的能力。
+  //
+  // 原 `poster-rotation-all-games`（「官方刮取到的海报/截图全部登记且默认进轮播」）
+  // 已退役：官方图仍然**全部登记**，但不再默认进轮播 —— 见下面的
+  // `card-rotation-user-ticks`。
+  'card-rotation-user-ticks', // 首页卡片只轮播用户在「编辑海报」里勾选的图
+  // 第五轮：按需求 21 收口轮播归属；本轮把两套轮播彻底拆开。
   //
   // 原来的 `poster-rotation-floor` 标记的正是「官方图不足时用本地相册截图补齐
-  // 轮播」这个行为 —— 它已按需求移除（相册截图不再自动进轮播，只有用户勾选才
-  // 加入），所以标记也跟着换名。沿用旧名会让人以为补齐逻辑还在。
-  'poster-rotation-cover-only', // 只有封面默认进轮播；相册截图仅用户勾选才加入
-  'poster-rotation-user-decided', // 取消勾选（含封面）不会被刮削/启动期修复改回
-  'card-carousel-vs-hero-carousel', // 首页卡片用完整海报集，详情页大图用轮播勾选集
+  // 轮播」这个行为 —— 它已按需求移除。`poster-rotation-cover-only` 也随之退役：
+  // 封面现在是**结构性**地在卡片集合里（判据 `is_selected = 1 OR in_slideshow = 1`），
+  // 不再需要一条「把封面补进轮播」的修复规则，见 `card-rotation-cover-always`。
+  'card-rotation-cover-always', // 封面始终是卡片集合的第一帧（结构性，不靠标志位）
+  'card-rotation-user-decided', // 勾选/取消（含封面）记为用户决定，刮削与启动期清理都不改回
+  'hero-rotation-all-official', // 详情页大图默认轮播全部官方海报（scraped/upload），无需配置
+  'card-carousel-vs-hero-carousel', // 首页卡片=封面+勾选集；详情页大图=全部官方海报
   'review-pagination', // Metacritic 媒体评价按 critic-reviews 分页全量拉取
   'poster-config-protected', // 用户取消勾选的轮播项不会被重新刮削自动加回
   // 第六轮：界面细节三则。
@@ -56,7 +62,7 @@ export const BACKEND_FEATURES = [
   // `?page=` / `?offset=` 在 HTML 路由上不再生效（详见 CHANGELOG 0.6.3）。所以这一轮
   // 直接改成调用站点自己的接口 —— 下面的标记就是「镜像里有没有这条新链路」的判据。
   'reviews-api-source', // 媒体评价改从 Metacritic 官方 JSON 接口抓（HTML 解析退为兜底）
-  'card-arrows-need-slideshow', // 首页卡片只有设了轮播才显示上一张/下一张
+  'card-arrows-need-slideshow-mode', // 首页卡片箭头只在「首页卡片轮播」开关（posterMode）开启时显示
 
   // 第九轮（0.6.4）：详情页评分区与媒体评价面板的三处改动。
   //
@@ -66,6 +72,10 @@ export const BACKEND_FEATURES = [
   'ratings-no-user-score', // 详情页评分区不再显示「用户评分」那一列（M 站没有可用的用户分）
   'reviews-ui-search-sort', // 媒体评价面板支持按媒体名搜索 + 五种排序
   'reviews-page-jump', // 媒体评价页码可点，直接跳到第 N 页（不再是纯文本）
+
+  // 改密工作流。
+  'password-change-api', // POST /api/auth/password 已可用于生产：原密码校验（scrypt）+ 新密码长度下限/上限、业务失败一律 2xx + {ok,code,error}（不用 401，避免被 Web 端当成会话失效）、成功后注销该账户其它会话、NAS 系统账户返回 not_local
+  'password-change-ui', // 设置页「修改密码」卡片（原密码 + 新密码 + 确认，按后端 code 本地化提示，无需重启即生效）
 ] as const;
 
 @Controller()

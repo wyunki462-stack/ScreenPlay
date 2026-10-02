@@ -21,6 +21,7 @@ node backend/scripts/verify/poster-rotation-e2e.mjs      # 轮播归属（桩服
 node backend/scripts/verify/poster-ui-ssr.mjs            # 海报 UI 的 SSR DOM 行为
 node backend/scripts/verify/requirements-ui.mjs          # 需求 1–4 交互（真实 Chromium，不启服务）
 node backend/scripts/verify/poster-merge-unit.mjs        # 海报归属规则（esbuild 打包真实源码 + 接线断言）
+node backend/scripts/verify/password-change.mjs          # 设置页「修改密码」（本地账户，27 项）
 
 # B. 已部署实例上的运行时自检（需要容器在跑；PORT 默认 3001）
 cd <仓库根目录>
@@ -36,7 +37,8 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 > 已在 **1.0.0 瘦身**中删除（它们各自只跑一次、且与需求编号强耦合）。它们覆盖的行为
 > 现由上面那组离线套件承担：需求 1–4 的浏览器交互 → `requirements-ui.mjs`；评价分页
 > 纯函数与抓取链路 → `review-pagination-test.mjs` / `metacritic-*.mjs` / `media-reviews-e2e.mjs`；
-> 轮播归属 → `poster-rotation-e2e.mjs` / `poster-ui-ssr.mjs`；时长缓存 → `duration-cache-e2e.mjs`。
+> 轮播归属 → `poster-rotation-e2e.mjs` / `poster-ui-ssr.mjs`；时长缓存 → `duration-cache-e2e.mjs`；
+> 设置页改密 → `password-change.mjs`（本轮新增）。
 > 下文的具体命令与数字作为**历史记录**保留，复现入口以上面 A/B 两段为准。
 
 ---
@@ -116,6 +118,9 @@ HTML 路由上也不再生效。所以 0.6.3 换成直接调那个接口。复�
    # version 0.6.3 + 两个标记都在 = 这一版
    ```
 
+   > 注：`card-arrows-need-slideshow` 现已更名为 `card-arrows-need-slideshow-mode`（含义不变：
+   > 首页卡片箭头只在「首页卡片轮播」开关 `posterMode` 开启时显示）。上面是 `0.6.3` 当时的名字。
+
 2. **媒体评价抓全**（后端行为，不依赖前端）：
 
    ```bash
@@ -131,15 +136,15 @@ HTML 路由上也不再生效。所以 0.6.3 换成直接调那个接口。复�
    > 后端日志里会有 `Metacritic 媒体评价：「<slug>」抓取至第 N 页，合并后 M 条`。
    > 接口不可用时它会回落 HTML 解析（日志同样有这行，条数会少），不会清空已有数据。
 
-3. **卡片箭头跟随展现模式**（前端行为，真实 Chromium 已覆盖）：
+3. **卡片箭头跟随「首页卡片轮播」开关**（前端行为，真实 Chromium 已覆盖）：
 
    ```bash
    node backend/scripts/verify/requirements-ui.mjs   # 40 项通过 / 0 失败
    ```
 
-   手工判据：未设轮播的游戏 → 首页卡片上**没有**上一张/下一张（计数器仍在，如 `1/14`）；
-   在「编辑海报」里改成「轮播（自动切换）」→ 卡片上出现两枚箭头。详情页大图区两种模式下
-   都保留箭头。
+   手工判据：首页卡片集合 ≤1 张（没勾选、只有封面）时**没有**上一张/下一张；在「编辑海报」
+   里勾选若干海报并把「首页卡片轮播」打开（`posterMode=slideshow`）→ 卡片出现两枚箭头并自动
+   切换。**详情页大图区与这组设置无关**：只要官方海报 >1 张就自动轮播、箭头与 `x/y` 计数常驻。
 
 ---
 
@@ -267,7 +272,9 @@ sudo docker exec screenplay sh -c 'wc -l /host-etc/passwd /host-etc/shadow'
 
 > **被锁在门外怎么办**：在 `.env` 里设 `AUTH_DISABLED=1`，重启容器即可免登录进入；
 > 或用自动创建的本地 `admin` 账户登录（未设 `AUTH_ADMIN_PASSWORD` 时，
-> 随机密码会打印在容器日志：`sudo docker logs screenplay | grep -i admin`）。进去后记得改回来。
+> 随机密码会打印在容器日志：`sudo docker logs screenplay | grep -i admin`）。进去后可在
+> **设置页 →「修改密码」** 把初始密码改成自己的（填原密码 + 新密码 + 确认，立即生效，
+> 重启或重建容器后仍是新密码；改完该账户的其它会话会被注销，只保留当前会话）。
 
 ---
 
@@ -2521,36 +2528,27 @@ provider 只返回一张图、用户又没勾任何东西的游戏，详情页�
 
 | 界面 | 数据源 | 自动切换 |
 | --- | --- | --- |
-| 首页图库卡片 `PosterCarousel` | `GameSummary.posters` = **全部**登记海报（`slideshowPosters()` 去掉 `in_slideshow` 过滤） | 由 `posterMode` 决定 |
-| 详情页大图区 `HeroPosterCarousel` | `posterList` 过滤 `inSlideshow`，并上封面 | 由 `posterMode` 决定（新增），带 `data-mode` |
+| 首页图库卡片 `PosterCarousel` | `GameSummary.posters` = `cardPosters()`（`in_slideshow = 1 OR is_selected = 1`，勾选 ∪ 当前封面） | 由 `posterMode`（「首页卡片轮播」开关）决定；集合 ≤1 张不渲染箭头 |
+| 详情页大图区 `HeroPosterCarousel` | `heroPosters()` = 全部官方海报（`source` 为 `scraped`/`upload`，不含 `media`），当前封面在前 | **恒定自动**（>1 张即轮播）；无 `mode`、无 `data-mode`，与面板无关 |
 | 详情页信息卡缩略图 | `detailPosters()` = 全部登记海报 + 相册 | 由 `posterMode` 决定 |
 
-`HeroPosterCarousel` 新增 `mode` / `intervalMs`：`slideshow` 模式且有 ≥2 张时按
-`posterMode` 自动轮播（默认 3500ms，悬停暂停，手动翻过后延迟恢复），`static` 模式保持
-只有箭头。这样「勾选决定哪些图进集合、模式决定集合是否自动切换」两件事各自独立。
+> **本节已按最新语义改写**（原实现里 `HeroPosterCarousel` 曾新增 `mode` / `data-mode`，由
+> `posterMode` 决定大图是否自动轮播；该做法**已废弃**）。现在只有
+> `const rotating = count > 1;` —— 大图区张数多于 1 就自动轮播。切分后的归属是：
+> **勾选 + 开关 = 首页卡片；全部官方海报 = 详情页大图**。
 
-文案同步说清归属（`dialogs.poster.displayMode` 由「卡片封面显示」改为
-「详情页大图轮播」，并新增 `slideshowHint` / `slideshowItemHint`）。
+文案同步说清归属（`dialogs.poster.displayMode` 现为「首页卡片轮播」）。
 
-### 验证
+### 验证（新语义下的判据）
 
-```
-== 问题 3 · 首页卡片集与详情页大图轮播集已分离
-   摘要 posters=3，登记海报总数=3，其中轮播中=0
-   ✓ 摘要 posters 返回完整海报集（首页卡片不再受轮播勾选影响）
-   详情页大图集合 1 张（封面 1 + 勾选 0）
-   ✓ 详情页大图集合不含任何「用户未勾选」的相册截图
-   ✓ 勾选一张后详情页大图集合 1 → 2（勾选真的控制大图轮播）
-   ✓ 首页卡片集保持 3 张不变（两个轮播互不干扰）
-```
+- 首页卡片集合 = `in_slideshow = 1 OR is_selected = 1`（勾选 ∪ 当前封面）；集合 ≤1 张不渲染箭头；
+- 详情页大图集合 = 全部官方海报（`source` 为 `scraped`/`upload`，不含 `media`），当前封面在前；
+- 面板里的展现模式开关与轮播勾选**只改变首页卡片**；详情页大图集合与轮播行为完全不变；
+- `<HeroPosterCarousel>` 不再有 `mode` prop / `data-mode` 属性，张数 >1 即自动轮播、箭头与
+  `x/y` 计数常驻、可循环。
 
-```
-== 问题 3 · 详情页大图区轮播
-   ✓ 大图区 data-mode="static"（mode=static 正确透传）
-   ✓ 大图区 data-mode="slideshow"（mode=slideshow 正确透传）
-   ✓ 大图区有计数器（多张时可翻页）
-   ✓ 大图区容器存在（详情页大图轮播挂载点）
-```
+> 旧的断言 `✓ 大图区 data-mode="static"` / `data-mode="slideshow"` **已作废** —— 组件不再有
+> `data-mode`，照旧断必然假失败。
 
 ### 需求冲突的处理
 
@@ -2604,8 +2602,14 @@ cover rotation repaired for N game(s) (+M frame(s)); auto-added album frames rem
 | --- | --- |
 | `poster-rotation-cover-only` | 只有封面默认进轮播；相册截图仅用户勾选才加入（取代 `poster-rotation-floor`） |
 | `poster-rotation-user-decided` | 取消勾选（含封面）不会被刮削 / 启动期修复改回 |
-| `card-carousel-vs-hero-carousel` | 首页卡片用完整海报集，详情页大图用轮播勾选集 |
 | `review-pagination` | Metacritic 媒体评价按 `critic-reviews` 分页全量拉取 |
+
+> 两套轮播职责拆分后的实际标记：`card-rotation-user-ticks`（首页卡片只轮播用户勾选的图）、
+> `card-rotation-cover-always`（封面恒在卡片集合，结构性，取代 `poster-rotation-cover-only`）、
+> `card-rotation-user-decided`（勾选/取消记为用户决定，取代 `poster-rotation-user-decided`）、
+> `hero-rotation-all-official`（详情页大图默认轮播全部官方海报、无需配置）、
+> `card-carousel-vs-hero-carousel`（含义更新为「首页卡片 = 封面 + 勾选集；详情页大图 = 全部官方海报」）。
+> `poster-rotation-all-games` / `poster-rotation-cover-only` 已退役。
 
 ## 5. 界面三则（本轮追加）
 
@@ -2691,3 +2695,72 @@ Boot maintenance finished in 13.0s — nothing to repair.
 
 启动期修复现在还检一条新符号，产物自查据此更新（`ensureRotationFloor` →
 `ensureCoverInRotation`）—— 否则每次改名都会假报「产物像是旧的」。
+
+---
+
+# 验收报告 · 未发布轮次（设置页「修改密码」 · 两套轮播职责拆分）
+
+本轮两处行为变更：**A. 设置页新增「修改密码」**（本地账户）；**B. 两套轮播职责拆分**
+（首页卡片轮播 vs 详情页官方海报大图）。以下为**未发布**版本的验收记录，追加在此，
+不改动上方任何一轮的历史记录。
+
+## 0. 结论速览
+
+| 项 | 结果 |
+| --- | --- |
+| 修改密码离线套件 `password-change.mjs` | **27 项通过 / 0 项失败** |
+| 修改密码手工步骤 | 见 §1.2 |
+| 轮播职责拆分手工判据 | 见 §2 |
+
+## 1. 设置页「修改密码」
+
+### 1.1 离线套件
+
+```bash
+node backend/scripts/verify/password-change.mjs
+# → 结果：27 项通过 / 0 项失败
+```
+
+覆盖：本地 scrypt 账户校验原密码 → 写新哈希；成功后**注销该账户其它会话**（只保留发起
+改密的当前会话）；失败**一律 2xx + `{ok:false, code, error}`**（不是 401），`code` ∈
+`unauthenticated` / `not_local` / `wrong_current` / `blank` / `too_short` / `too_long` / `same`；
+新密码 4~128 位、不能与原密码相同；NAS 系统账户返回 `not_local`。
+
+> 失败刻意不用 401：Web 端把任何 401 当「会话失效」跳登录页，用户输错一次原密码就会被登出。
+
+### 1.2 手工步骤（设置页）
+
+1. 登录 → **设置页 →「修改密码」**（卡片 `data-testid="change-password"`）；
+2. 填 原密码 / 新密码 / 确认 → 提交，界面给出成功提示；
+3. 退出登录 → 用**新密码**登录成功；
+4. 退出登录 → 用**旧密码**登录失败（按 `code` 取本地化文案，不跳登录页）；
+5. 另一台设备 / 另一个浏览器上此前的会话被注销，需重新登录。
+
+## 2. 两套轮播职责拆分
+
+### 2.1 首页卡片轮播（勾选 + 开关）
+
+1. 打开某游戏「编辑海报」，勾选若干海报 → 返回图库：**首页卡片**的轮播内容随之变化；
+2. 打开「首页卡片轮播」开关（`posterMode=slideshow`）→ 卡片自动切换并显示左右箭头；
+3. **取消全部勾选** → 卡片只剩一张静态封面、**没有箭头**（集合 ≤1 张不渲染箭头）；
+4. 相册截图（`source='media'`）默认为**未勾选**。
+
+### 2.2 详情页官方海报大图（恒定自动，与面板无关）
+
+1. 进入任意游戏详情页，**无论「编辑海报」面板怎么设**（静态 / 轮播 / 勾选与否），大图区
+   都自动轮播**全部官方海报**（`source` 为 `scraped` 或 `upload`）；
+2. 大图区**不含**相册截图（`source='media'`）；
+3. 左右箭头与 `x/y` 计数**常驻可见**、可循环；张数 >1 即自动切换（3.5 秒一张）；
+4. 大图区没有 `data-mode` 属性，也没有配置入口。
+
+### 2.3 本轮 `features` 标记（`GET /api/health`）
+
+```bash
+curl -s http://127.0.0.1:3001/api/health | python3 -m json.tool \
+  | grep -E 'card-rotation-|hero-rotation-all-official|card-carousel-vs-hero-carousel|card-arrows-need-slideshow-mode|password-change-'
+```
+
+期望看到：`card-rotation-user-ticks`、`card-rotation-cover-always`、`card-rotation-user-decided`、
+`hero-rotation-all-official`、`card-carousel-vs-hero-carousel`、`card-arrows-need-slideshow-mode`、
+`password-change-api`、`password-change-ui`。旧的 `poster-rotation-all-games` /
+`poster-rotation-cover-only` 已退役。
