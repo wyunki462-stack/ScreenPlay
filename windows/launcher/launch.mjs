@@ -59,31 +59,40 @@ function die(msg) { process.stderr.write(`[ScreenPlay] 错误：${msg}\n`); proc
 
 /* ---------------------------------------------------------------- 配置 */
 
-/** 读取包根目录的 config.json（可选，键与 Tauri 壳一致）：
- *  { "dataDir": "D:\\ScreenPlay-data", "port": 3000, "authDisabled": true } */
-function readConfig() {
-  const p = path.join(ROOT, 'config.json');
-  if (!fs.existsSync(p)) return {};
-  try {
-    const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
-    log(`已读取 config.json：${p}`);
-    return cfg && typeof cfg === 'object' ? cfg : {};
-  } catch (e) {
-    die(`config.json 不是合法 JSON：${e.message}`);
-  }
-}
-
-const cfg = readConfig();
-
 function defaultDataDir() {
   const base = process.env.APPDATA || process.env.LOCALAPPDATA || os.homedir();
   return path.join(base, 'ScreenPlay');
 }
 
-// 数据目录优先级：环境变量 DATA_DIR（与后端同名，便于脚本/自测覆盖） > config.json 的 dataDir > %APPDATA%\ScreenPlay
+/** 读取一个 config.json（不存在就返回 null，损坏就报错退出，避免静默改变数据目录）。 */
+function readJson(file) {
+  if (!fs.existsSync(file)) return null;
+  try {
+    const v = JSON.parse(fs.readFileSync(file, 'utf8'));
+    log(`已读取配置：${file}`);
+    return v && typeof v === 'object' ? v : null;
+  } catch (e) {
+    die(`配置文件不是合法 JSON：${file}（${e.message}）`);
+  }
+}
+
+// 配置来源：包根目录 config.json（优先，随包分发/便携场景）→ <数据目录>/config.json（与 Tauri 壳同一位置）。
+// 键名刻意与 Tauri 壳保持一致：dataDir / port / auth("off"|"local"|"system") / mediaDirs / adminPassword；
+// 另外接受 authDisabled(布尔) 作为便利别名。
+const pkgCfg = readJson(path.join(ROOT, 'config.json')) || {};
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
-  : cfg.dataDir ? path.resolve(String(cfg.dataDir)) : defaultDataDir();
+  : pkgCfg.dataDir ? path.resolve(String(pkgCfg.dataDir)) : defaultDataDir();
+const cfg = readJson(path.join(DATA_DIR, 'config.json')) || pkgCfg;
+
+/** auth 归一化：兼容 "off"/false、"local"、true。 */
+function authMode() {
+  if (cfg.authDisabled !== undefined) return cfg.authDisabled ? 'off' : 'local';
+  const a = String(cfg.auth ?? 'off').toLowerCase();
+  if (a === 'off' || a === 'false' || a === '0' || a === '') return 'off';
+  if (a === 'system') return 'system';
+  return 'local';
+}
 
 /* ------------------------------------------------------------ 空闲端口 */
 
@@ -160,10 +169,23 @@ async function main() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const wantPort = Number(cfg.port) > 0 ? Number(cfg.port) : 0;
   const port = wantPort || (await pickPort());
-  const authDisabled = cfg.authDisabled === undefined ? true : !!cfg.authDisabled;
+  const auth = authMode();
+
+  // 媒体目录：config.json 的 mediaDirs（字符串数组或分号分隔的字符串），
+  // 否则退到 <数据目录>\media —— 必须显式给，否则后端会去扫 Linux 默认的 /media。
+  const mediaDefault = path.join(DATA_DIR, 'media');
+  const mediaDirs = Array.isArray(cfg.mediaDirs)
+    ? cfg.mediaDirs.join(';')
+    : typeof cfg.mediaDirs === 'string' ? cfg.mediaDirs : mediaDefault;
+  if (mediaDirs === mediaDefault) {
+    // 默认媒体目录不存在时先建出来，否则后端会跳过扫描并告警。
+    try { fs.mkdirSync(mediaDefault, { recursive: true }); } catch { /* 建不出来就交给后端告警 */ }
+  }
 
   log(`数据目录：${DATA_DIR}`);
+  log(`媒体目录：${mediaDirs}`);
   log(`后端端口：${port}${wantPort ? '（来自 config.json）' : '（系统分配的空闲端口）'}`);
+  if (auth !== 'off') log(`鉴权模式：${auth}（开启后需登录；本机模式密码见 <数据目录>\\初始密码.txt 或后端日志）`);
 
   const env = {
     ...process.env,
@@ -171,13 +193,21 @@ async function main() {
     HOST: '127.0.0.1',
     NODE_ENV: 'production',
     DATA_DIR,
+    MEDIA_DIRS: mediaDirs,
     WEB_DIST: webDist,
     MAINTENANCE_ON_BOOT: '0',
     BUILD_VERSION: '1.0.0-desktop-portable',
-    AUTH_DISABLED: authDisabled ? '1' : '0',
+    ...(auth === 'off' ? { AUTH_DISABLED: '1' } : { AUTH_MODE: auth }),
+    ...(auth === 'local' && cfg.adminPassword ? { AUTH_ADMIN_PASSWORD: String(cfg.adminPassword) } : {}),
     ...(fs.existsSync(ffmpeg) ? { FFMPEG_PATH: ffmpeg } : {}),
   };
-  // AUTH_DISABLED=1 时不需要账户库；否则后端按既有逻辑读系统账户或回退本地账户。
+  // auth=off 时不需要账户库；local/system 时后端按既有逻辑（本地账户库 / 系统账户）处理。
+  // local 且未提供 adminPassword 时，后端会自行播种 admin 并**把随机密码打印到日志**，
+  // 我们同时把后端输出落到 <数据目录>\\launcher.log，方便用户回头找密码。
+
+  const logFile = path.join(DATA_DIR, 'launcher.log');
+  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+  logStream.write(`\n===== ${new Date().toISOString()} 启动（port=${port} auth=${auth}）=====\n`);
 
   const child = spawn(nodeExe, [entry], {
     cwd: path.join(RES, 'backend'),
@@ -187,8 +217,8 @@ async function main() {
   });
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (d) => process.stdout.write(`  [backend] ${d}`));
-  child.stderr.on('data', (d) => process.stderr.write(`  [backend] ${d}`));
+  child.stdout.on('data', (d) => { process.stdout.write(`  [backend] ${d}`); logStream.write(d); });
+  child.stderr.on('data', (d) => { process.stderr.write(`  [backend] ${d}`); logStream.write(d); });
   child.on('exit', (code) => {
     if (!shuttingDown) log(`后端进程已退出（code=${code}）`);
   });

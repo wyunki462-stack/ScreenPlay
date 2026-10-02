@@ -54,7 +54,9 @@ node scripts/make-webapp-bundle.mjs   # → dist/ScreenPlay_1.0.0_x64-webapp.zip
 
 与 Tauri 版的差别只有「壳能力」：没有原生窗口、单实例、托盘、无边框拖拽这些；内置后端、
 数据目录、离线能力、界面与交互完全一致。数据默认 `%APPDATA%\ScreenPlay`，可在包根目录放
-`config.json` 改（`dataDir` / `port` / `authDisabled`，样例见包内 `config.example.json`）。
+`config.json` 改（`dataDir` / `port` / `auth` / `mediaDirs` / `adminPassword`，键名与 Tauri 版一致，
+样例见包内 `config.example.json`）；包根没有再读 `<数据目录>\config.json`。
+后端输出会同时写到 `<数据目录>\launcher.log`，排查启动问题先看它。
 
 > 数据目录也可用环境变量 `DATA_DIR` 覆盖（与后端同名，便于脚本化部署）。
 > 本机（Linux）自测方式：`SP_NODE=$(command -v node) SP_NO_BROWSER=1 DATA_DIR=/tmp/sp node launcher/launch.mjs`。

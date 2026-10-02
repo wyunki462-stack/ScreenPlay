@@ -83,14 +83,17 @@ const USAGE_TXT = `ScreenPlay Windows 免安装版（浏览器窗口模式）
   默认：%APPDATA%\\ScreenPlay（数据库 screenplay.db、海报、缩略图、缓存都在这里）。
   想改到别的盘（例如 D:\\ScreenPlay-data）：在本目录新建 config.json，写
       { "dataDir": "D:\\\\ScreenPlay-data" }
-  可选键：
+  可选键（与 Tauri 安装版的 config.json 键名一致）：
       "port": 3000            固定端口（不写则由系统分配空闲端口）
-      "authDisabled": true    是否关闭登录（默认 true，即直接进入界面）
+      "auth": "off"           登录开关：off（默认，直接进入界面）/ local（本机账户）/ system
+      "mediaDirs": ["D:\\\\Games\\\\shots", "E:\\\\PS5"]   媒体根目录（不写则用 <数据目录>\\media）
+      "adminPassword": "..."  仅 auth=local 时可用，指定管理员密码（不写则首次启动随机生成并打印）
 
 三、登录
-  默认关闭登录（AUTH_DISABLED=1）。想开启：把 config.json 里的
-  "authDisabled" 改成 false 后再启动；首次会用后端既有逻辑创建本地账户，
-  初始密码只在启动窗口里打印一次，请登录后立即修改。
+  默认关闭登录（auth=off，即 AUTH_DISABLED=1）。想开启：把 config.json 里的
+  "auth" 改成 "local"（旧写法 "authDisabled": false 也认）后再启动。
+  首次启动会生成随机管理员密码，**在启动窗口里打印一次**，同时写入
+  <数据目录>\\launcher.log；登录后请立即修改密码。
 
 四、媒体库
   启动后进入「设置 → 媒体库」添加你的截图/视频根目录即可（与 Web 端完全一致）。
@@ -149,8 +152,9 @@ function main() {
   fs.writeFileSync(path.join(STAGE, 'ScreenPlay.cmd'), fs.readFileSync(path.join(LAUNCHER, 'ScreenPlay.cmd')));
   fs.writeFileSync(path.join(STAGE, '使用说明.txt'), `\ufeff${USAGE_TXT.replace(/\n/g, '\r\n')}`);
   fs.writeFileSync(path.join(STAGE, 'config.example.json'),
-    `${JSON.stringify({ dataDir: 'D:\\\\ScreenPlay-data', port: 3000, authDisabled: true }, null, 2)}\n`);
-  // 注意：config.example.json 只是样例，launcher 读的是同目录的 config.json（不存在就全用默认）
+    `${JSON.stringify({ dataDir: 'D:\\\\ScreenPlay-data', port: 3000, auth: 'off', mediaDirs: ['D:\\\\Games\\\\shots'] }, null, 2)}\n`);
+  // 注意：config.example.json 只是样例，launcher 读的是同目录的 config.json
+  //（包根 config.json 优先，其次 <数据目录>\\config.json；两个都不存在就全用默认）
 
   // ------------------------------------------------- 2. 可读性预检
   // NAS 上新建文件权限为 0：zip 会静默丢文件，所以先统一修复再逐个确认。
