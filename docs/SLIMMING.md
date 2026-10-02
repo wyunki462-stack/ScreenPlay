@@ -189,7 +189,7 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 | `node_modules` 生产子集 | 266 MB（表观）/ 359 MB（占用）/ 231 个顶层包 | **101,576,720 B = 96.9 MiB（表观）/ 222 个顶层包** | ≈ −64% |
 | 同口径 `node_modules` tar.gz（gzip -6） | 61 MB | **25,570,655 B（≈25 MB）** | ≈ −58% |
 | 前端产物（磁盘字节） | `index-DZEuyZR6.js` + `index-DnrcYEYQ.css` | `index-Ca5ByDzf.js` **545,789 B** + `index-BCj6mJxQ.css` **73,345 B** | 与 Vite 报的 537.95 kB 差值 = 中文多字节（见第一节第 2 行） |
-| 镜像体积 | **571.9 MiB**（实测） | **386.6 MiB**（层核算）/ **≈394 MiB**（本地 tar 口径） | **−32% ~ −33%** |
+| 镜像体积（发布后实测，两 registry 同 digest） | **571.9 MiB**（0.6.4，13 层） | **401.6 MiB**（1.0.0，13 层） | **−29.8%（−170.3 MiB）** |
 
 ### 镜像体积：实测 vs 推算
 
@@ -216,8 +216,8 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 `@esbuild/linux-x64` 9.26 MiB 与 `@rollup/rollup-linux-x64-musl` 2.08 MiB 确属开发工具链，照删）：
 
 - `node_modules` 层：295,958,528 B → 84,831,744 + 16,855,040 = **101,686,784 B（97.0 MiB）**，
-  降幅 65.7%
-- 镜像总量：599,668,224 − 211,126,784 + 16,855,040 = **405,396,480 B（386.6 MiB）**，**降幅 32.4%**
+  降幅 65.7%（**推算**；发布后实测 112.6 MiB，偏乐观 15.6 MiB，原因见本节末）
+- 镜像总量：599,668,224 − 211,126,784 + 16,855,040 = **405,396,480 B（386.6 MiB）**，**降幅 32.4%**（推算）
 
 被删掉的 201 MiB 主要是开发工具链与只给前端用的包：`lucide-react` 25.9、`typescript` 22.6、
 `@nestjs/cli` 22.2、`@angular-devkit/{core,schematics}` 12.9、`@esbuild/linux-x64` 9.3、
@@ -225,7 +225,7 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 `react-dom` 4.3 MiB 等。
 
 **第二种口径（本地复现）**：在本机把生产子集照同格式打包，tar 口径 **108,633,600 B（103.6 MiB）**
-（`tar` 实产 108,800,000 B），比层核算的 97.0 MiB 大 6.7 MiB。差额已逐项定位：
+（`tar` 实产 108,800,000 B），比层核算（推算）的 97.0 MiB 大 6.7 MiB。差额已逐项定位：
 
 - `better-sqlite3`：本地 19.25 MiB vs 层内 11.91 MiB（**+7.33 MiB**）—— 本地树带 node-gyp 构建
   残留，而镜像是它自己那一次安装 / `npm rebuild` 的产物，这项差值是本机特有的，不该算进镜像；
@@ -233,8 +233,20 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
   0.27 MiB），镜像是 musl（15.77 + 0.29 MiB），几乎抵消（−0.3 MiB）；
 - 其余同名包逐一核对，本地比层内大的条目只有上述两项。
 
-所以镜像实测值应落在 **386.6 MiB（沿用 0.6.4 层的 better-sqlite3 构建状态）～ 394 MiB（本地 tar
-口径）** 之间，最终以 `bash scripts/docker-build.sh` 的实测为准。
+**瘦身后（1.0.0 发布后实测）**：镜像由用户在本机 `docker build` 后推上 GHCR 与 Docker Hub，
+我从两个 registry 各自拉回 manifest 核对（脚本口径见 `/tmp/m100.json` 一类 manifest JSON）：
+`1.0.0` 与 `latest` 同 digest `sha256:f4a18a209b36cae89a24fa6e3f27965195863afd0bb264fd15fab51ac8ef26e3`，
+13 层合计 **421,100,544 B = 401.6 MiB**（0.6.4 为 599,668,224 B = 571.9 MiB），**−170.3 MiB / −29.8%**；
+镜像 config 内 `BUILD_VERSION=1.0.0`。逐位对齐 13 层可见降幅**全部**落在 `node_modules` 层：
+282.2 MiB → **112.6 MiB**（另有一层 1.6 → 1.0 MiB，其余 11 层字节完全不变）。
+
+实测比上面的推算值（386.6 MiB）**大 15.0 MiB**，差额已定位在 `node_modules` 层（实测 112.6 vs 推算
+97.0 MiB）：该层里 `@img` 共 **31.8 MiB**，说明 glibc 与 musl **两套** sharp 二进制都留着
+（glibc `sharp-libvips-linux-x64` 15.49 + `sharp-linux-x64` 0.27，musl 15.77 + 0.29），而推算只算了
+musl 那 16.1 MiB —— 这 15.6 MiB 就是全部差额。此外该层还有 `react-router-dom` 被删后残留的传递依赖
+`@remix-run` 2.6 MiB 与 `react-router` 0.8 MiB。清理名单本身是干净的：react / react-dom /
+react-router-dom / lucide-react / plyr / plyr-react / react-photo-view / `@tanstack` / playwright-core /
+`@nestjs/serve-static` / typescript / vite 在层内都是 0 条目（层共 15,584 条目）。
 
 > 一句提醒：0.6.4 的层是**未压缩**推上去的，所以 registry 的存储/拉取量就是 572 MB。若把推送改成压缩层
 > （`docker buildx build --push --compression=gzip`，或推完用 skopeo/crane 转换），同内容的传输量会降到
@@ -271,10 +283,13 @@ CHANGELOG 历史条目、官方文档正文（只加说明，不删历史）。
 
 ## 五、遗留与后续
 
-1. 镜像体积的**实测值**需你执行 `bash scripts/docker-build.sh` 后用 `docker image ls` 取（本环境无
-   docker 权限）；第三节给出的是在同一份真实镜像层内容上做字节级核算的推算值 386.6 MiB（−32.4%），
-   本机 tar 口径为 394 MiB，实测应落在这两者之间。
-2. 可选优化：把镜像层改成压缩推送（见第三节末的提醒），能再省一大截传输与 registry 存储量。
+1. 镜像体积**实测已完成**：1.0.0 已发布，GHCR 与 Docker Hub 同为 **401.6 MiB**（13 层合计，
+   −29.8%）。我原先在同一份真实层上做的字节级核算给的是 386.6 MiB，**偏乐观 15.0 MiB**，原因见
+   第三节末（glibc + musl 两套 sharp 都留着）。
+2. 可选优化（1.0.1 候选，合计约 −19 MiB）：① 运行时既然只跑 Alpine/musl，就在 Dockerfile 里连
+   glibc 版 sharp 一起删（`@img/sharp-linux-x64` + `@img/sharp-libvips-linux-x64`），省 **15.6 MiB**；
+   ② 删 `node_modules/@remix-run`、`node_modules/react-router` 残留，省 **3.4 MiB**；
+   ③ 把镜像层改成压缩推送（见第三节末的提醒），只影响传输与 registry 存储量。
 3. ~~`metadata.service.ts` 的海报覆盖疑似缺陷~~ **已按用户要求修复**（2.5），并用
    `backend/scripts/verify/poster-merge-unit.mjs` 固定下来。
 4. ~~6 组重复逻辑只报告未重构~~ **已全部合并**（2.5 的 G1–G6）。

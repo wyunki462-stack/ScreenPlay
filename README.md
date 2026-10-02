@@ -605,7 +605,8 @@ curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' | grep -E '"version"|rati
 ```
 
 > **与 `0.6.4` 的差别**：界面、接口完全一致（多了 6 组去重与海报归属修复），区别主要在
-> 镜像体积 —— `node_modules` 层 282 MiB → 97 MiB，整镜像约 572 MiB → 386～394 MiB。
+> 镜像体积 —— `node_modules` 层 282.2 MiB → 112.6 MiB，整镜像 **571.9 MiB → 401.6 MiB（−29.8%）**
+> （发布后从 GHCR / Docker Hub 两个 registry 拉 manifest 实测，两处同 digest）。
 > 明细、核算方法与无回归证明见 [`docs/SLIMMING.md`](docs/SLIMMING.md)。
 
 浏览器里三处肉眼验收（都在某个游戏的详情页）：

@@ -51,13 +51,17 @@ curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' \
 # 期望：version 1.0.0，且 0.6.4 的三个界面标记都在
 ```
 
-镜像本体与体积（0.6.4 为 572 MiB）：
+镜像本体与体积（0.6.4 为 571.9 MiB，**1.0.0 发布后实测 401.6 MiB，−29.8%**）：
 
 ```bash
 docker image ls screenplay:latest
 docker run --rm --entrypoint cat screenplay:latest /app/backend/package.json | grep '"version"'
 # 期望 "version": "1.0.0"
 ```
+
+已发布镜像核对（2026-10-02，从 GHCR 与 Docker Hub 各自拉 manifest 比对）：`1.0.0` 与 `latest` 同
+digest `sha256:f4a18a209b36cae89a24fa6e3f27965195863afd0bb264fd15fab51ac8ef26e3`，13 层合计
+**421,100,544 B = 401.6 MiB**；镜像 config 内 `BUILD_VERSION=1.0.0`。
 
 - 无回归证明：10 个离线套件 / 382 条断言（含本轮新增的 `poster-merge-unit.mjs` 10 条）。
   逐套件数字、源码指纹与体积核算见 [`SLIMMING.md`](SLIMMING.md) 第一、三、四节。
