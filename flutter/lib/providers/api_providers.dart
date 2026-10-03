@@ -1,9 +1,13 @@
 // Riverpod 数据层：FutureProvider 负责只读数据，AsyncNotifier 承载扫描 / 刷新等
 // 变更操作，并在成功后自动 invalidate 相关缓存以触发重新拉取。
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/api_client.dart';
+import '../core/media_actions.dart';
+import '../core/network_quality.dart';
 import '../models/models.dart';
 
 /// 游戏列表（按过滤条件分族，条件相等时复用缓存；离开首页自动释放）。
@@ -83,3 +87,120 @@ class RefreshGameNotifier extends AsyncNotifier<void> {
     });
   }
 }
+
+/// 海报列表（按 gameId 分族）。
+///
+/// staleTime 取 5 分钟：海报变更频率低，短时间内重复进入详情页不应反复请求；
+/// 但超过 5 分钟后释放缓存（关闭 keepAlive + invalidateSelf）以便拿到最新数据。
+/// 选中封面 / 增删海报后由调用方显式 `ref.invalidate(postersProvider(gameId))`。
+final AutoDisposeFutureProviderFamily<List<Poster>, String> postersProvider =
+    FutureProvider.autoDispose.family<List<Poster>, String>(
+  (Ref ref, String gameId) {
+    final KeepAliveLink link = ref.keepAlive();
+    final Timer staleTimer = Timer(const Duration(minutes: 5), () {
+      link.close();
+      ref.invalidateSelf();
+    });
+    ref.onDispose(staleTimer.cancel);
+    return ref.watch(apiClientProvider).listPosters(gameId);
+  },
+);
+
+/// 后端会话状态（`GET /api/auth/session`）。
+///
+/// 登录 / 登出后请务必 `ref.invalidate(sessionProvider)` **并重建 ApiClient**
+/// （`apiClientProvider` 只依赖服务端地址，凭证要靠 main.dart override 传入
+/// `ApiClient(baseUrl: ..., authToken: prefs.sessionToken)`），否则新 token 不会生效。
+final FutureProvider<SessionInfo> sessionProvider = FutureProvider<SessionInfo>(
+  (Ref ref) => ref.watch(apiClientProvider).session(),
+);
+
+/// 自定义排序变更（含进行中状态）。
+final AsyncNotifierProvider<ReorderGamesNotifier, void> reorderGamesProvider =
+    AsyncNotifierProvider<ReorderGamesNotifier, void>(ReorderGamesNotifier.new);
+
+class ReorderGamesNotifier extends AsyncNotifier<void> {
+  @override
+  Future<void> build() async {}
+
+  /// 把 [gameId] 移到 [beforeId] 之前或 [afterId] 之后（都为空 = 移到末尾）。
+  /// 成功后失效游戏列表与详情缓存（列表顺序即由自定义顺序决定）。
+  Future<void> run({
+    required String gameId,
+    String? beforeId,
+    String? afterId,
+  }) async {
+    state = const AsyncLoading<void>();
+    state = await AsyncValue.guard<void>(() async {
+      await ref.read(apiClientProvider).reorderGames(
+            gameId: gameId,
+            beforeId: beforeId,
+            afterId: afterId,
+          );
+      ref.invalidate(gamesProvider);
+      ref.invalidate(gameDetailProvider(gameId));
+    });
+  }
+}
+
+/// 删除媒体变更（含进行中状态）。
+final AsyncNotifierProvider<DeleteMediaNotifier, void> deleteMediaProvider =
+    AsyncNotifierProvider<DeleteMediaNotifier, void>(DeleteMediaNotifier.new);
+
+class DeleteMediaNotifier extends AsyncNotifier<void> {
+  @override
+  Future<void> build() async {}
+
+  /// 删除媒体：本地三级缓存必清；[syncToServer]=true 时再同步删服务器文件。
+  ///
+  /// 注意这里是「先抛后置态」而不是 `AsyncValue.guard`：
+  /// 同步删除失败（尤其 401 = 需要登录 Linux 端账号）必须把 ApiException 抛给 UI 提示，
+  /// guard 会把异常吞进 state 里，调用方就拿不到带中文说明的报错。
+  Future<DeleteOutcome> run(Media media, {required bool syncToServer}) async {
+    state = const AsyncLoading<void>();
+    try {
+      final DeleteOutcome outcome = await ref
+          .read(mediaActionsProvider)
+          .delete(media, syncToServer: syncToServer);
+      // 删除成功后媒体列表 / 游戏详情（内含媒体计数）/ 全局列表与统计都会变。
+      ref.invalidate(gameMediaProvider(media.gameId));
+      ref.invalidate(gameDetailProvider(media.gameId));
+      ref.invalidate(gamesProvider);
+      ref.invalidate(statsProvider);
+      state = const AsyncData<void>(null);
+      return outcome;
+    } catch (error, stackTrace) {
+      state = AsyncError<void>(error, stackTrace);
+      rethrow;
+    }
+  }
+}
+
+/// 当前清晰度（[mediaQualityProvider] 的只读别名，方便设置页按语义引用）。
+final Provider<MediaQuality> imageQualityProvider = Provider<MediaQuality>(
+  (Ref ref) => ref.watch(mediaQualityProvider),
+);
+
+/// 「当前取图 URL 选择器」签名：`thumb=true` 强制缩略图。
+typedef PickImageUrl = String Function(Media media, {bool thumb});
+
+/// 取图 URL 选择器：把清晰度策略收敛到一处，卡片 / 相册只调它，不各自判断网络。
+///
+///  - `thumb=true`：始终缩略图（列表小图 / 快速滚动降级时用）；
+///  - 否则按 [mediaQualityProvider]：原图（视频走 stream，否则 original）/ 预览图。
+/// 这样「WiFi 原图、移动数据预览、关开关全原图」的策略只实现一次。
+final Provider<PickImageUrl> pickImageUrlProvider = Provider<PickImageUrl>(
+  (Ref ref) {
+    final MediaQuality quality = ref.watch(mediaQualityProvider);
+    final ApiClient api = ref.watch(apiClientProvider);
+    return (Media media, {bool thumb = false}) {
+      if (thumb) return api.mediaUrl(media.id, variant: MediaVariant.thumbnail);
+      if (quality == MediaQuality.original) {
+        return media.type == MediaType.video
+            ? api.mediaUrl(media.id, variant: MediaVariant.stream)
+            : api.mediaUrl(media.id, variant: MediaVariant.original);
+      }
+      return api.mediaUrl(media.id, variant: MediaVariant.preview);
+    };
+  },
+);

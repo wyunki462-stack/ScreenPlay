@@ -231,6 +231,7 @@ class Media {
     required this.streamUrl,
     required this.thumbnailUrl,
     required this.coverUrl,
+    this.previewUrl,
   });
 
   factory Media.fromJson(Map<String, dynamic> json) {
@@ -248,6 +249,7 @@ class Media {
       streamUrl: json['streamUrl'] as String? ?? '',
       thumbnailUrl: json['thumbnailUrl'] as String? ?? '',
       coverUrl: _asString(json['coverUrl']),
+      previewUrl: _asString(json['previewUrl']),
     );
   }
 
@@ -265,8 +267,21 @@ class Media {
   final String thumbnailUrl;
   final String? coverUrl;
 
+  /// 预览图地址（后端媒体 DTO 的 `previewUrl`，形如 `/api/media/:id/preview`）。
+  /// 移动数据下取图清晰度降级时会优先用它（见 core/network_quality.dart）。
+  final String? previewUrl;
+
+  /// 派生缩略图地址（`/api/media/:id/thumbnail`），由 ApiClient 负责拼接绝对前缀。
+  String get thumbnailPath => '/api/media/$id/thumbnail';
+
+  /// 派生预览图地址（`/api/media/:id/preview`）。
+  String get previewPath => '/api/media/$id/preview';
+
   /// 派生原图地址（`/api/media/:id/original`），由 ApiClient 负责拼接绝对前缀。
   String get originalPath => '/api/media/$id/original';
+
+  /// 视频流地址（后端 DTO 中已是可直接播放的地址，这里只做别名，便于统一取用）。
+  String get streamPath => streamUrl;
 }
 
 /// `Achievement` —— 成就。
@@ -443,6 +458,61 @@ class LibraryStatus {
   final DateTime? lastScanAt;
   final int totalGames;
   final int totalMedia;
+}
+
+/// `Poster` —— 海报（`GET /api/games/:id/posters` 的列表项）。
+/// 字段与后端 posters.service.ts 的 DTO 同名映射。
+class Poster {
+  const Poster({
+    required this.id,
+    required this.gameId,
+    required this.url,
+    required this.thumbUrl,
+    required this.source,
+    required this.mediaId,
+    required this.isSelected,
+    required this.isCover,
+    required this.inSlideshow,
+    required this.sortOrder,
+    required this.createdAt,
+  });
+
+  factory Poster.fromJson(Map<String, dynamic> json) {
+    return Poster(
+      id: json['id'] as String,
+      gameId: json['gameId'] as String,
+      url: json['url'] as String? ?? '',
+      thumbUrl: _asString(json['thumbUrl']),
+      source: _asString(json['source']) ?? 'upload',
+      mediaId: _asString(json['mediaId']),
+      isSelected: json['isSelected'] as bool? ?? false,
+      isCover: json['isCover'] as bool? ?? false,
+      inSlideshow: json['inSlideshow'] as bool? ?? false,
+      sortOrder: _asInt(json['sortOrder']) ?? 0,
+      createdAt: _parseUtc(json['createdAt']),
+    );
+  }
+
+  final String id;
+  final String gameId;
+
+  /// 原图地址（由 ApiClient.resolve 拼绝对前缀）。
+  final String url;
+
+  /// 缩略图地址；可能为空（此时回退用 [url]）。
+  final String? thumbUrl;
+
+  /// 来源：`upload` / `media` / ...
+  final String source;
+
+  /// 来自媒体时对应的 mediaId。
+  final String? mediaId;
+
+  final bool isSelected;
+  final bool isCover;
+  final bool inSlideshow;
+  final int sortOrder;
+  final DateTime? createdAt;
 }
 
 /// 游戏列表过滤条件 —— 作为 `gamesProvider.family` 的参数，需实现相等语义。

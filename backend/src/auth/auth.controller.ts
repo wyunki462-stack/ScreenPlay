@@ -12,6 +12,20 @@ function cookieMaxAge(service: AuthService): number {
   return Math.max(1, service.sessionTtlSeconds);
 }
 
+/**
+ * Resolve the caller's session token from the cookie (Web / browser) or from an
+ * `Authorization: Bearer` header (the Flutter Android client, which keeps no
+ * cookie jar and therefore sends the token it got from `Set-Cookie`).
+ *
+ * Mirrors `AuthGuard.currentUser` so both credential channels agree on who the
+ * caller is; cookie behaviour is untouched, the header is purely additive.
+ */
+function sessionTokenOf(req: Request): string | undefined {
+  const cookieToken = readCookie(req.headers.cookie, SESSION_COOKIE);
+  const bearer = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? '')?.[1]?.trim();
+  return cookieToken || bearer || undefined;
+}
+
 @Controller('api/auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
@@ -19,7 +33,7 @@ export class AuthController {
   /** What the login page should show, and whether auth is even on. */
   @Get('session')
   session(@Req() req: Request) {
-    const token = readCookie(req.headers.cookie, SESSION_COOKIE);
+    const token = sessionTokenOf(req);
     const user = this.auth.resolve(token);
     return { ...this.auth.describe(), authenticated: !!user, user };
   }
@@ -52,7 +66,7 @@ export class AuthController {
 
   @Post('logout')
   logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    this.auth.logout(readCookie(req.headers.cookie, SESSION_COOKIE));
+    this.auth.logout(sessionTokenOf(req));
     res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
     return { ok: true };
   }
@@ -70,7 +84,7 @@ export class AuthController {
     @Req() req: Request,
     @Body() body: { current?: string; next?: string },
   ): Promise<PasswordChangeResult> {
-    const token = readCookie(req.headers.cookie, SESSION_COOKIE);
+    const token = sessionTokenOf(req);
     const user = this.auth.resolve(token);
     if (!user) {
       return { ok: false, code: 'unauthenticated', error: '未登录或会话已过期，请重新登录' };

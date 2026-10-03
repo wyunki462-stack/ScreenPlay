@@ -500,6 +500,32 @@ are passed through unchanged. Use this for lightboxes and "view original".
 Forces serving the original bytes (for "view original" in the image viewer),
 with correct `Content-Type`.
 
+### `DELETE /api/media/:id`
+删除一个媒体（安卓端相册「长按删除」同步到服务端）。一次请求会清掉：
+`media` 索引行、库根目录里的**原图**、`DATA_DIR` 下的**缩略图**（含 JXR 变体）/
+**封面** / **预览**缓存，以及 `game_posters` 中指向该媒体的**悬空海报引用**；
+若该媒体正是游戏封面，会按海报删除的同一规则提升下一张海报，否则回退到该游戏
+仍在库中的首张本地图片（不会留下 404 的 `poster_url`）。
+
+```bash
+curl -b /tmp/sp.jar -X DELETE http://127.0.0.1:3001/api/media/<id>
+# → {"ok":true,"id":"<id>","deleted":true,
+#    "removedFiles":5,"postersRemoved":1,"originalSkipped":false}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `ok` / `deleted` | 成功恒为 `true` |
+| `removedFiles` | 真正从磁盘删除的文件数（原图 + 缓存，静默忽略删除失败） |
+| `postersRemoved` | 被一并清掉的悬空 `game_posters` 行数 |
+| `originalSkipped` | 原图 `file_path` 不在任何库根目录（`library_roots` / `MEDIA_DIRS`）之下时为 `true`，跳过删除以防 `../` 逃逸 |
+
+`404`：该 `id` 在 `media` 表中不存在（重复删除也返回 404）。
+
+**鉴权**：与其它 `/api/*` 一致，仅在 `/api/auth/*` 与 `/api/health` 之外受全局会话守卫。
+带凭证（Linux/Web 端会话 Cookie 或 `Authorization: Bearer`）才能删；Windows 桌面端以
+`AUTH_DISABLED=1` 运行，无凭证即可删。
+
 ---
 
 ## Error format
@@ -1123,7 +1149,9 @@ curl 'http://127.0.0.1:3001/api/games/match/search?q=宝可梦%20紫'
 
 开启认证后，除 `/api/health` 与 `/api/auth/*` 外，所有 `/api/*` 接口都要求有效会话。
 会话凭据放在 **httpOnly Cookie** `screenplay_session` 中（浏览器 JS 读不到），
-也接受 `Authorization: Bearer <token>` 便于脚本调用。
+也接受 `Authorization: Bearer <token>`（登录接口返回的会话令牌）。`GET /api/auth/session`、
+`POST /api/auth/logout`、`POST /api/auth/password` 与受守卫的业务接口一样，两种凭据都识别
+（Cookie 优先，其次 Bearer）—— 安卓端不保存 Cookie，靠 Bearer 判断会话状态与登出。
 
 `AUTH_DISABLED=1` 时全部放行，便于忘记密码时应急。
 
@@ -1133,6 +1161,7 @@ curl 'http://127.0.0.1:3001/api/games/match/search?q=宝可梦%20紫'
 | POST | `/api/auth/login` | `{username, password, remember?}` → 成功后 `Set-Cookie` |
 | POST | `/api/auth/logout` | 销毁会话并清除 Cookie |
 | POST | `/api/auth/password` | `{current, next}` 修改**本地账户**密码（设置页「修改密码」调用的就是它）。成功 `{ok:true}`；失败**一律 2xx + `{ok:false, code, error}`**，`code` ∈ `unauthenticated` / `not_local` / `wrong_current` / `blank` / `too_short` / `too_long` / `same` —— 故意不用 401：Web 端把任何 401 当作「会话已失效」并跳回登录页，用户输错一次原密码就会被登出。新密码 4~128 位、不能与原密码相同；成功后**注销该账户的其它会话**（被盗 cookie 立刻失效），只保留发起改密的当前会话；NAS 系统账户返回 `not_local` |
+| DELETE | `/api/media/:id` | 删除媒体（索引行 + 原图 + 缩略图/封面/预览缓存 + 悬空海报引用）。与其它 `/api/*` 一样**受全局会话守卫**：带 Cookie/`Bearer` 才能删，`AUTH_DISABLED=1`（Windows 桌面端）时无凭证放行。返回 `{ok,id,deleted,removedFiles,postersRemoved,originalSkipped}`，`404` 表示媒体不存在（详见「Media streaming endpoints」） |
 
 ```bash
 # 登录并保存 Cookie

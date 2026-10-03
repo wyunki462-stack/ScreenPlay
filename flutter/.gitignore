@@ -1,0 +1,20 @@
+# Flutter / Dart 构建产物与机器相关文件（安卓端）
+# 注：仓库根 .gitignore 已忽略 flutter/**/build、flutter/**/.dart_tool 等；这里补安卓工程特有项。
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# Android 本机构建（机器相关，不进版本库）
+android/.gradle/
+android/.kotlin/
+android/local.properties
+android/.cxx/
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+
+# 产物
+*.apk
+*.aab

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../core/api_client.dart';
+import '../core/prefs.dart';
 import '../models/models.dart';
 import '../providers/api_providers.dart';
 import '../utils/format.dart';
@@ -243,7 +244,7 @@ class _DetailHeader extends StatelessWidget {
                         visualDensity: VisualDensity.compact,
                       ),
                     if (detail.metacriticScore != null)
-                      ClosureChip(
+                      Chip(
                         avatar: Text(
                           '${detail.metacriticScore}',
                           style: TextStyle(
@@ -450,6 +451,8 @@ class _LabelValue extends StatelessWidget {
 }
 
 /// 媒体分区：图片/视频混合（MasonryGridView），shrinkWrap 嵌入整页滚动。
+/// 长按 = 删除（确认弹窗 → 同步删服务器 / 仅清本机缓存）。
+/// 删除后共享的本地隐藏集合会让网格立刻少一张；同步删除时 provider 也会被失效，两者互为兜底。
 class _MediaTab extends ConsumerWidget {
   const _MediaTab({required this.gameId});
 
@@ -463,8 +466,14 @@ class _MediaTab extends ConsumerWidget {
       error: (Object error, StackTrace stackTrace) => _TabError(
         onRetry: () => ref.invalidate(gameMediaProvider(gameId)),
       ),
-      data: (List<Media> media) {
-        if (media.isEmpty) return const _EmptyText(text: '暂无媒体文件');
+      data: (List<Media> all) {
+        // 过滤本地已删除项（含「仅清本机缓存」的情况）；剩下的为空就是空态，
+        // 直接渲染空态、不额外发任何请求（不做递归扫描）。
+        final Set<String> removedIds = ref.watch(locallyRemovedMediaIdsProvider);
+        final List<Media> media = all
+            .where((Media m) => !removedIds.contains(m.id))
+            .toList(growable: false);
+        if (media.isEmpty) return const _EmptyText(text: '暂无图片');
         final ApiClient api = ref.read(apiClientProvider);
         // 非视频媒体可进入图片查看器（含 gif，按图片展示）。
         final List<Media> images =
@@ -483,6 +492,7 @@ class _MediaTab extends ConsumerWidget {
               media: m,
               coverUrl: _coverUrl(api, m),
               onTap: () => _onTapMedia(context, api, images, m),
+              onLongPress: () => _deleteMedia(context, ref, m),
             );
           },
         );
@@ -490,8 +500,19 @@ class _MediaTab extends ConsumerWidget {
     );
   }
 
+  Future<void> _deleteMedia(BuildContext context, WidgetRef ref, Media media) async {
+    // 删除是写操作：只在应用前台执行（用户长按触发天然满足，runMediaDelete 内也会显式判断）。
+    // 确认弹窗 → 执行删除 → 中文 SnackBar；成功后由共享的本地隐藏集合把该项从网格移除。
+    await runMediaDelete(
+      context,
+      ref,
+      media: media,
+      syncToServer: ref.read(syncDeleteProvider),
+    );
+  }
+
   String? _coverUrl(ApiClient api, Media m) {
-    // 视频优先封面；缩略图由服务端统一转 WebP，客户端可稳定解码。
+    // 网格缩略图继续用 thumbnail（列表要快）；视频优先封面。
     if (m.type == MediaType.video && m.coverUrl != null && m.coverUrl!.isNotEmpty) {
       return api.resolve(m.coverUrl!);
     }
@@ -513,13 +534,15 @@ class _MediaTab extends ConsumerWidget {
       return;
     }
 
-    // 图片用缩略图展示（保证可解码），「查看原图」再走 /original。
+    // 大图浏览按清晰度取图（preview/original），网格用缩略图保证快；
+    // displayUrl 只是 preview 端点缺失时的兜底（缩略图地址）。
     final List<PhotoItem> items = images
         .map((Media img) => PhotoItem(
               id: img.id,
               displayUrl: api.resolve(img.thumbnailUrl),
               originalUrl: api.mediaOriginalUrl(img.id),
               label: img.fileName,
+              media: img,
             ))
         .toList(growable: false);
     int start = images.indexWhere((Media img) => img.id == tapped.id);

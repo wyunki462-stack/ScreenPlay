@@ -1,10 +1,52 @@
-include ':app'
+pluginManagement {
+    def flutterSdkPath = {
+        def properties = new Properties()
+        file("local.properties").withInputStream { properties.load(it) }
+        def flutterSdkPath = properties.getProperty("flutter.sdk")
+        assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
+        return flutterSdkPath
+    }()
 
-def localPropertiesFile = new File(rootProject.projectDir, "local.properties")
-def properties = new Properties()
-assert localPropertiesFile.exists()
-localPropertiesFile.withReader("UTF-8") { reader -> properties.load(reader) }
+    includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
-def flutterSdkPath = properties.getProperty("flutter.sdk")
-assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
-apply from: "$flutterSdkPath/packages/flutter_tools/gradle/app_plugin_loader.gradle"
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+    id "com.android.application" version "8.1.4" apply false
+    // Kotlin 2.2.0：package_info_plus 9.0.1 / wakelock_plus 1.4.0 在各自 build.gradle 里
+    // 声明 `kotlin_version = '2.2.0'` 并依赖 `kotlin-stdlib:2.2.0`（元数据版本 2.2.0），
+    // Kotlin 1.9.x 编译器读不了（"Class 'kotlin.Unit' was compiled with an incompatible
+    // version of Kotlin. The actual metadata version is 2.2.0, but the compiler version
+    // 1.9.0 can read versions up to 2.0.0"）。Flutter 的报错提示也是「需要更新的 Kotlin 插件」。
+    id "org.jetbrains.kotlin.android" version "2.2.0" apply false
+}
+
+// Flutter 3.24.5 的 Gradle 插件只在 :app 上创建 `flutter` 扩展，而本项目的插件工程
+// （gal 2.3.3 / package_info_plus 9.0.1 / wakelock_plus 1.4.0）在各自的
+// android/build.gradle 里写的是 `compileSdk flutter.compileSdkVersion`，插件工程求值时
+// 会报 "Could not get unknown property 'flutter'..." 并连锁报
+// "compileSdkVersion is not specified"。这里在插件工程求值前补上同值的 `flutter`：
+// 优先复用 :app 上真实的 FlutterExtension（build.gradle 里 evaluationDependsOn(':app')
+// 保证 :app 先求值），取不到时退回 Flutter 3.24.5 的默认常量。
+gradle.beforeProject { project ->
+    if (project.path == ':app') {
+        return
+    }
+    def appFlutter = project.rootProject.findProject(':app')?.extensions?.findByName('flutter')
+    project.ext.flutter = appFlutter ?: [
+        compileSdkVersion: 34,
+        minSdkVersion   : 21,
+        targetSdkVersion: 34,
+        ndkVersion      : '23.1.7779620',
+        versionCode     : 1,
+        versionName     : '1.3.1',
+    ]
+}
+
+include ":app"

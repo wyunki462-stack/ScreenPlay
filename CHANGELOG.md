@@ -6,6 +6,58 @@
 
 ---
 
+## [1.3.1] — 2026-10-04（安卓端 Flutter 客户端首发）
+
+**本轮新增安卓端首个客户端（`flutter/`，版号 `1.3.1`）**，并为此在后端做了**两个纯加法改动**：
+新增 `DELETE /api/media/:id`、认证接口的会话三端点补上 `Authorization: Bearer` 识别。
+**Linux 服务端 / Docker 镜像 / Windows 桌面端的服务版号一律不变**（`/api/health` 在 Linux 端仍是
+`1.3.0`，根 `package.json` 与 `windows/**` 一字未动），Windows 安装包本版**不重发**。
+HTTP 接口只增不改、DTO 与状态码未动、数据库结构零改动（无新表新列）。
+
+### 新增
+
+- **安卓端客户端（Flutter 3.24.5，minSdk 28 / targetSdk 34，20 个 Dart 文件 / 6118 行）**：
+  - 连接：填 `IP:端口` 后探测 `GET /api/auth/session` —— `enabled=false`（Windows 桌面端内置后端
+    `AUTH_DISABLED=1`）直接进首页；`enabled=true`（Linux 端）转登录页，复用既有登录接口与会话校验。
+    令牌同时以 `Authorization: Bearer` 与 `Cookie: screenplay_session` 携带。
+  - 图库：默认一行 2 个卡片（宽 ≥600 三列、≥900 四列），搜索/筛选/排序（新增「自定义排序」）；
+    卡片海报**左右滑动**切换，**长按卡片拖拽**调整自定义顺序并即时 `PUT /api/games/order`（乐观 + 失败回滚）。
+  - 相册：图片/视频**长按删除**（确认弹窗）；「删除同步到服务端」默认开启 ⇒ 调 `DELETE /api/media/:id`
+    删除服务端文件与索引；关闭 ⇒ 只清本机缓存并从列表本地隐藏，不发网络请求。
+  - 大图（捏合缩放 + 预览图/原图切换）、视频全屏播放（`/stream`）、**系统分享面板**、**保存到系统相册**；
+    **客户端不含任何上传路径**。
+  - 清晰度：设置页「WiFi 下自动加载原图」（默认开）⇒ WiFi/以太网取原图、移动数据取低分辨率预览图；
+    关闭后一律原图。内存 + 磁盘三级缓存；退后台取消非必要请求、快速滚动不预取离屏项。
+  - 权限只加 `ACCESS_NETWORK_STATE` 与 `WRITE_EXTERNAL_STORAGE(maxSdkVersion=28)`，不申请定位/相机/传感器/读取相册。
+- **后端**：`DELETE /api/media/:id`（删磁盘文件 + 删 DB 行 + 清缩略图/预览缓存，附带清理
+  `game_posters.media_id` 悬挂引用与 `games.poster_url` 回退；原图删除带媒体库根路径校验），
+  返回 `{ok,id,deleted,removedFiles,postersRemoved,originalSkipped}`；认证三端点同识别 Cookie 与 Bearer。
+
+### 验证
+
+- `cd flutter && flutter analyze`：**0 error / 0 warning**（7 条 info 为 riverpod 2.6.1 弃用提示）。
+- `node backend/scripts/verify/media-delete-e2e.mjs`：**22 项通过 / 0 失败**（含无凭证 401 / 带 Cookie 200 /
+  磁盘与 DB 行消失 / 二次删除 404 / 悬挂海报清理 / `AUTH_DISABLED=1` 免凭证 200）。
+- `node backend/scripts/verify/android-auth-bearer.mjs`：**19 项通过 / 0 失败**（Bearer-only 的
+  `session` / `logout` / `password`，Cookie 路径回归）。
+- `npm --prefix backend run build`、`npx tsc --noEmit`：EXIT 0。
+- 安卓包：`cd flutter && flutter build apk --release --split-per-abi` 成功，产出三个 ABI 分包：
+  `app-arm64-v8a-release.apk` 21,240,968 B / `app-armeabi-v7a-release.apk` 18,797,918 B /
+  `app-x86_64-release.apk` 22,359,823 B（`release` 用 debug keystore 签名，可侧载、不适用于上架）。
+  `aapt2 dump badging` 复核：`package com.screenplay.app`、`versionName 1.3.1`、`minSdk 28`、
+  `targetSdk 34`、权限只有 `INTERNET` + `ACCESS_NETWORK_STATE` + `WRITE_EXTERNAL_STORAGE(maxSdk 28)`；
+  `apksigner verify --verbose` ⇒ `Verifies`（v2 方案）。真机交互验收（拖拽手感、分享面板、存相册、
+  移动数据取预览图）待用户设备执行。
+
+### 有意保留
+
+- 未开启 R8 / `minifyEnabled` / `shrinkResources`：无正式 keystore、无真机回归混淆后的插件反射，
+  体积靠 `--split-per-abi` 与精简依赖控制。
+- 安卓端 `gradle.properties` / `gradle-wrapper.properties` 的国内镜像与内存参数：交付前已还原为仓库原值。
+- 变更点全量说明见 [`flutter/docs/ANDROID-1.3.1.md`](flutter/docs/ANDROID-1.3.1.md)。
+
+---
+
 ## [1.3.1] — 2026-10-03
 
 **仅 Windows 端修复，Linux 版本无变更。** 桌面端版号 `1.3.0` → `1.3.1`，Linux 服务端、Docker 镜像、

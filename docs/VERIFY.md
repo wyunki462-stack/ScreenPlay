@@ -22,6 +22,8 @@ node backend/scripts/verify/poster-ui-ssr.mjs            # 海报 UI 的 SSR DOM
 node backend/scripts/verify/requirements-ui.mjs          # 需求 1–4 交互（真实 Chromium，不启服务）
 node backend/scripts/verify/poster-merge-unit.mjs        # 海报归属规则（esbuild 打包真实源码 + 接线断言）
 node backend/scripts/verify/password-change.mjs          # 设置页「修改密码」（本地账户，27 项）
+node backend/scripts/verify/media-delete-e2e.mjs         # DELETE /api/media/:id 端到端（22 项，安卓端 1.3.1）
+node backend/scripts/verify/android-auth-bearer.mjs      # 会话端点接受 Authorization: Bearer（19 项，安卓端 1.3.1）
 node backend/scripts/verify/sqlite-vacuum.mjs            # 可选启动期 VACUUM（12 项；默认关，MAINTENANCE_VACUUM=1 才走）
 node scripts/verify-docker-layers.mjs                    # Dockerfile 分层自查（33 项；纯静态解析，不需要 docker）
 
@@ -52,6 +54,73 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 > 轮播归属 → `poster-rotation-e2e.mjs` / `poster-ui-ssr.mjs`；时长缓存 → `duration-cache-e2e.mjs`；
 > 设置页改密 → `password-change.mjs`（本轮新增）。
 > 下文的具体命令与数字作为**历史记录**保留，复现入口以上面 A/B 两段为准。
+
+---
+
+## 1.3.1：安卓端 Flutter 客户端（Linux / Windows 服务版号未变，仍 1.3.0）
+
+范围：新增 `flutter/**`（Flutter 3.24.5 安卓客户端，`minSdk 28` / `targetSdk 34`）+
+后端两个**纯加法**改动（新增 `DELETE /api/media/:id`；`/api/auth/session`、`/logout`、`/password`
+补上 `Authorization: Bearer` 识别）。HTTP 接口只增不改、数据库结构零改动、根 `package.json`
+与 `windows/**` 未动；**Linux 容器 / Docker 镜像 / Windows 桌面端的服务版号一律不变**
+（Linux 端 `/api/health` 仍是 `1.3.0`），安卓端版号 `1.3.1`（`flutter/pubspec.yaml` `1.3.1+1`）。
+
+变更点全量说明见 [`../flutter/docs/ANDROID-1.3.1.md`](../flutter/docs/ANDROID-1.3.1.md)。
+
+### 一键复核（不需要手机，也不需要 docker 权限）
+
+```bash
+cd flutter && flutter analyze                        # 期望 0 error / 0 warning（7 条 info 为 riverpod 2.6.1 弃用提示）
+node backend/scripts/verify/media-delete-e2e.mjs     # 期望「22 项通过 / 0 项失败」
+node backend/scripts/verify/android-auth-bearer.mjs  # 期望「19 项通过 / 0 项失败」
+node scripts/gen-source-hash.mjs --check             # 期望 ✓ a0e18c54d5340a97（137 文件）
+cd web && npx tsc --noEmit                           # 前端类型检查：无输出即通过
+```
+
+`media-delete-e2e.mjs` 覆盖：无凭证 401（Linux 模式）/ 带 Cookie 200 / 磁盘文件与 `media` 行消失 /
+二次删除 404 / 列表与 `mediaCount` 一致 / `game_posters` 悬挂引用清理 / `AUTH_DISABLED=1` 免凭证 200。
+`android-auth-bearer.mjs` 覆盖：Bearer-only（不带 Cookie）时 `/api/auth/session`、`/logout`、
+`/password` 均正确识别，且 Cookie 路径回归通过。
+
+### 构建复核（NAS 上实测）
+
+```bash
+cd flutter
+flutter pub get
+flutter build apk --release --split-per-abi
+# 产物：build/app/outputs/flutter-apk/app-{arm64-v8a,armeabi-v7a,x86_64}-release.apk
+```
+
+产物口径（2026-10-04 本机 NAS 构建，`release` 用 debug keystore 签名）：
+
+| 项 | 值 |
+| --- | --- |
+| `app-arm64-v8a-release.apk` | 21,240,968 B（20.26 MiB），`versionCode` 2001，SHA-256 `8c5a1d731ac4403b4b6ebfde93c64dbd787778a9cc4663730cb61e2fecdaca82`（主推，现代手机） |
+| `app-armeabi-v7a-release.apk` | 18,797,918 B（17.93 MiB），`versionCode` 1001，SHA-256 `8ec12348958376abd14d636abe3245c49768a0df6d50cf1482c9128f5743b1a6`（老设备） |
+| `app-x86_64-release.apk` | 22,359,823 B（21.32 MiB），`versionCode` 4001，SHA-256 `689a2922aa17bbcf6c3922def7dfa870ca1981c2fb697610acab79ba270ffaed`（模拟器 / x86 设备） |
+| 包信息（三个包一致） | `package com.screenplay.app` / `versionName 1.3.1` / `sdkVersion 28` / `targetSdkVersion 34` / 权限仅 `INTERNET` + `ACCESS_NETWORK_STATE` + `WRITE_EXTERNAL_STORAGE(maxSdkVersion=28)`（`aapt2 dump badging` 实测） |
+| 签名 | `apksigner verify --verbose` ⇒ `Verifies`（v2 方案；证书 `CN=Android Debug`，SHA-256 `9a1a94436902c1bc5f43e76ff0435c4b1da46dfff30d3e5a60f1cf8ea9597fe3`） |
+
+> 源码指纹说明：`backend/src` 本轮改动（媒体删除 + Bearer）后指纹由 `1736b31e358104b9` 变为
+> **`a0e18c54d5340a97`**（137 文件）；下面 1.3.1 Windows 节里记的 `1736b31e358104b9` 是
+> 2026-10-03 的历史值。
+
+### 真机手工验收清单（NAS 上无 Android 设备，需在手机上执行）
+
+1. **连接 Linux 端**：填容器地址 `IP:端口` → 出现登录页 → 用 NAS 账号登录成功进首页；
+   杀掉重进仍在登录态；设置页「退出登录」后回到登录页。
+2. **连接 Windows 桌面端**：填 PC 的局域网 `IP:端口` → **不弹登录**直接进首页（后端 `AUTH_DISABLED=1`）。
+3. **布局**：竖屏手机默认一行 2 个卡片；横屏/平板自动 3–4 列，卡片不变形。
+4. **卡片海报**：左右滑动能切上一张/下一张海报，滑动**不会**误进详情页；点击卡片正常进详情。
+5. **长按拖拽排序**：排序选「自定义排序」→ 长按卡片拖动 → 松手顺序保持；重进 App 顺序不变
+   （已同步 `PUT /api/games/order`）；断网时拖动应回滚并提示「排序同步失败」。
+6. **相册删除**：长按图片/视频 → 系统风格确认框 → 确认后：
+   - 「删除同步到服务端」开（默认）：下拉刷新后服务端也没有该项；
+   - 关闭：仅本机列表消失，杀掉重进又出现（服务端未删）。
+7. **大图 / 视频**：大图顶栏切「原图 / 预览」并捏合缩放；视频全屏播放、拖动进度有效。
+8. **分享 / 保存**：单张媒体能调起系统分享面板（QQ/微信）；「保存到相册」后系统相册可见。
+9. **清晰度**：WiFi 下加载原图、移动数据下加载预览图；关掉「WiFi 下自动加载原图」后移动数据也取原图。
+10. **低功耗**：退到后台再回前台，列表不会重复狂刷；快速滚动时不再继续加载离屏图片。
 
 ---
 

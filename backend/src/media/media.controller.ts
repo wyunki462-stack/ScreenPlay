@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Req, Res } from '@nestjs/common';
+import { Controller, Delete, Get, Param, Query, Req, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import fs from 'fs-extra';
@@ -167,5 +167,17 @@ export class MediaController {
       res,
       'image/webp',
     );
+  }
+
+  /**
+   * 删除一个媒体文件（安卓端相册「长按删除」的服务端支撑）。
+   *
+   * 受全局会话守卫保护：带凭证（Linux/Web 端会话 Cookie 或 Bearer）才能删；
+   * Windows 桌面端以 `AUTH_DISABLED=1` 运行，天然无凭证即可删。返回 Nest 默认
+   * 200 + JSON，与其它删除端点一致。
+   */
+  @Delete(':id')
+  remove(@Param('id') id: string): Promise<object> {
+    return this.media.remove(id);
   }
 }

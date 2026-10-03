@@ -1,7 +1,10 @@
+# ScreenPlay Flutter 客户端 —— 安卓端 1.3.1
+# 本次（1.3.1）为安卓端补齐「核心 / 基础设施层」：本地偏好、网络类型判断、
+# 图片三级缓存、媒体分享/保存/删除、前后台降级、会话凭证（Bearer + Cookie 双通道）。
 name: screenplay
 description: "ScreenPlay — 个人游戏媒体图库管理器（Flutter 客户端）。纯客户端：所有数据来自后端 HTTP API。"
 publish_to: 'none'
-version: 0.6.1+1
+version: 1.3.1+1
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -32,6 +35,18 @@ dependencies:
 
   # 服务器地址本地持久化（运行时设置屏幕）
   shared_preferences: ^2.3.2
+
+  # ↓↓↓ 安卓端 1.3.1 新增：核心层依赖 ↓↓↓
+  # 网络类型判断（WiFi/以太网 → 原图；移动数据 → 预览图）
+  connectivity_plus: ^6.0.5
+  # 分享到 QQ / 微信（调起系统分享面板，由系统提供目标应用）
+  share_plus: ^10.1.2
+  # 临时文件目录与缓存目录（下载中转、缓存容量统计）
+  path_provider: ^2.1.5
+  # 保存到系统相册（Android 10+ 走 MediaStore）
+  gal: ^2.3.1
+  # 图片三级缓存（内存 Flutter ImageCache + 磁盘 flutter_cache_manager + 网络）
+  flutter_cache_manager: ^3.4.1
 
 dev_dependencies:
   flutter_test:
