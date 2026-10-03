@@ -1,0 +1,23 @@
+# 换基线的包级等价性核对（宿主 python3 + curl 读公开 APKINDEX，不需要 docker）
+#
+#   docker compose exec screenplay cat /lib/apk/db/installed > /tmp/installed.txt
+#   python3 scripts/perf-bench/apk-parity.py --before-db /tmp/installed.txt
+# 结论：通过 —— 换 alpine:3.24 不会装错包（详见报告 §3.1.2）
+#
+输入：
+  before 镜像 apk 数据库 /tmp/installed.txt：123 个包，安装后合计 142,130,576 B
+  新基线 https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.2-x86_64.tar.gz
+    → alpine-minirootfs-3.24.2-x86_64.tar.gz（3,701,382 B）：16 个包，安装后合计 8,399,794 B
+  v3.24 main + community APKINDEX：28649 条记录
+
+[1] 基线 rootfs 的 16 个包在 before 镜像里是否版本一致：是 —— 基线层内容没有变
+    alpine-release = 3.24.2-r0（期望 3.24.x：一致）
+
+[2] 从根包「ffmpeg libstdc++」出发的依赖闭包：113 个包，未解析 token 无 —— 装得上
+[3] 闭包 ⊆ (rootfs ∪ before)：True；闭包里的新包 无；before 里有、重建后拿不到的包 无
+
+[4] before 的 123 个包在 v3.24 仓库里：找不到的 无; 仓库里版本已更新的 [('libcrypto3', '3.5.8-r0', '3.5.9-r0'), ('libssl3', '3.5.8-r0', '3.5.9-r0')]
+    这些更新的包不会被顺手升级：apk `add` 不带 -u，且闭包对它们的依赖都是未固定 soname（版本约束写法：无）
+    经验证据：before 镜像本身 created=2026-10-02T22:41:10+08:00，而这批更新（libcrypto3/libssl3 3.5.9-r0）构建于 2026-09-30T07:09:33Z —— 更新早于构建，before 镜像里仍是 3.5.8-r0 ⇒ `apk add` 确实不升级已装包。
+
+结果：包级等价性核对通过（rootfs 16 / before 123 / 闭包 113）

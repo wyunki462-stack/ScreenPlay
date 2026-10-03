@@ -41,6 +41,6 @@ import { RatingTargetService } from './rating-target.service';
       inject: [HltbProvider, RawgProvider, SteamProvider, MetacriticProvider],
     },
   ],
-  exports: [MetadataService, RatingTargetService],
+  exports: [MetadataService, RatingTargetService, MetadataCacheService],
 })
 export class MetadataModule {}

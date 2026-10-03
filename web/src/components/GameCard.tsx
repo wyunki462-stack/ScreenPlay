@@ -20,7 +20,27 @@ function cardPosters(game: GameSummary): string[] {
   const list = [game.posterUrl, ...(game.posters ?? [])].filter(
     (u): u is string => typeof u === "string" && u.length > 0,
   );
-  return [...new Set(list)];
+  return [...new Set(list.map(cardFrame))];
+}
+
+/**
+ * A media image is served as a full `/preview` rendition by default — 2.5-9.8 MB
+ * for a 4K screenshot, which is what a gallery card used to download *per frame*.
+ * The card tile is ~300px wide and cross-fades between frames, so it asks for the
+ * disk-cached ~6 KB `/thumbnail` of the very same picture instead: the frame looks
+ * the same at tile size for three orders of magnitude less bandwidth.
+ *
+ * Only media renditions are rewritten. Uploaded posters (`/api/posters/<id>/image`)
+ * and scraped artwork (`https://media.rawg.io/…`, or its proxied form) are the
+ * user's/official artwork at whatever size it already is, and they are left
+ * untouched — as is every other surface (the detail page still shows the full
+ * `/preview`, see `PosterDialog`).
+ */
+const MEDIA_PREVIEW = /^\/api\/media\/([^/]+)\/preview$/;
+
+function cardFrame(url: string): string {
+  const match = MEDIA_PREVIEW.exec(url);
+  return match ? `/api/media/${match[1]}/thumbnail` : url;
 }
 
 /** Platform tags to display; falls back to the auto-detected value. */

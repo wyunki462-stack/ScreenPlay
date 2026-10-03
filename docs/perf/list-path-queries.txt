@@ -1,0 +1,58 @@
+ScreenPlay 列表路径「查询批次化」前后逐条对比（真实后端 HTTP + SQL 执行计数）
+
+采集方式：bash /tmp/measure-list.sh before|after
+  * 同一份 500 局 / 1500 媒体的富 schema 种子库快照（每次采集前 cp 一份新副本），
+    口径相同：MAINTENANCE_ON_BOOT=0，等启动扫描结束后逐条请求。
+  * SQL 条数 = SIGUSR2 前后差（/tmp/run-count.js 对 shim 的 prepare().get/all/run 计数）。
+  * 响应指纹 = 响应体的 sha256 前 16 位；bytes 为响应体字节数。
+
+| 接口 | SQL 前 | SQL 后 | 变化 | 响应字节 | 指纹前 | 指纹后 | 逐字节相同 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `/api/games?limit=60` | 102 | 4 | −98（−96.1%） | 34100 | `6a8732974ef55a2d` | `6a8732974ef55a2d` | ✅ 相同 |
+| `/api/games?limit=60&page=2` | 102 | 4 | −98（−96.1%） | 34149 | `5e0c9b8a777d9635` | `5e0c9b8a777d9635` | ✅ 相同 |
+| `/api/games?limit=60&sort=mediaCount` | 602 | 6 | −596（−99.0%） | 33501 | `0f4d88d33b9da174` | `0f4d88d33b9da174` | ✅ 相同 |
+| `/api/games?limit=60&sort=mediaCount&order=desc` | 602 | 6 | −596（−99.0%） | 33501 | `0f4d88d33b9da174` | `0f4d88d33b9da174` | ✅ 相同 |
+| `/api/games?limit=60&sort=custom` | 102 | 4 | −98（−96.1%） | 33501 | `0f4d88d33b9da174` | `0f4d88d33b9da174` | ✅ 相同 |
+| `/api/games?limit=60&sort=metacritic&order=desc` | 102 | 4 | −98（−96.1%） | 34111 | `c546d9ed94c81d02` | `c546d9ed94c81d02` | ✅ 相同 |
+| `/api/games?limit=60&platform=PC` | 102 | 4 | −98（−96.1%） | 34100 | `6a8732974ef55a2d` | `6a8732974ef55a2d` | ✅ 相同 |
+| `/api/games?limit=60&q=Game` | 102 | 4 | −98（−96.1%） | 34100 | `6a8732974ef55a2d` | `6a8732974ef55a2d` | ✅ 相同 |
+| `/api/games/11111111-2222-3333-4444-000000000142` | 13 | 13 | −0（−0.0%） | 5052 | `6c3b2a1cf693c56d` | `6c3b2a1cf693c56d` | ✅ 相同 |
+| `/api/games/11111111-2222-3333-4444-000000000142/neighbors` | 2 | 2 | −0（−0.0%） | 166 | `1d82cbd067d3e7ef` | `1d82cbd067d3e7ef` | ✅ 相同 |
+| `/api/games/11111111-2222-3333-4444-000000000142/media` | 1 | 1 | −0（−0.0%） | 1469 | `b99edf73b3a39622` | `b99edf73b3a39622` | ✅ 相同 |
+| `/api/media/99999999-8888-7777-6666-000000001422/thumbnail` | 1 | 1 | −0（−0.0%） | 396 | `0e4e3eec6880d119` | `0e4e3eec6880d119` | ✅ 相同 |
+
+结论：
+  * `GET /api/games`（默认排序）102 → 4 条：games 投影 1 + rating_targets 1 + 卡片海报 1（批量）+ 媒体计数 1（批量）。
+  * 最坏情况 `sort=mediaCount` 602 → 6 条（原来排序键要为 500 行各查一次计数，再为出页 50 卡各查一次）。
+  * 12 条接口的响应体字节数与 sha256 全部逐字节一致；详情 13 条、neighbors 2 条、媒体列表/缩略图 1 条未变。
+
+原始输出（前 / 后）：
+
+```
+-- before
+/api/games?limit=60  sql=102 bytes=34100 6a8732974ef55a2d
+/api/games?limit=60&page=2  sql=102 bytes=34149 5e0c9b8a777d9635
+/api/games?limit=60&sort=mediaCount  sql=602 bytes=33501 0f4d88d33b9da174
+/api/games?limit=60&sort=mediaCount&order=desc  sql=602 bytes=33501 0f4d88d33b9da174
+/api/games?limit=60&sort=custom  sql=102 bytes=33501 0f4d88d33b9da174
+/api/games?limit=60&sort=metacritic&order=desc  sql=102 bytes=34111 c546d9ed94c81d02
+/api/games?limit=60&platform=PC  sql=102 bytes=34100 6a8732974ef55a2d
+/api/games?limit=60&q=Game  sql=102 bytes=34100 6a8732974ef55a2d
+/api/games/11111111-2222-3333-4444-000000000142  sql=13 bytes=5052 6c3b2a1cf693c56d
+/api/games/11111111-2222-3333-4444-000000000142/neighbors  sql=2 bytes=166 1d82cbd067d3e7ef
+/api/games/11111111-2222-3333-4444-000000000142/media  sql=1 bytes=1469 b99edf73b3a39622
+/api/media/99999999-8888-7777-6666-000000001422/thumbnail  sql=1 bytes=396 0e4e3eec6880d119
+-- after
+/api/games?limit=60  sql=4 bytes=34100 6a8732974ef55a2d
+/api/games?limit=60&page=2  sql=4 bytes=34149 5e0c9b8a777d9635
+/api/games?limit=60&sort=mediaCount  sql=6 bytes=33501 0f4d88d33b9da174
+/api/games?limit=60&sort=mediaCount&order=desc  sql=6 bytes=33501 0f4d88d33b9da174
+/api/games?limit=60&sort=custom  sql=4 bytes=33501 0f4d88d33b9da174
+/api/games?limit=60&sort=metacritic&order=desc  sql=4 bytes=34111 c546d9ed94c81d02
+/api/games?limit=60&platform=PC  sql=4 bytes=34100 6a8732974ef55a2d
+/api/games?limit=60&q=Game  sql=4 bytes=34100 6a8732974ef55a2d
+/api/games/11111111-2222-3333-4444-000000000142  sql=13 bytes=5052 6c3b2a1cf693c56d
+/api/games/11111111-2222-3333-4444-000000000142/neighbors  sql=2 bytes=166 1d82cbd067d3e7ef
+/api/games/11111111-2222-3333-4444-000000000142/media  sql=1 bytes=1469 b99edf73b3a39622
+/api/media/99999999-8888-7777-6666-000000001422/thumbnail  sql=1 bytes=396 0e4e3eec6880d119
+```

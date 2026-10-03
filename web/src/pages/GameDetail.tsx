@@ -293,7 +293,13 @@ function AchievementCard({ item }: { item: Achievement }) {
   return (
     <div className="flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
       {item.iconUrl ? (
-        <img src={item.iconUrl} alt="" className="h-11 w-11 shrink-0 rounded-md bg-zinc-800 object-cover" />
+        <img
+          src={item.iconUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="h-11 w-11 shrink-0 rounded-md bg-zinc-800 object-cover"
+        />
       ) : (
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-zinc-500">
           <Award className="h-5 w-5" />

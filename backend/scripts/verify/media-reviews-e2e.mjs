@@ -81,7 +81,7 @@ const setStubMode = (mode) => fetch(`${STUB}/__mode?set=${mode}`).then((r) => r.
 
 // --- 直接读库，绕过接口确认真的落盘了 ---------------------------------------
 function db() {
-  return new DatabaseSync(path.join(DATA, 'screenplay.db'));
+  return new DatabaseSync(path.join(DATA, 'screenplay.db'), { timeout: 5000 }); // busy 5s：测试进程也在写同一个库，避免与在跑的服务撞出 database is locked
 }
 function reviewRows(gameId) {
   const d = db();
@@ -303,7 +303,7 @@ for (const [mode, label] of [['block', '403 拒绝'], ['error', '500 服务端�
 // 「从未抓过 + 未绑定」的组合由下一段单独构造，因为那才是会让用户反复按按钮
 // 却看不到任何变化的真实情形。
 {
-  const d2 = new DatabaseSync(path.join(DATA, 'screenplay.db'));
+  const d2 = new DatabaseSync(path.join(DATA, 'screenplay.db'), { timeout: 5000 });
   try {
     d2.prepare("DELETE FROM game_links WHERE game_id = ? AND provider = 'metacritic'").run(hades.id);
   } finally { d2.close(); }
@@ -334,7 +334,7 @@ for (const [mode, label] of [['block', '403 拒绝'], ['error', '500 服务端�
 // 一个「从未抓取过、也没有绑定」的游戏，正是用户最容易踩到的那种：
 // 按了好几次「一键批量补全媒体评价」，待补全数字却一直不掉。
 {
-  const d3 = new DatabaseSync(path.join(DATA, 'screenplay.db'));
+  const d3 = new DatabaseSync(path.join(DATA, 'screenplay.db'), { timeout: 5000 });
   try {
     d3.prepare(
       `INSERT INTO games (id, name, folder_name, folder_path, created_at, updated_at)
@@ -380,7 +380,7 @@ for (const [mode, label] of [['block', '403 拒绝'], ['error', '500 服务端�
     : bad(`无对应条目的游戏发出了 ${hitsAfter - hitsBefore} 次页面请求`);
 
   // 用完就删：后面的场景会断言「没有待补全的游戏」，留着它会污染那些数字。
-  const d4 = new DatabaseSync(path.join(DATA, 'screenplay.db'));
+  const d4 = new DatabaseSync(path.join(DATA, 'screenplay.db'), { timeout: 5000 });
   try {
     d4.prepare('DELETE FROM games WHERE id = ?').run('unbound-fixture');
   } finally { d4.close(); }
@@ -393,7 +393,7 @@ for (const [mode, label] of [['block', '403 拒绝'], ['error', '500 服务端�
 // 那本身是正确行为，但会让这条断言失去被测对象。这里直接把状态摆回去，模拟
 // 「上一次运行失败了」这一进入条件。
 {
-  const dd = new DatabaseSync(path.join(DATA, 'screenplay.db'));
+  const dd = new DatabaseSync(path.join(DATA, 'screenplay.db'), { timeout: 5000 });
   try {
     dd.prepare("UPDATE games SET reviews_status = 'failed', reviews_error = '模拟的上次失败' WHERE id = ?")
       .run(bloodborne.id);

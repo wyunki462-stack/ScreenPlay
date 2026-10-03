@@ -22,7 +22,7 @@
 #   OUT_DIR=dist-image             输出目录
 #   SKIP_BUILD=1                   不重新构建，直接打包已存在的镜像
 #   GH_USER=wyunki462-stack        GHCR 命名空间
-#   DOCKERHUB_USER=<用户名>         Docker Hub 命名空间（用于生成推送命令；可留空）
+#   DOCKERHUB_USER=wyunki          Docker Hub 命名空间（默认 wyunki；显式置空则说明书里留占位）
 # ═════════════════════════════════════════════════════════════════════════════
 
 set -uo pipefail
@@ -34,7 +34,7 @@ cd "$PROJECT_DIR"
 IMAGE="${IMAGE:-screenplay:latest}"
 OUT_DIR="${OUT_DIR:-dist-image}"
 GH_USER="${GH_USER:-wyunki462-stack}"
-DOCKERHUB_USER="${DOCKERHUB_USER:-}"
+DOCKERHUB_USER="${DOCKERHUB_USER-wyunki}"
 
 say()  { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
@@ -66,8 +66,42 @@ if [ -z "$SHORT_SHA" ]; then
   SHORT_SHA="unknown"
 fi
 STAMP="$(date +%Y%m%d-%H%M%S)"
+# 工作区脏（有未提交改动）时给提交号加 -dirty 后缀，两个理由：
+#   1) 名称不再和「上一次同样是 HEAD 的包」撞车 —— 否则第 3 步的 [ -e "$TARBALL" ] 会直接 die，
+#      而这次的构建内容其实已经变了（本轮性能优化就是这么一种情况：改了 31 个文件但按要求没提交）；
+#   2) 包名如实说明「这不是一次干净提交构建」，便于事后追溯。
+if [ -n "$SHORT_SHA" ] && [ "$SHORT_SHA" != "unknown" ] \
+  && [ -n "$(git -c safe.directory="$_proj" status --porcelain 2>/dev/null)" ]; then
+  warn "工作区有未提交改动 —— 包名加 -dirty 后缀（内容与 HEAD 不同）"
+  SHORT_SHA="${SHORT_SHA}-dirty"
+fi
 BASENAME="screenplay-${VERSION}-${SHORT_SHA}"
 TARBALL="${OUT_DIR}/${BASENAME}.tar.gz"
+
+# 输出目录必须**先**验证可写 —— 别等到构建跑完、docker save 到一半才因 Permission denied 失败。
+# 实测：仓库里的 dist-image/ 是另一个账号建的、权限位显示为 0000（挂载语义会忽略这些位，
+# 所以实际可写），而 mkdir -p 在目录已存在时不会报错 —— 真正的只读目录（或换机/换挂载后）
+# 会把失败推迟到导出那一步，白等一次构建。
+_out_writable() {
+  local d="$1"
+  local probe="$d/.write-test-$$"
+  mkdir -p "$d" 2>/dev/null || return 1
+  { : > "$probe"; } 2>/dev/null || return 1
+  rm -f "$probe" 2>/dev/null || true
+  return 0
+}
+
+if ! _out_writable "$OUT_DIR"; then
+  die "输出目录不可写：$OUT_DIR
+    常见原因：该目录由别的账号/root 创建，权限位不允许你写入（仓库里的 dist-image/ 权限位显示为 0000，
+    在当前的挂载语义下实际可写，但换成别的机器或挂载就可能真的写不进去）。
+    修法（任选其一）：
+      chmod 755 $OUT_DIR              # 你是属主或 root 时
+      sudo chown \$(id -un) $OUT_DIR  # 需要 root
+      OUT_DIR=/tmp/dist-image bash scripts/package-image.sh   # 直接换个可写目录
+    这里的检查是提前失败：不然要等镜像构建完、docker save 到一半才报 Permission denied。"
+fi
+ok "输出目录可写：$OUT_DIR"
 
 # ── 1. 构建 ──────────────────────────────────────────────────────────────────
 if [ "${SKIP_BUILD:-0}" = "1" ]; then
@@ -175,8 +209,8 @@ if [ -n "$MISSING" ]; then
     不要把这样的包传出去 —— 装上去会发现界面没变化。"
 fi
 
-# 版本号：1.2.0 的 features 与 1.0.0 相同（本轮没有新增后端标记），光查标记分不出这两版，
-# 所以直接读镜像内的
+# 版本号：1.2.0 起 features 标记就不随版本变了（1.3.0 的性能优化全在内部实现与构建配置，
+# 后端没有新增标记），光查标记分不出这两版，所以直接读镜像内的
 # package.json（Dockerfile 把 backend/package.json 拷成了 /app/backend/package.json）。
 say "校验镜像版本号"
 IMG_VERSION="$(docker run --rm --entrypoint cat "$IMAGE" /app/backend/package.json 2>/dev/null \

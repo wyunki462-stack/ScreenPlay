@@ -73,7 +73,7 @@ git -c http.sslVersion=tlsv1.2 ls-remote origin main   # 输出的 sha 应等于
 ### B1. 构建
 ```bash
 cd /vol2/1000/ScreenPlay
-bash scripts/docker-build.sh          # 基础镜像 node:22-alpine，自带代理探测/换源/降级
+bash scripts/docker-build.sh          # 构建阶段 node:22-alpine，运行阶段 alpine+node 二进制；自带代理探测/换源/降级
 docker images | grep screenplay       # 应看到 screenplay  latest  <id>  ...
 ```
 构建阶段末尾会打印 `[slim] node_modules: …`（瘦身步骤生效的证据），并做构建产物校验
@@ -85,13 +85,14 @@ docker images | grep screenplay       # 应看到 screenplay  latest  <id>  ...
 ### B2. 登录（各一次，装好凭据就不用重复）
 ```bash
 docker login ghcr.io -u wyunki462-stack   # 密码填 PAT（必须勾 write:packages）
-docker login -u <你的DockerHub用户名>      # 密码填 Docker Hub 的 Access Token
+docker login -u wyunki                     # 密码填 Docker Hub 的 Access Token
 ```
 
 ### B3. 推
 ```bash
-DOCKERHUB_USER=<你的DockerHub用户名> bash scripts/push-to-ghcr.sh screenplay:latest "$V"
+bash scripts/push-to-ghcr.sh screenplay:latest "$V"
 ```
+> `DOCKERHUB_USER` 默认就是 `wyunki`；要换成别的命名空间写 `DOCKERHUB_USER=xxx`，只推 GHCR 则写 `DOCKERHUB_USER=`（显式置空）。
 脚本会：给两个仓库各打 `:$V` 和 `:latest` 两个标签 → **先推版本标签、再推 latest** →
 失败按层续传自动重试（默认 5 次 × 5 秒）→ 命中 `denied/unauthorized` 立刻停下提示你先登录。
 成功后结尾打印 `✓ 全部标签推送成功`，失败会列出没推成功的标签（重跑同一条命令即可接着传）。
@@ -99,7 +100,7 @@ DOCKERHUB_USER=<你的DockerHub用户名> bash scripts/push-to-ghcr.sh screenpla
 > 第二个参数省略时脚本自己从 `package.json` 取版本；只有想推成别的版号才需要显式传。
 
 ### B4. 验证
-- <https://hub.docker.com/r/<你的DockerHub用户名>/screenplay/tags>
+- <https://hub.docker.com/r/wyunki/screenplay/tags>
 - <https://github.com/users/wyunki462-stack/packages>
 - 目标机拉取：`docker pull ghcr.io/wyunki462-stack/screenplay:$V`
 
@@ -149,7 +150,7 @@ Windows 一般没装 rsync，别用这条，走上面的 Docker Desktop 流程�
 docker load -i screenplay-<版本>-image.tar.gz
 # 2) 登录（同上，凭据在 Windows 上重新登一次）
 docker login ghcr.io -u wyunki462-stack
-docker login -u <你的DockerHub用户名>
+docker login -u wyunki
 # 3) 推（先版本标签、后 latest；Windows 上重跑同一条即可重试）
 docker tag screenplay:latest ghcr.io/wyunki462-stack/screenplay:<版本>
 docker push ghcr.io/wyunki462-stack/screenplay:<版本>

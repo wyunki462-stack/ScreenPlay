@@ -16,7 +16,7 @@ import { useRotationTimer } from "../lib/hooks";
  * official posters still looked like it had exactly one. The arrows are what make
  * the extra artwork reachable.
  *
- * Falls back to the gradient placeholder in PosterImage when there is nothing
+ * Falls back to the gradient placeholder when there is nothing
  * usable, so a game without a poster still renders correctly.
  */
 export default function PosterCarousel({
@@ -204,10 +204,19 @@ function PosterLayer({ src, name, active }: { src: string; name: string; active:
 
   if (failed) return null;
 
+  // Every frame of a card is mounted (they stack and cross-fade), so without
+  // `loading="lazy"` a gallery of N cards fetches N × frames images up front.
+  // Frames of a *visible* card sit inside the viewport, so the browser still
+  // fetches them right away and the 3500ms rotation never lands on an unloaded
+  // frame — only the off-screen cards get skipped until they are scrolled near.
+  // `decoding="async"` keeps the decode off the main thread, which is what makes
+  // the cross-fade stay smooth while the grid is scrolling.
   return (
     <img
       src={src}
       alt={name}
+      loading="lazy"
+      decoding="async"
       onError={() => setFailed(true)}
       className={cn(
         "absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-700",

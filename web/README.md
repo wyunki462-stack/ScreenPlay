@@ -56,7 +56,6 @@ web/
     ├── components/
     │   ├── ui/             # Button/Input/Badge/Card/Tabs/Skeleton/Select
     │   ├── GameCard.tsx
-    │   ├── PosterImage.tsx
     │   ├── MetacriticBadge.tsx
     │   ├── ScreenshotCarousel.tsx
     │   ├── MediaGrid.tsx   # 图片/视频网格 + PhotoSlider 灯箱

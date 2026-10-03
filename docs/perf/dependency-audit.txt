@@ -1,0 +1,50 @@
+# 依赖使用情况核对（只读扫描，用于「依赖可不可以再删」这一问）
+
+生成时间：2026-10-03T02:23:54+08:00
+
+方法：对 backend/package.json 的每个 runtime 依赖，在 backend/src 里搜 `from '<dep>'` /
+`from "<dep>"` / `require('<dep>'`，统计命中的源文件数；再逐个解释 0 命中的包为什么必须留。
+
+## 1. 后端 runtime 依赖
+
+| 依赖 | 命中源文件数 | 结论 |
+| --- | --- | --- |
+| `@nestjs/common` | 55 | 直接静态 import，保留 |
+| `@nestjs/config` | 23 | 直接静态 import，保留 |
+| `@nestjs/core` | 2 | 直接静态 import，保留 |
+| `@nestjs/platform-express` | 2 | 直接静态 import，保留 |
+| `axios` | 5 | 直接静态 import，保留 |
+| `better-sqlite3` | 1 | 唯一数据库驱动，含原生编译产物 |
+| `cheerio` | 3 | 直接静态 import，保留 |
+| `class-transformer` | 1 | 直接静态 import，保留 |
+| `class-validator` | 1 | 直接静态 import，保留 |
+| `fast-glob` | 1 | 直接静态 import，保留 |
+| `fs-extra` | 11 | 直接静态 import，保留 |
+| `fluent-ffmpeg` | 2 | 函数内 `require()` 动态加载（`backend/src/library/library.service.ts:353`），静态 import 扫描会漏掉 |
+| `fuse.js` | 1 | 直接静态 import，保留 |
+| `jpegxr` | 1 | 函数内 `require()` 动态加载（`backend/src/media/jxr-decoder.ts:42`），静态 import 扫描会漏掉 |
+| `reflect-metadata` | 0 | 0 命中但**必须留**：NestJS 装饰器元数据由 `@nestjs/core` 在启动时 `require` 它，删了直接起不来 |
+| `rxjs` | 0 | 0 命中但**必须留**：`@nestjs/core` 内部所有 Observable/拦截器用它，且是其 peer 依赖 |
+| `sharp` | 3 | 直接静态 import，保留 |
+| `uuid` | 4 | 直接静态 import，保留 |
+
+结论：**没有任何可删的后端 runtime 依赖** —— 每个包要么被静态引用，要么是框架启动/原生驱动必需，要么是函数内动态加载。
+
+## 2. 后端 devDependencies
+
+不随镜像发布：Dockerfile 的 slim 阶段跑 `npm prune --omit=dev`，run（运行）阶段只 `COPY` prune 之后的 `node_modules`。
+（`@nestjs/cli`/`@nestjs/schematics`/`typescript`/`ts-node`/`tsconfig-paths`/`@types/*`/`@nestjs/testing` 均为构建期或类型期使用。）
+
+## 3. 前端 runtime 依赖
+
+前端产物是**构建好的静态文件**（`web/dist` 由 vite 打进 bundle），运行镜像不需要前端 node_modules。
+Dockerfile slim 阶段已显式删除：
+
+`lucide-react`、`react`、`react-dom`、`react-router-dom`、`@tanstack`、`plyr`、`plyr-react`、`react-photo-view`、
+`core-js`、`@remix-run/router`、`loadjs`、`react-router`、`rangetouch`、`scheduler`、`prop-types`、`url-polyfill`、
+`react-aptor`、`react-is`、`loose-envify`、`js-tokens`、`custom-event-polyfill`。
+
+并额外删除各包的 ESM/类型冗余副本：`libphonenumber-js/bundle|es6|es6-modern`、`class-validator/bundles|esm2015|esm5`、
+`class-transformer/bundles|esm2015|esm5`、`lodash/fp`、`rxjs/src`、`fluent-ffmpeg/coverage|doc|OLD|tools`。
+
+根 `devDependencies.playwright` 只服务于开发机上的浏览器测试，不参与镜像构建。

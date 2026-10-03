@@ -1,0 +1,238 @@
+# 热点查询执行计划与索引清单（只读采集）
+
+库文件：/tmp/perf-plans/screenplay.db（只读打开，未被修改）
+文件大小：8974336 B
+数据来源：合成基准库 —— `scripts/perf-bench/seed-plan-db.js` 把 `seed-soak-db.js` 的
+1000 局 / 1500 媒体库复制一份，再给 `game_posters` / `achievements` / `media_reviews` /
+`metadata_cache` / `rating_targets` / `auth_sessions` 填入该规模的合成行（真实装机量与
+行数不同，但索引选择与行数无关，只与查询形状有关）。
+生成时间：2026-10-02T18:25:24.915Z（宿主 node v24.15.0）
+
+本文件回答一个问题：**现有的索引是否覆盖了产品代码里所有热点查询**。
+「SCAN」在 SQLite 的计划文本里表示全表扫描，「SEARCH」表示走了索引。
+全表扫描在 `games`（千行级）这类表上是合理的；要担心的是逐请求路径上的大表扫描。
+
+## 1. 索引清单
+
+- achievement_links: `sqlite_autoindex_achievement_links_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- achievements: `idx_achievements_game`
+  `CREATE INDEX idx_achievements_game ON achievements(game_id)`
+- achievements: `idx_achievements_game_tier`
+  `CREATE INDEX idx_achievements_game_tier ON achievements(game_id, tier)`
+- achievements: `sqlite_autoindex_achievements_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- auth_sessions: `idx_auth_sessions_expiry`
+  `CREATE INDEX idx_auth_sessions_expiry ON auth_sessions(expires_at)`
+- auth_sessions: `sqlite_autoindex_auth_sessions_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- auth_users: `sqlite_autoindex_auth_users_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- game_links: `sqlite_autoindex_game_links_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- game_posters: `idx_game_posters_game`
+  `CREATE INDEX idx_game_posters_game ON game_posters(game_id)`
+- game_posters: `sqlite_autoindex_game_posters_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- games: `sqlite_autoindex_games_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- games: `sqlite_autoindex_games_2`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- library_roots: `sqlite_autoindex_library_roots_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- library_roots: `sqlite_autoindex_library_roots_2`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- media: `idx_media_game`
+  `CREATE INDEX idx_media_game ON media(game_id)`
+- media: `sqlite_autoindex_media_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- media_reviews: `idx_media_reviews_game`
+  `CREATE INDEX idx_media_reviews_game ON media_reviews(game_id)`
+- media_reviews: `idx_media_reviews_unique`
+  `CREATE UNIQUE INDEX idx_media_reviews_unique ON media_reviews(game_id, outlet, COALESCE(url, ''))`
+- media_reviews: `sqlite_autoindex_media_reviews_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- metadata_cache: `idx_meta_cache_expiry`
+  `CREATE INDEX idx_meta_cache_expiry ON metadata_cache(expires_at)`
+- metadata_cache: `sqlite_autoindex_metadata_cache_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- rating_targets: `sqlite_autoindex_rating_targets_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+- settings: `sqlite_autoindex_settings_1`
+  （SQLite 自动创建：PK / UNIQUE 约束）
+
+## 2. 各表行数
+
+| 表 | 行数 |
+| --- | --- |
+| `achievement_links` | 0 |
+| `achievements` | 3000 |
+| `auth_sessions` | 5 |
+| `auth_users` | 0 |
+| `game_links` | 0 |
+| `game_posters` | 6000 |
+| `games` | 1000 |
+| `library_roots` | 0 |
+| `media` | 1500 |
+| `media_reviews` | 4000 |
+| `metadata_cache` | 300 |
+| `rating_targets` | 1000 |
+| `settings` | 2 |
+
+## 3. 逐条执行计划
+
+### 列表接口 · 一次取出全部候选行
+
+```sql
+SELECT id, name, folder_path, platform, platforms, custom_platform, poster_url, poster_mode, ratings, developers, publishers, release_date, duration_seconds, first_played_at, last_played_at, meta_error, custom_order FROM games
+```
+- SCAN games
+- 判定：含全表扫描 → SCAN games
+
+### 详情接口 · 按 id 取一行
+
+```sql
+SELECT * FROM games WHERE id = 'x'
+```
+- SEARCH games USING INDEX sqlite_autoindex_games_1 (id=?)
+- 判定：**走索引（无全表扫描）**
+
+### 列表接口 · 出页海报行（批量 IN）
+
+```sql
+SELECT game_id, id, url, source, media_id FROM game_posters WHERE (is_selected = 1 OR in_slideshow = 1) AND game_id IN ('a','b','c') ORDER BY game_id ASC, is_selected DESC, sort_order ASC, created_at ASC
+```
+- SEARCH game_posters USING INDEX idx_game_posters_game (game_id=?)
+- USE TEMP B-TREE FOR LAST 3 TERMS OF ORDER BY
+- 判定：**走索引（无全表扫描）**
+
+### 卡片海报 · 单局（CARD_POSTER_SQL）
+
+```sql
+SELECT game_id, id, url, source, media_id FROM game_posters WHERE game_id = 'x' AND (is_selected = 1 OR in_slideshow = 1) ORDER BY is_selected DESC, sort_order ASC, created_at ASC
+```
+- SEARCH game_posters USING INDEX idx_game_posters_game (game_id=?)
+- USE TEMP B-TREE FOR ORDER BY
+- 判定：**走索引（无全表扫描）**
+
+### 列表接口 · 媒体计数（批量 IN）
+
+```sql
+SELECT game_id, COUNT(*) AS c FROM media WHERE game_id IN ('a','b','c') GROUP BY game_id
+```
+- SEARCH media USING COVERING INDEX idx_media_game (game_id=?)
+- 判定：**走索引（无全表扫描）**
+
+### 详情接口 · 媒体列表
+
+```sql
+SELECT * FROM media WHERE game_id = 'x' ORDER BY sort_order ASC, file_created_at ASC
+```
+- SEARCH media USING INDEX idx_media_game (game_id=?)
+- USE TEMP B-TREE FOR ORDER BY
+- 判定：**走索引（无全表扫描）**
+
+### 详情接口 · 媒体计数
+
+```sql
+SELECT COUNT(*) AS c FROM media WHERE game_id = 'x'
+```
+- SEARCH media USING COVERING INDEX idx_media_game (game_id=?)
+- 判定：**走索引（无全表扫描）**
+
+### 媒体 · 按 id 取一行
+
+```sql
+SELECT * FROM media WHERE id = 'x'
+```
+- SEARCH media USING INDEX sqlite_autoindex_media_1 (id=?)
+- 判定：**走索引（无全表扫描）**
+
+### 评分目标 · 单局
+
+```sql
+SELECT * FROM rating_targets WHERE game_id = 'x'
+```
+- SEARCH rating_targets USING INDEX sqlite_autoindex_rating_targets_1 (game_id=?)
+- 判定：**走索引（无全表扫描）**
+
+### 评分目标 · 整表一次读（优化项）
+
+```sql
+SELECT * FROM rating_targets
+```
+- SCAN rating_targets
+- 判定：含全表扫描 → SCAN rating_targets
+
+### 元数据缓存 · 命中查询
+
+```sql
+SELECT payload, fetched_at, expires_at FROM metadata_cache WHERE key = 'k'
+```
+- SEARCH metadata_cache USING INDEX sqlite_autoindex_metadata_cache_1 (key=?)
+- 判定：**走索引（无全表扫描）**
+
+### 元数据缓存 · 过期清理（启动 / 周期回收）
+
+```sql
+DELETE FROM metadata_cache WHERE expires_at < 1
+```
+- SEARCH metadata_cache USING INDEX idx_meta_cache_expiry (expires_at<?)
+- 判定：**走索引（无全表扫描）**
+
+### 会话 · 每个鉴权请求一次 token 查询
+
+```sql
+SELECT username, provider, expires_at FROM auth_sessions WHERE token = 't'
+```
+- SEARCH auth_sessions USING INDEX sqlite_autoindex_auth_sessions_1 (token=?)
+- 判定：**走索引（无全表扫描）**
+
+### 会话 · 过期清理
+
+```sql
+DELETE FROM auth_sessions WHERE expires_at <= 1
+```
+- SEARCH auth_sessions USING INDEX idx_auth_sessions_expiry (expires_at<?)
+- 判定：**走索引（无全表扫描）**
+
+### 成就 · 详情页取一局
+
+```sql
+SELECT * FROM achievements WHERE game_id = 'x'
+```
+- SEARCH achievements USING INDEX idx_achievements_game (game_id=?)
+- 判定：**走索引（无全表扫描）**
+
+### 成就 · 按 (game_id, tier)
+
+```sql
+SELECT * FROM achievements WHERE game_id = 'x' AND tier = 'gold'
+```
+- SEARCH achievements USING INDEX idx_achievements_game_tier (game_id=? AND tier=?)
+- 判定：**走索引（无全表扫描）**
+
+### 媒体评价 · 按 game_id
+
+```sql
+SELECT * FROM media_reviews WHERE game_id = 'x'
+```
+- SEARCH media_reviews USING INDEX idx_media_reviews_game (game_id=?)
+- 判定：**走索引（无全表扫描）**
+
+### 维护 · 全库媒体 id 集合（孤儿件清扫用）
+
+```sql
+SELECT id FROM media
+```
+- SCAN media USING COVERING INDEX sqlite_autoindex_media_1
+- 判定：含全表扫描 → SCAN media USING COVERING INDEX sqlite_autoindex_media_1
+
+### 统计接口 · 聚合
+
+```sql
+SELECT COUNT(*) AS c, COALESCE(SUM(size_bytes), 0) AS totalSize FROM media
+```
+- SCAN media
+- 判定：含全表扫描 → SCAN media
+

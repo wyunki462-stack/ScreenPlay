@@ -92,6 +92,11 @@ peerDependency）。
     （本机没有编译产物时给 `node:sqlite` 用的兼容垫片；3 处引用同步改路径）。
   - `docs/UPLOAD-0.6.4.md` → `docs/UPLOAD.md`（去掉版号）。
   - `.tmp-b/pw`（554 MB 的 Playwright 浏览器）→ `.pw/`（`.gitignore` 已忽略；4 处引用改路径）。
+    ⚠️ **这次搬家漏改了一处**：`.dockerignore` 里的 `.tmp*` 当年顺带挡住了 `.tmp-b/pw`，
+    搬到 `.pw/` 后就不再被覆盖 ⇒ 构建上下文此后每轮白传 553 MiB（`CHANGELOG.md:435` 记的
+    「700MB+ → 约 17MB」是搬家前的读数）。该回归已在性能优化轮补掉：`.dockerignore` 新增
+    `.pw` / `.pw-cache`，上下文回到 2.0 MiB / 216 个文件，并由 `scripts/verify-docker-layers.mjs`
+    第 5 组固化为断言（见 `docs/perf/PERF-REPORT.md` 优化项 12）。
 - 前置已合并：根目录与 `scripts/` 下重复的 `push-to-ghcr.sh` 已在提交 `345d800` 合并。
 
 **删除的脚本覆盖在哪里**（删之前逐条确认有替代者）：

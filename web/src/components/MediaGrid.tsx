@@ -1,11 +1,24 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { PhotoSlider } from "react-photo-view";
 import "react-photo-view/dist/react-photo-view.css";
 import { ChevronLeft, ChevronRight, ExternalLink, Play, X, ZoomIn, ZoomOut } from "lucide-react";
 import { useT } from "../i18n";
 import type { Media } from "../types";
 import { formatClock } from "../lib/format";
-import VideoPlayer from "./VideoPlayer";
+
+/**
+ * The player is only mounted after a video is clicked (see the render below), so
+ * keeping it out of the initial graph is free: plyr + plyr-react + plyr.css are by
+ * far the heaviest single feature in the app (~116 KB JS, 32 KB CSS — a fifth of
+ * the bundle) and the gallery never needs them. Loading it lazily moves all of that
+ * into a chunk that is fetched the first time a video is actually opened.
+ *
+ * `PhotoSlider` (below) deliberately stays a static import: this component keeps it
+ * mounted with `visible={false}` so the viewer can animate on open/close, and
+ * mounting it conditionally would change that interaction. Its 17 KB is not worth
+ * that risk.
+ */
+const VideoPlayer = lazy(() => import("./VideoPlayer"));
 
 type SortKey = "default" | "time" | "name" | "size";
 
@@ -125,6 +138,7 @@ export default function MediaGrid({ media }: MediaGridProps) {
                   src={item.coverUrl}
                   alt={item.fileName}
                   loading="lazy"
+                  decoding="async"
                   className="h-full w-full object-cover transition-transform group-hover:scale-105"
                 />
               ) : (
@@ -153,6 +167,7 @@ export default function MediaGrid({ media }: MediaGridProps) {
                 src={item.thumbnailUrl}
                 alt={item.fileName}
                 loading="lazy"
+                decoding="async"
                 className="h-full w-full object-cover transition-transform group-hover:scale-105"
               />
               {item.type === "gif" && (
@@ -209,7 +224,11 @@ export default function MediaGrid({ media }: MediaGridProps) {
         />
       )}
 
-      {activeVideo && <VideoPlayer media={activeVideo} onClose={() => setActiveVideo(null)} />}
+      {activeVideo && (
+        <Suspense fallback={null}>
+          <VideoPlayer media={activeVideo} onClose={() => setActiveVideo(null)} />
+        </Suspense>
+      )}
     </>
   );
 }

@@ -155,10 +155,6 @@ export function resolveMetacriticAlias(raw: string): string | null {
   return best?.value ?? null;
 }
 
-/** True when the title contains CJK characters (needs alias resolution). */
-export function hasCjk(raw: string): boolean {
-  return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/.test(raw || '');
-}
 /**
  * The longest run of Latin letters/digits in a title.
  *

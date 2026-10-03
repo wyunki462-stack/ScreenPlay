@@ -105,12 +105,19 @@ export default function HeroPosterCarousel({
       {list.map((src, i) => {
         if (failed[src]) return null;
         const active = src === current;
+        // `decoding="async"` only — NOT `loading="lazy"`. This carousel rotates
+        // constantly and by design shows a different frame every few seconds, so
+        // every frame has to be ready: marking them lazy would let the browser
+        // defer one and the rotation would land on an empty slide. They are all in
+        // the viewport anyway, so lazy would save nothing here. The async decode is
+        // still worth it — these are the largest renditions in the app.
         return (
           <img
             key={`${src}-${i}`}
             src={src}
             alt={alt ?? t("detail.poster.alt")}
             data-active={active ? "true" : "false"}
+            decoding="async"
             onError={() => setFailed((f) => ({ ...f, [src]: true }))}
             className={cn(
               "absolute inset-0 h-full w-full object-contain transition-opacity duration-500",

@@ -1,0 +1,145 @@
+# Node 堆参数实测（宿主 node v24 + node:sqlite shim，同一套热接口，各 1200 次请求）
+#
+#   N=1200 STEP=400 NODE_OPTIONS=… bash scripts/perf-bench/bench-soak.sh
+#
+# 结论：四个变体的 RSS/耗时都在噪声范围内（互差 ≤ 2 MiB / ≤ 0.3 ms·次），
+#       只有 --max-semi-space-size=8 明显更差（RSS +51 MiB、单次最慢 52 ms）；
+#       --max-old-space-size 完全不改变 RSS（V8 堆常驻 ~40 MiB，离任何上限都很远）；
+#       句柄数全程 1、SQL 形状数 29，都没有泄漏迹象。⇒ 不加堆参数（见报告 §二 方向 ① 与 §七）。
+
+──────── default  (NODE_OPTIONS='')
+采样（每 400 次请求一次）
+请求数      RSS(MiB)     V8堆(MiB)    活跃句柄   SQL形状数
+0          147.9        41.8         1          29
+400        183.5        61.9         1          29
+800        187          42.3         1          29
+1200       186.8        32.6         1          29
+
+ScreenPlay 长跑 / 泄漏扫描 2026-10-03 11:30
+请求 1200 次，总耗时 6.4s，平均 5.37 ms/次，最慢 18.61 ms
+接口（只取返回 200 的）：/api/health /api/games?limit=60 /api/games?limit=60&page=2 /api/games?limit=24&sort=mediaCount /api/games?limit=24&sort=name /api/games?limit=24&sort=metacritic /api/games?limit=24&sort=custom /api/games?platform=PC /api/games?q=Game /api/games/11111111-2222-3333-4444-000000000000 /api/games/11111111-2222-3333-4444-000000000000/media /api/games/11111111-2222-3333-4444-000000000000/neighbors /api/media/99999999-8888-7777-6666-000000000000/thumbnail / /favicon.svg
+RSS MiB：147.9 → 中途 187 → 结束 186.8（后半段变化 -0.1%）
+V8 堆 MiB：41.8 → 42.3 → 32.6
+活跃句柄：1 → 1；不同 SQL 形状数：29；采样点 4
+判定：平台期（后半段没有继续增长，未发现泄漏迹象）
+
+口径：跑的是真实编译产物 backend/dist/main.js，但 better-sqlite3 由仓库自带的 node:sqlite shim 顶替
+      （宿主没有原生命令产物）—— 量的是应用层（序列化、缓存、句柄、语句缓存）的内存行为，
+      SQLite 驱动自身的内存不在口径内。库由 scripts/perf-bench/seed-soak-db.js 造：
+      schema 抽自产品代码的 migrate()，500 局 / 1500 张真实 JPEG；端口 3402，AUTH_DISABLED=1，
+      MAINTENANCE_ON_BOOT=0，单进程串行请求。容器侧口径请用 scripts/perf-baseline.sh。
+
+# KEY=VALUE
+# soak_requests=1200
+# soak_ms_per_request=5.37
+# soak_rss_start_mib=147.9
+# soak_rss_end_mib=186.8
+# soak_rss_growth_pct=-0.1
+# soak_heap_start_mib=41.8
+# soak_heap_end_mib=32.6
+# soak_sql_shapes=29
+# soak_handles_start=1
+# soak_handles_end=1
+
+──────── semispace8  (NODE_OPTIONS='--max-semi-space-size=8')
+采样（每 400 次请求一次）
+请求数      RSS(MiB)     V8堆(MiB)    活跃句柄   SQL形状数
+0          139.3        44.6         1          29
+400        230.4        132.8        1          29
+800        238.8        30.4         1          29
+1200       238.5        51           1          29
+
+ScreenPlay 长跑 / 泄漏扫描 2026-10-03 11:31
+请求 1200 次，总耗时 6.8s，平均 5.66 ms/次，最慢 52.27 ms
+接口（只取返回 200 的）：/api/health /api/games?limit=60 /api/games?limit=60&page=2 /api/games?limit=24&sort=mediaCount /api/games?limit=24&sort=name /api/games?limit=24&sort=metacritic /api/games?limit=24&sort=custom /api/games?platform=PC /api/games?q=Game /api/games/11111111-2222-3333-4444-000000000000 /api/games/11111111-2222-3333-4444-000000000000/media /api/games/11111111-2222-3333-4444-000000000000/neighbors /api/media/99999999-8888-7777-6666-000000000000/thumbnail / /favicon.svg
+RSS MiB：139.3 → 中途 238.8 → 结束 238.5（后半段变化 -0.1%）
+V8 堆 MiB：44.6 → 30.4 → 51
+活跃句柄：1 → 1；不同 SQL 形状数：29；采样点 4
+判定：平台期（后半段没有继续增长，未发现泄漏迹象）
+
+口径：跑的是真实编译产物 backend/dist/main.js，但 better-sqlite3 由仓库自带的 node:sqlite shim 顶替
+      （宿主没有原生命令产物）—— 量的是应用层（序列化、缓存、句柄、语句缓存）的内存行为，
+      SQLite 驱动自身的内存不在口径内。库由 scripts/perf-bench/seed-soak-db.js 造：
+      schema 抽自产品代码的 migrate()，500 局 / 1500 张真实 JPEG；端口 3402，AUTH_DISABLED=1，
+      MAINTENANCE_ON_BOOT=0，单进程串行请求。容器侧口径请用 scripts/perf-baseline.sh。
+
+# KEY=VALUE
+# soak_requests=1200
+# soak_ms_per_request=5.66
+# soak_rss_start_mib=139.3
+# soak_rss_end_mib=238.5
+# soak_rss_growth_pct=-0.1
+# soak_heap_start_mib=44.6
+# soak_heap_end_mib=51
+# soak_sql_shapes=29
+# soak_handles_start=1
+# soak_handles_end=1
+
+──────── oldspace256  (NODE_OPTIONS='--max-old-space-size=256')
+采样（每 400 次请求一次）
+请求数      RSS(MiB)     V8堆(MiB)    活跃句柄   SQL形状数
+0          139.7        39.3         1          29
+400        155.3        41.6         1          29
+800        186.3        49.5         1          29
+1200       186.3        41.6         1          29
+
+ScreenPlay 长跑 / 泄漏扫描 2026-10-03 11:31
+请求 1200 次，总耗时 6.6s，平均 5.49 ms/次，最慢 17.05 ms
+接口（只取返回 200 的）：/api/health /api/games?limit=60 /api/games?limit=60&page=2 /api/games?limit=24&sort=mediaCount /api/games?limit=24&sort=name /api/games?limit=24&sort=metacritic /api/games?limit=24&sort=custom /api/games?platform=PC /api/games?q=Game /api/games/11111111-2222-3333-4444-000000000000 /api/games/11111111-2222-3333-4444-000000000000/media /api/games/11111111-2222-3333-4444-000000000000/neighbors /api/media/99999999-8888-7777-6666-000000000000/thumbnail / /favicon.svg
+RSS MiB：139.7 → 中途 186.3 → 结束 186.3（后半段变化 0.0%）
+V8 堆 MiB：39.3 → 49.5 → 41.6
+活跃句柄：1 → 1；不同 SQL 形状数：29；采样点 4
+判定：平台期（后半段没有继续增长，未发现泄漏迹象）
+
+口径：跑的是真实编译产物 backend/dist/main.js，但 better-sqlite3 由仓库自带的 node:sqlite shim 顶替
+      （宿主没有原生命令产物）—— 量的是应用层（序列化、缓存、句柄、语句缓存）的内存行为，
+      SQLite 驱动自身的内存不在口径内。库由 scripts/perf-bench/seed-soak-db.js 造：
+      schema 抽自产品代码的 migrate()，500 局 / 1500 张真实 JPEG；端口 3402，AUTH_DISABLED=1，
+      MAINTENANCE_ON_BOOT=0，单进程串行请求。容器侧口径请用 scripts/perf-baseline.sh。
+
+# KEY=VALUE
+# soak_requests=1200
+# soak_ms_per_request=5.49
+# soak_rss_start_mib=139.7
+# soak_rss_end_mib=186.3
+# soak_rss_growth_pct=0.0
+# soak_heap_start_mib=39.3
+# soak_heap_end_mib=41.6
+# soak_sql_shapes=29
+# soak_handles_start=1
+# soak_handles_end=1
+
+──────── semispace32  (NODE_OPTIONS='--max-semi-space-size=32')
+采样（每 400 次请求一次）
+请求数      RSS(MiB)     V8堆(MiB)    活跃句柄   SQL形状数
+0          149          41.9         1          29
+400        182.7        65.9         1          29
+800        186.6        42.3         1          29
+1200       184.8        51.6         1          29
+
+ScreenPlay 长跑 / 泄漏扫描 2026-10-03 11:31
+请求 1200 次，总耗时 6.6s，平均 5.47 ms/次，最慢 21.36 ms
+接口（只取返回 200 的）：/api/health /api/games?limit=60 /api/games?limit=60&page=2 /api/games?limit=24&sort=mediaCount /api/games?limit=24&sort=name /api/games?limit=24&sort=metacritic /api/games?limit=24&sort=custom /api/games?platform=PC /api/games?q=Game /api/games/11111111-2222-3333-4444-000000000000 /api/games/11111111-2222-3333-4444-000000000000/media /api/games/11111111-2222-3333-4444-000000000000/neighbors /api/media/99999999-8888-7777-6666-000000000000/thumbnail / /favicon.svg
+RSS MiB：149 → 中途 186.6 → 结束 184.8（后半段变化 -1.0%）
+V8 堆 MiB：41.9 → 42.3 → 51.6
+活跃句柄：1 → 1；不同 SQL 形状数：29；采样点 4
+判定：平台期（后半段没有继续增长，未发现泄漏迹象）
+
+口径：跑的是真实编译产物 backend/dist/main.js，但 better-sqlite3 由仓库自带的 node:sqlite shim 顶替
+      （宿主没有原生命令产物）—— 量的是应用层（序列化、缓存、句柄、语句缓存）的内存行为，
+      SQLite 驱动自身的内存不在口径内。库由 scripts/perf-bench/seed-soak-db.js 造：
+      schema 抽自产品代码的 migrate()，500 局 / 1500 张真实 JPEG；端口 3402，AUTH_DISABLED=1，
+      MAINTENANCE_ON_BOOT=0，单进程串行请求。容器侧口径请用 scripts/perf-baseline.sh。
+
+# KEY=VALUE
+# soak_requests=1200
+# soak_ms_per_request=5.47
+# soak_rss_start_mib=149
+# soak_rss_end_mib=184.8
+# soak_rss_growth_pct=-1.0
+# soak_heap_start_mib=41.9
+# soak_heap_end_mib=51.6
+# soak_sql_shapes=29
+# soak_handles_start=1
+# soak_handles_end=1
+

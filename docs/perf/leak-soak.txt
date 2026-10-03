@@ -1,0 +1,41 @@
+采样（每 250 次请求一次）
+请求数      RSS(MiB)     V8堆(MiB)    活跃句柄   SQL形状数
+0          147.7        46.3         1          25
+250        157.7        51.8         1          25
+500        187.5        48.2         1          25
+750        189.3        53.5         1          25
+1000       189          59.5         1          25
+1250       189.5        47           1          25
+1500       189.9        57.1         1          25
+1750       189.5        42.2         1          25
+2000       190.6        51.2         1          25
+2250       190.9        53.5         1          25
+2500       189.1        43.5         1          25
+2750       189.7        45.9         1          25
+3000       190.8        56.5         1          25
+
+ScreenPlay 长跑 / 泄漏扫描 2026-10-03 01:29
+请求 3000 次，总耗时 13.9s，平均 4.62 ms/次，最慢 21.27 ms
+接口（只取返回 200 的）：/api/health /api/games?limit=60 /api/games?limit=60&page=2 /api/games?limit=24&sort=mediaCount /api/games?limit=24&sort=name /api/games?limit=24&sort=metacritic /api/games?limit=24&sort=custom /api/games?platform=PC /api/games?q=Game /api/games/11111111-2222-3333-4444-000000000000 /api/games/11111111-2222-3333-4444-000000000000/media /api/games/11111111-2222-3333-4444-000000000000/neighbors /api/media/99999999-8888-7777-6666-000000000000/thumbnail / /favicon.svg
+RSS MiB：147.7 → 中途 189.9 → 结束 190.8（后半段变化 0.5%）
+V8 堆 MiB：46.3 → 57.1 → 56.5
+活跃句柄：1 → 1；不同 SQL 形状数：25；采样点 13
+判定：平台期（后半段没有继续增长，未发现泄漏迹象）
+
+口径：跑的是真实编译产物 backend/dist/main.js，但 better-sqlite3 由仓库自带的 node:sqlite shim 顶替
+      （宿主没有原生命令产物）—— 量的是应用层（序列化、缓存、句柄、语句缓存）的内存行为，
+      SQLite 驱动自身的内存不在口径内。库由 scripts/perf-bench/seed-soak-db.js 造：
+      schema 抽自产品代码的 migrate()，500 局 / 1500 张真实 JPEG；端口 3402，AUTH_DISABLED=1，
+      MAINTENANCE_ON_BOOT=0，单进程串行请求。容器侧口径请用 scripts/perf-baseline.sh。
+
+# KEY=VALUE
+# soak_requests=3000
+# soak_ms_per_request=4.62
+# soak_rss_start_mib=147.7
+# soak_rss_end_mib=190.8
+# soak_rss_growth_pct=0.5
+# soak_heap_start_mib=46.3
+# soak_heap_end_mib=56.5
+# soak_sql_shapes=25
+# soak_handles_start=1
+# soak_handles_end=1

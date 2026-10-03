@@ -1,0 +1,65 @@
+# ScreenPlay 宿主侧性能基线 2026-10-03（性能优化后）
+# backend/dist 为最后一次 npm run build（nest build，含列表查询批次化）后的规范产物：912,386 B / 150 文件。
+# 【优化项 15 之后更新】同一口径重跑 `rm -rf dist && npm run build`：du -sb 916,091 B / 150 个文件
+#   （逐文件字节合计 910,017；多出的约 6 KB 是目录项）、75 个 *.d.ts 合计 199,458 B、0 个 .map、
+#   无 tsconfig.tsbuildinfo。下表的 912,386 是优化项 15 之前的读数，差值 +3,705 B 全部来自启动期 VACUUM 那段代码。
+# 【审计复查之后更新】再跑一次同一口径（`rm -rf dist && npm run build`）：du -sb 919,543 B / 150 个文件、
+#   仍是 75 个 *.d.ts / 0 个 .map / 无 tsconfig.tsbuildinfo —— 比 916,091 多的 3,452 B 来自审计后那三处加固
+#   （Accept-Encoding q 值协商、wal_checkpoint try/catch、proxied 清扫可关）。体积口径至此为 919,543 B。
+#   这一版的 75 个 *.d.ts 逐文件字节合计 **199,636 B**（审计前那版是 199,458 B，+178 B）；
+#   报告 §3.1 里 `backend/dist/**/*.d.ts` 一行已按 199,636 更新。
+# 注意：`npx tsc --noEmit`（tsconfig.json 里 incremental=true）会额外写 dist/tsconfig.tsbuildinfo（≈195 KB），
+# 它不属于 npm run build 的产物（tsconfig.build.json 里 incremental=false 且 clean dist），不要在口径里算它。
+# 套件脚本 `scripts/verify-suites.sh` 的第一步就是那个 tsc，所以跑完套件后 dist 里会多出这一份 —— 可以安全删除。
+# 它对镜像没有影响：`.dockerignore` 里有 `**/dist`，宿主的 backend/dist 根本不进构建上下文，镜像里的 dist 是容器内现编的。
+
+对应优化前基线：docs/perf/before-local.txt（同一天 00:10 采集）。
+容器侧三项指标（镜像体积 / 运行内存峰值 / /data 磁盘占用）见 docs/perf/before-docker.txt
+与 docs/perf/after-docker.txt —— 由 scripts/perf-baseline.sh 采集。
+
+## 产物体积
+项目                     实际字节  块占用
+web/dist                         632241       636K
+web/dist-desktop                 625359       632K
+backend/dist                     912386       1.2M
+node_modules                  278385975       359M
+logs                             148881       152K
+
+web/dist 文件数      10
+backend/dist 文件数  150
+node_modules 顶层条目 444
+仓库 tracked 文件数  286
+
+## web/dist 资产（原始 / gzip / brotli）—— 最终构建（含卡帧改缩略图）
+assets/index-Dk6mCA1z.js              316035  gzip   96090  br   82933  ← 首屏 entry
+assets/VideoPlayer-Cilut95t.js        117541  gzip   35477  br   31064
+assets/GameDetail-DVycLjDb.js          89552  gzip   24315  br   21280
+assets/index-Cgk_T4QJ.css              37806  gzip    7214  br    6193  ← 首屏 CSS
+assets/VideoPlayer-BoANmIBg.css        32682  gzip    5149  br    4530
+assets/Settings-B30N11Od.js            31645  gzip    8022  br    6833
+assets/GameDetail-Cfkhaq8h.css          2761  gzip     816  br     658
+favicon.svg                             1903  gzip    1250  br    1005
+assets/Card-CwoTevga.js                 1192  gzip     513  br     444
+index.html                               744  gzip     496  br     305
+合计（全部，含按需分块）            原始 631861  gzip 179344  br 155245
+
+注：entry 从 315907 B（死代码清理后那版）涨到 316035 B —— 卡帧改用缩略图的
+`cardFrame()` + 注释只多了 128 B；其余分块哈希变化是构建重排，不是行为变化。
+
+## 首屏（entry.js + entry.css + index.html）
+优化前  原始 627184   gzip 171342（=158675+12667+744，其中 744 为未压缩的 index.html）  br n/a
+优化后  原始 354585   gzip 103800   br 89431
+变化    原始 -272599 (-43.5%)   gzip -67542 (-39.4%)
+
+（首屏用「实际传输」看更直观：优化前无任何压缩投递 627184 B，
+ 优化后按构建期预压缩投递 gzip 103800 / brotli 89431 B —— −83.4% / −85.7%。）
+
+## 按需分块（首次不进首屏，只在用到时才下载）
+VideoPlayer-Cilut95t.js, GameDetail-DVycLjDb.js, VideoPlayer-BoANmIBg.css, Settings-B30N11Od.js, GameDetail-Cfkhaq8h.css, Card-CwoTevga.js
+合计 原始 275373 B（gzip 74295 / br 64752）—— 与上一版同量级，故不重复计。
+
+## 其它
+logs：目录内容为历次打包/重建脚本输出（非运行时日志）；运行时日志走 stdout，
+     由 docker-compose 的 json-file 驱动限制为 max-size=10m × max-file=3。
+node_modules：宿主机未做修剪（修剪发生在镜像构建的 build 阶段）。
+      该阶段本轮新增剔除的路径合计 31,124,449 字节（≈29.7 MiB）（宿主 glibc 口径，镜像为 musl，数值近似）。

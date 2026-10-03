@@ -15,6 +15,7 @@ import { MetadataService } from '../metadata/metadata.service';
 import { buildAchievementsPayload } from './achievements.view';
 import { AchievementTargetService } from '../trophies/achievement-target.service';
 import { RatingTargetService } from '../metadata/rating-target.service';
+import type { RatingTarget } from '../metadata/rating-target.service';
 import { MetadataProviderName } from '../metadata/provider.interface';
 import { DURATION_SOURCE_ORDER } from '../metadata/metadata-merge';
 import { titleQueryVariants } from '../metadata/providers/metacritic-aliases';
@@ -26,6 +27,54 @@ import { MediaReviewsService } from './media-reviews.service';
 
 /** Spacing between hand-set gallery positions; midpoints fill the gaps. */
 const ORDER_GAP = 1024;
+
+/**
+ * The `games` columns the gallery list/neighbours path reads.
+ *
+ * Filtering and ordering only touch these, and a card summary reads nothing
+ * else — selecting them by name instead of `SELECT *` keeps the multi-kilobyte
+ * JSON columns (`summary`, `screenshots`, `voice_actors`, `prices`) out of the
+ * process for every row that is never rendered. The detail view still reads the
+ * whole row.
+ */
+const GALLERY_COLUMNS = [
+  'id',
+  'name',
+  'folder_path',
+  'platform',
+  'platforms',
+  'custom_platform',
+  'poster_url',
+  'poster_mode',
+  'ratings',
+  'developers',
+  'publishers',
+  'release_date',
+  'duration_seconds',
+  'first_played_at',
+  'last_played_at',
+  'meta_error',
+  'custom_order',
+].join(', ');
+
+/**
+ * The values gallery ordering is computed from: the same values the card
+ * summary exposes, derived from the row without the expensive fields.
+ */
+interface GallerySortKey {
+  name: string;
+  customOrder: number | null;
+  firstPlayedAt: string | null;
+  durationSeconds: number;
+  metacriticScore: number | null;
+  /** Only filled when `mediaCount` is the active sort key. */
+  mediaCount: number | null;
+}
+
+/** A row that matched the filters, with its sort key. */
+interface GalleryEntry extends GallerySortKey {
+  row: GameRow;
+}
 
 export interface GameFilters {
   search?: string;
@@ -153,6 +202,37 @@ const IMPROVABLE_DURATION_SQL = `SELECT id, name FROM games
  */
 const RETRY_ROUNDS = 3;
 
+/**
+ * How many game ids go into one `IN (…)` batch.
+ *
+ * SQLite's variable limit is 999 on the oldest builds and 32766 on current ones;
+ * 400 stays legal on both while collapsing a 500-game library into two
+ * statements. Every row of one game has the same `game_id`, so a game's rows
+ * always land in the same batch and the per-game order the card relies on is
+ * preserved.
+ */
+const ID_CHUNK = 400;
+
+/** A `game_posters` row, exactly as the card carousel reads it. */
+interface CardPosterRow {
+  game_id: string;
+  id: string;
+  url: string;
+  source: string;
+  media_id: string | null;
+}
+
+/** The card's frame rows for a single game — cover first, then the ticked rows. */
+const CARD_POSTER_SQL = `SELECT game_id, id, url, source, media_id FROM game_posters
+   WHERE game_id = ? AND (is_selected = 1 OR in_slideshow = 1)
+   ORDER BY is_selected DESC, sort_order ASC, created_at ASC`;
+
+/** Per-game lookups fetched in bulk, so a 50-card page costs one statement per shape. */
+interface SummaryPrefetch {
+  posters?: Map<string, CardPosterRow[]>;
+  mediaCounts?: Map<string, number>;
+}
+
 @Injectable()
 export class GamesService {
   private readonly logger = new Logger(GamesService.name);
@@ -213,16 +293,10 @@ export class GamesService {
    * So ticking/unticking a poster changes the card and leaves the hero untouched,
    * and the two can no longer drift in or out of sync by accident.
    */
-  private cardPosters(r: GameRow): string[] {
-    const rows = this.db.all<{ url: string; source: string; id: string; media_id: string | null }>(
-      // Cover first (`is_selected DESC`) so the static frame is always frame 0,
-      // then the ticked rows. A row that is neither the cover nor ticked stays out
-      // of the card — `in_slideshow` is the card's own switch.
-      `SELECT id, url, source, media_id FROM game_posters
-        WHERE game_id = ? AND (is_selected = 1 OR in_slideshow = 1)
-        ORDER BY is_selected DESC, sort_order ASC, created_at ASC`,
-      [r.id],
-    );
+  private cardPosters(r: GameRow, prefetched?: CardPosterRow[]): string[] {
+    // `prefetched` comes from {@link cardPosterRows} when a page of cards is being
+    // built: identical rows, identical order, one statement instead of one per card.
+    const rows = prefetched ?? this.db.all<CardPosterRow>(CARD_POSTER_SQL, [r.id]);
     const uniq: string[] = [];
     const seenMedia = new Set<string>();
     for (const p of rows) {
@@ -250,20 +324,122 @@ export class GamesService {
     return uniq;
   }
 
+  /**
+   * {@link cardPosters}' rows for many games, in one statement per batch.
+   *
+   * The SQL is the single-game query with `game_id = ?` widened to `IN (…)` and
+   * `game_id` added to the projection so the rows can be grouped back per game.
+   * The per-game ordering is untouched: within one `game_id` the rows still come
+   * back cover-first, then by `sort_order`, then by `created_at`.
+   */
+  private cardPosterRows(ids: string[]): Map<string, CardPosterRow[]> {
+    const byGame = new Map<string, CardPosterRow[]>();
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+      const chunk = ids.slice(i, i + ID_CHUNK);
+      const rows = this.db.all<CardPosterRow>(
+        `SELECT game_id, id, url, source, media_id FROM game_posters
+          WHERE (is_selected = 1 OR in_slideshow = 1) AND game_id IN (${chunk.map(() => '?').join(',')})
+          ORDER BY game_id ASC, is_selected DESC, sort_order ASC, created_at ASC`,
+        chunk,
+      );
+      for (const row of rows) {
+        const list = byGame.get(row.game_id);
+        if (list) list.push(row);
+        else byGame.set(row.game_id, [row]);
+      }
+    }
+    return byGame;
+  }
+
+  /**
+   * Media counts for many games, in one statement per batch.
+   *
+   * A game with no media simply has no row in the result, which the callers read
+   * as 0 — the same value `MediaService.countByGame` would have returned.
+   */
+  private mediaCounts(ids: string[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+      const chunk = ids.slice(i, i + ID_CHUNK);
+      const rows = this.db.all<{ game_id: string; c: number }>(
+        `SELECT game_id, COUNT(*) AS c FROM media WHERE game_id IN (${chunk.map(() => '?').join(',')}) GROUP BY game_id`,
+        chunk,
+      );
+      for (const row of rows) counts.set(row.game_id, row.c);
+    }
+    return counts;
+  }
+
   list(filters: GameFilters): object[] {
-    const sorted = this.arrange(filters);
+    // One read of the manual-rating table for the whole request: `arrange` needs
+    // the manual target of every row (it is part of the sort key) and the page
+    // build needs it again per card. Same rows, one statement.
+    const manualTargets = this.ratingTargets.all();
+    const ordered = this.arrange(filters, manualTargets);
     const page = Math.max(1, filters.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, filters.pageSize ?? 50));
-    return sorted.slice((page - 1) * pageSize, page * pageSize);
+    // Summaries are built for the requested page only, and everything they need
+    // from the database is fetched for the whole page in bulk: the poster rows
+    // and the media counts used to cost one query per card (N of each for a
+    // library of N games), on the request thread, because better-sqlite3 is
+    // synchronous. Now a page of cards costs one statement per lookup shape. The
+    // output is unchanged — the page is cut from the same order and the bulk
+    // reads return the same rows with the same ordering.
+    const pageRows = ordered.slice((page - 1) * pageSize, page * pageSize);
+    const ids = pageRows.map((entry) => entry.row.id);
+    const prefetch: SummaryPrefetch = {
+      posters: this.cardPosterRows(ids),
+      mediaCounts: this.mediaCounts(ids),
+    };
+    return pageRows.map((entry) => this.toSummary(entry.row, manualTargets, prefetch));
   }
 
   /** Every game matching the filters, in gallery order (no pagination). */
-  private arrange(filters: GameFilters): Record<string, unknown>[] {
-    const rows = this.db.all<GameRow>('SELECT * FROM games');
-    const summaries = rows
-      .filter((r) => this.matchesFilters(r, filters))
-      .map((r) => this.toSummary(r));
-    return this.sort(summaries, filters.sort ?? 'name', filters.order ?? 'asc');
+  private arrange(
+    filters: GameFilters,
+    manualTargets: Map<string, RatingTarget> | null = null,
+  ): GalleryEntry[] {
+    const rows = this.db.all<GameRow>(`SELECT ${GALLERY_COLUMNS} FROM games`);
+    const targets = manualTargets ?? this.ratingTargets.all();
+    const sort = filters.sort ?? 'name';
+    // `mediaCount` is the one order that cannot be derived from the row itself,
+    // so the counts are only paid for when it is actually the sort key — and then
+    // for every candidate in bulk rather than one statement per game (a 500-game
+    // library ordered by media count used to cost 500 statements here).
+    const matching = rows.filter((r) => this.matchesFilters(r, filters));
+    const counts =
+      sort === 'mediaCount' ? this.mediaCounts(matching.map((r) => r.id)) : null;
+    return this.sort(
+      matching.map((r) => this.toSortKey(r, counts, targets)),
+      sort,
+      filters.order ?? 'asc',
+    );
+  }
+
+  /**
+   * The gallery sort key for a row — the same values {@link toSummary} exposes
+   * for `customOrder`/`firstPlayedAt`/`durationSeconds`/`metacriticScore`, minus
+   * everything the order never looks at.
+   *
+   * `mediaCounts` is null unless `mediaCount` is the active order, in which case
+   * it holds the count of every row that passed the filters (missing ⇒ 0).
+   */
+  private toSortKey(
+    r: GameRow,
+    mediaCounts: Map<string, number> | null,
+    manualTargets: Map<string, RatingTarget> | null = null,
+  ): GalleryEntry {
+    return {
+      row: r,
+      name: r.name,
+      customOrder: r.custom_order ?? null,
+      // Same ISO string `toSummary` exposes, so `sort=created` keeps comparing
+      // identical values.
+      firstPlayedAt: r.first_played_at ? new Date(r.first_played_at).toISOString() : null,
+      durationSeconds: r.duration_seconds,
+      metacriticScore: this.resolveRating(r, manualTargets).rating?.metascore ?? null,
+      mediaCount: mediaCounts ? (mediaCounts.get(r.id) ?? 0) : null,
+    };
   }
 
   /**
@@ -286,12 +462,14 @@ export class GamesService {
     total: number;
   } {
     const sorted = this.arrange(filters);
-    const index = sorted.findIndex((g) => g.id === id);
+    const index = sorted.findIndex((g) => g.row.id === id);
     // Either the game is hidden by the active filters, or it no longer exists.
     if (index === -1) return { prev: null, next: null, index: -1, total: sorted.length };
 
-    const brief = (g: Record<string, unknown> | undefined) =>
-      g ? { id: String(g.id), name: String(g.name) } : null;
+    // Only the id/name pair is needed here, which is why this path shares the
+    // cheap {@link arrange} projection instead of building full summaries.
+    const brief = (g: GalleryEntry | undefined) =>
+      g ? { id: String(g.row.id), name: String(g.row.name) } : null;
 
     return {
       prev: brief(sorted[(index - 1 + sorted.length) % sorted.length]),
@@ -1113,17 +1291,41 @@ export class GamesService {
     }));
   }
 
-  private toSummary(r: GameRow): Record<string, unknown> {
+  /**
+   * Read-time Metacritic resolution, shared by the card summary and the gallery
+   * sort key so the two can never disagree about a game's score.
+   *
+   * A user-picked rating outranks whatever the scraper stored. Resolving this at
+   * read time (rather than copying the value into `games`) is what makes the
+   * choice survive every refresh: there is nothing for a scrape to overwrite.
+   */
+  private resolveRating(
+    r: GameRow,
+    manualTargets: Map<string, RatingTarget> | null = null,
+  ): {
+    manual: RatingTarget | null;
+    rating: { metascore: number | null; criticCount: number | null } | null;
+  } {
+    const manual = manualTargets ? (manualTargets.get(r.id) ?? null) : this.ratingTargets.get(r.id);
+    if (manual) {
+      return { manual, rating: { metascore: manual.metascore, criticCount: manual.criticCount } };
+    }
+    return { manual: null, rating: firstRating(r.ratings) };
+  }
+
+  private toSummary(
+    r: GameRow,
+    manualTargets: Map<string, RatingTarget> | null = null,
+    /**
+     * Bulk lookups for a page of cards. Absent on the single-game paths (detail,
+     * backfill), where the per-row queries are cheaper than a batch of one.
+     */
+    prefetch?: SummaryPrefetch,
+  ): Record<string, unknown> {
     // Hand-set gallery position for the drag-and-drop mode; read from the summary
     // because list() sorts the summaries, not the rows.
     const customOrder = r.custom_order ?? null;
-    // A user-picked rating outranks whatever the scraper stored. Resolving this
-    // at read time (rather than copying the value into `games`) is what makes the
-    // choice survive every refresh: there is nothing for a scrape to overwrite.
-    const manualRating = this.ratingTargets.get(r.id);
-    const rating = manualRating
-      ? { metascore: manualRating.metascore, criticCount: manualRating.criticCount }
-      : firstRating(r.ratings);
+    const { manual: manualRating, rating } = this.resolveRating(r, manualTargets);
     const platforms = platformsOfRow(r);
     return {
       customOrder,
@@ -1139,9 +1341,9 @@ export class GamesService {
       // Home-card carousel set: cover first, then the user-ticked rows. The field
       // name stays `posters` — the card and its arrows already read it. Each URL
       // is already routed through the image proxy inside `cardPosters`.
-      posters: this.cardPosters(r),
+      posters: this.cardPosters(r, prefetch?.posters ? prefetch.posters.get(r.id) ?? [] : undefined),
       posterMode: r.poster_mode === 'slideshow' ? 'slideshow' : 'static',
-      mediaCount: this.media.countByGame(r.id),
+      mediaCount: prefetch?.mediaCounts ? prefetch.mediaCounts.get(r.id) ?? 0 : this.media.countByGame(r.id),
       durationSeconds: r.duration_seconds,
       durationText: formatDurationText(r.duration_seconds),
       metacriticScore: rating?.metascore ?? null,
@@ -1353,9 +1555,13 @@ export class GamesService {
       `SELECT id FROM games
         ORDER BY custom_order IS NULL, custom_order ASC, name ASC`,
     );
-    all.forEach((p, i) => {
-      this.db.run('UPDATE games SET custom_order = ? WHERE id = ?', [(i + 1) * ORDER_GAP, p.id]);
-    });
+    // One transaction and one prepared statement instead of a prepare + commit
+    // per row: re-spreading a large arrangement used to cost one commit (and its
+    // fsync) per game. The written values are unchanged.
+    const update = this.db.raw.prepare('UPDATE games SET custom_order = ? WHERE id = ?');
+    this.db.raw.transaction((rows: Array<{ id: string }>) => {
+      rows.forEach((p, i) => update.run((i + 1) * ORDER_GAP, p.id));
+    })(all);
     this.logger.log(`Renumbered ${all.length} custom gallery positions.`);
   }
 
@@ -1370,12 +1576,12 @@ export class GamesService {
   }
 
   private sort(
-    items: Record<string, unknown>[],
+    items: GalleryEntry[],
     sort: NonNullable<GameFilters['sort']>,
     order: 'asc' | 'desc',
-  ): Record<string, unknown>[] {
+  ): GalleryEntry[] {
     const dir = order === 'desc' ? -1 : 1;
-    const key = (it: Record<string, unknown>): number | string => {
+    const key = (it: GalleryEntry): number | string => {
       switch (sort) {
         case 'custom':
           // Games the user has never dragged keep a null position and sort after

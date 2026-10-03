@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MaintenanceService } from './maintenance.service';
 import { LibraryModule } from '../library/library.module';
 import { GamesModule } from '../games/games.module';
+import { MetadataModule } from '../metadata/metadata.module';
 /**
  * Boot-time data repairs (see `MaintenanceService`).
  *
@@ -11,11 +12,15 @@ import { GamesModule } from '../games/games.module';
  * its own scan state. `SettingsService` comes from the global `SettingsModule`,
  * and `DatabaseService` from the global `DatabaseModule`.
  *
+ * `MetadataModule` is here for `MetadataCacheService.prune()`, which the
+ * housekeeping pass calls: it is the only way to drop expired provider responses
+ * from `metadata_cache`, and it must be the same instance the providers wrote to.
+ *
  * `PostersModule` used to be here for the boot-time cover repair; that repair is
  * gone (the cover is structural now), so the import went with it.
  */
 @Module({
-  imports: [LibraryModule, GamesModule],
+  imports: [LibraryModule, GamesModule, MetadataModule],
   providers: [MaintenanceService],
 })
 export class MaintenanceModule {}

@@ -66,7 +66,7 @@ const api = {
   },
 };
 
-function db() { return new DatabaseSync(path.join(DATA, 'screenplay.db')); }
+function db() { return new DatabaseSync(path.join(DATA, 'screenplay.db'), { timeout: 5000 }); } // busy 5s：测试进程也在写同一个库，避免与在跑的服务撞出 database is locked
 
 function posterRows(gameId) {
   const d = db();

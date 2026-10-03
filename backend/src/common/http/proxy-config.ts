@@ -24,12 +24,38 @@ export interface Ipv4Agents {
   httpsAgent: https.Agent;
 }
 
-/** Build keep-alive agents pinned to IPv4 (avoids ENETUNREACH on IPv6). */
+/**
+ * Idle keep-alive sockets kept per host. Deliberately small: the pool only needs
+ * enough to serve back-to-back requests, and every extra slot is a descriptor
+ * (and a buffer) held open for a host that may never be asked again. Does not
+ * limit concurrency — `maxSockets` stays at its default.
+ */
+const MAX_FREE_SOCKETS = 4;
+
+/**
+ * Build keep-alive agents pinned to IPv4 (avoids ENETUNREACH on IPv6).
+ *
+ * The pair is built ONCE and reused. An `http.Agent` *is* the connection pool, so
+ * constructing one per request (as the image fetcher used to) meant every request
+ * threw away the sockets it could have reused and handed the previous pool to the
+ * garbage collector — pure churn on a long scan, and a fresh TLS handshake per
+ * image. Callers only ever spread the pair into an axios config, so sharing it is
+ * invisible to them; nothing here holds per-request state.
+ */
+let ipv4Agents: Ipv4Agents | null = null;
+
 export function createIpv4Agents(): Ipv4Agents {
-  return {
-    httpAgent: new http.Agent({ family: 4, keepAlive: true }),
-    httpsAgent: new https.Agent({ family: 4, keepAlive: true }),
-  };
+  if (!ipv4Agents) {
+    ipv4Agents = {
+      httpAgent: new http.Agent({ family: 4, keepAlive: true, maxFreeSockets: MAX_FREE_SOCKETS }),
+      httpsAgent: new https.Agent({
+        family: 4,
+        keepAlive: true,
+        maxFreeSockets: MAX_FREE_SOCKETS,
+      }),
+    };
+  }
+  return ipv4Agents;
 }
 
 /**
@@ -293,23 +319,6 @@ export function detectHostGateway(): string | null {
 }
 
 /** Plain TCP connect probe. */
-export function probeTcp(host: string, port: number, timeoutMs = 3000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = net.connect({ host, port });
-    let settled = false;
-    const finish = (ok: boolean) => {
-      if (settled) return;
-      settled = true;
-      sock.destroy();
-      resolve(ok);
-    };
-    sock.setTimeout(timeoutMs);
-    sock.once('connect', () => finish(true));
-    sock.once('timeout', () => finish(false));
-    sock.once('error', () => finish(false));
-  });
-}
-
 interface ConnectProbeOptions {
   host: string;
   port: number;

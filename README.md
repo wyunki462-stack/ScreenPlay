@@ -1,6 +1,6 @@
 # ScreenPlay
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-release-brightgreen)](#版本说明)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -10,8 +10,8 @@
 > 架构：**后端统一服务 + 多端前端展示**。核心业务全部沉淀在后端，Web / Flutter
 > 客户端通过同一套 REST API 复用。
 
-> ✅ **当前版本 `1.2.0` —— 新增 Windows 桌面端，三端图标统一**。核心路径有自动化验证覆盖
-> （**11 个离线套件 / 422 条断言** + 三端产物自检，见 [`docs/VERIFY.md`](docs/VERIFY.md)）；
+> ✅ **当前版本 `1.3.0` —— Linux 端全量性能优化（功能与接口未变）**。核心路径有自动化验证覆盖
+> （**12 个离线套件 / 434 条断言** + 三端产物自检，见 [`docs/VERIFY.md`](docs/VERIFY.md)）；
 > 接口与数据表结构自 `1.0.0` 起按语义化版本保持兼容。从 `0.x` 升级上来仍建议先备份
 > `data/` 目录。详见下方 [版本说明](#版本说明)。
 
@@ -19,12 +19,16 @@
 
 ## 版本说明
 
-### 当前版本：`1.2.0`（Windows 桌面端 + 三端图标统一）
+### 当前版本：`1.3.0`（Linux 端全量性能优化）
 
 `1.0.0` 已让接口（`/api/*`）与数据表结构进入稳定状态：此后只按语义化版本递增，不再做
 破坏性调整。此前 9 轮功能迭代与全部修补版的内容，都已经包含在这一个镜像里。
 
-`1.2.0` **没有改动后端接口与数据表结构**，新增的是桌面端与界面一致性：Windows 桌面端
+`1.3.0` **没有改动任何功能、交互、数据结构与接口**，只优化内存与存储占用：镜像解压体积
+−16.7%（386.8 → 322.1 MiB）、列表接口 SQL 651 → 4 条、同负载内存增量 VmRSS −65.7%、
+空闲态 WAL −96.2%。逐项明细与真机前后对照见 [`docs/perf/`](docs/perf/)。
+
+`1.2.0` 带来的是 Windows 桌面端与界面一致性：Windows 桌面端
 （`windows/`，Tauri v2 壳 + 内置后端的源码与构建方案）、三端左上角图标统一为首页顶栏那枚
 品牌 mark、设置页改密（**Windows 桌面端不提供该入口**），并修掉「首页卡片开启轮播后
 上一张/下一张点不动」。另外修掉一处**构建期**缺陷（构建机没有外网时镜像构建会失败），
@@ -58,8 +62,10 @@
 | 9 | `0.6.4`：详情页评分区去掉「用户评分」、评价面板搜索 / 排序 / 点页码跳页 | 同上 |
 | — | **`1.0.0`**：瘦身（依赖 / 构建 / 文件）+ 6 组重复实现合并 + 海报归属缺陷修复，无新功能 | 10 个离线套件 / 382 条断言 |
 | 10 | **`1.2.0`**：Windows 桌面端（Tauri v2 壳 + 内置后端）、三端品牌图标统一、设置页改密（桌面端按平台剔除）、首页卡片箭头修复、构建期原生包换源 | 11 个离线套件 / 422 条断言 + 三端产物自检 |
+| 11 | **`1.3.0`**：Linux 端全量性能优化（内存 / 镜像 / 磁盘 / 依赖 / 缓存），功能、交互、数据结构与接口未变 | 12 个离线套件 / 434 条断言 + 真机前后实测对照 |
 
-累计约 **21 项编号需求**的落地与回归，外加第 7～10 轮的修复项与 `1.2.0` 的桌面端 / 三端图标统一。每轮的完整验收记录
+累计约 **21 项编号需求**的落地与回归，外加第 7～10 轮的修复项、`1.2.0` 的桌面端 / 三端图标统一，
+以及 `1.3.0` 的性能优化。每轮的完整验收记录
 （含实测输出）保留在 [`docs/VERIFY.md`](docs/VERIFY.md)。
 
 > 上表里的一次性轮次脚本（`scripts/verify-round-*.sh`、`scripts/verify-*.mjs` 等 37 个文件）
@@ -97,7 +103,7 @@ ScreenPlay/
 ├── windows/            # Windows 桌面端（Tauri v2 壳 + 内置后端，见 windows/README.md）
 ├── docs/API.md         # 完整 API 接口文档
 ├── scripts/            # docker-build.sh 代理注入/源切换构建脚本 + apk/npm 构建期辅助脚本
-├── Dockerfile          # Linux 镜像（node:22-alpine，多阶段）
+├── Dockerfile          # Linux 镜像（多阶段：构建 node:22-alpine，运行 alpine + 仅拷贝 node 二进制）
 ├── Dockerfile.windows  # Windows 镜像（node:22-windowsservercore）
 └── docker-compose.yml  # 一键启动
 ```
@@ -615,7 +621,43 @@ CI 只是多一条会失败、且报错信息残缺的链路（build-push-action
 `docker/build-push-action`，并**显式传 `NPM_MIRROR_REGISTRY`**（国内默认是
 registry.npmmirror.com，会让海外 runner 跨太平洋取包）。
 
-### 本轮（`1.2.0`：Windows 桌面端 + 三端图标统一 + 去改密 + 卡片箭头修复）的部署与验收
+### 本轮（`1.3.0`：Linux 端全量性能优化）的部署与验收
+
+**功能、交互、数据结构与 HTTP 接口完全没变**，部署方式也与前几轮**一模一样**（数据在
+`screenplay-data` 卷里，重建镜像不会丢）：
+
+```bash
+bash scripts/rebuild-and-verify.sh            # 重建镜像 + 重启容器 + 体检（需 docker 组权限）
+SKIP_BUILD=1 bash scripts/package-image.sh    # 复用刚建好的镜像，导出可搬运的镜像包
+```
+
+判据同样是 `version`（本轮没有新增 feature 标记）：
+
+```bash
+curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' | grep -E '"version"'
+# 期望：version 1.3.0
+```
+
+怎么确认优化真的生效（**都不需要 docker 权限**）：
+
+```bash
+node scripts/verify-docker-layers.mjs                      # 镜像分层 / 瘦身自查：33 项
+bash scripts/verify-suites.sh docs/perf/mine.txt           # 12 套件 + 产物 / 分层自查（约 4 分钟）
+node scripts/gen-source-hash.mjs --check                   # 源码指纹一致性
+bash scripts/perf-compare.sh docs/perf/before-docker.txt docs/perf/after-docker.txt /tmp/my-compare.md
+```
+
+想拿自己机器上的数字，就在能跑 docker 的终端里采一次基线（`--load` 会额外打一组请求）：
+
+```bash
+bash scripts/perf-baseline.sh --load                      # 生成 docs/perf/after-<时间>.txt
+bash scripts/perf-compare.sh docs/perf/before-docker.txt docs/perf/after-*.txt
+```
+
+逐项明细 / 前后对照 / 复核步骤：[`docs/perf/PERF-REPORT.md`](docs/perf/PERF-REPORT.md)、
+[`docs/perf/compare.md`](docs/perf/compare.md)、[`docs/perf/RUN-ON-HOST.md`](docs/perf/RUN-ON-HOST.md)。
+
+### `1.2.0`（Windows 桌面端 + 三端图标统一 + 去改密 + 卡片箭头修复）的部署与验收
 
 **后端接口与数据表结构没有任何变化**，新增的是桌面端与界面一致性：三端左上角图标统一为
 首页顶栏那枚品牌 mark（紫青渐变方块 + 白色手柄），设置页改密卡片在 **Windows 桌面端**不出现，
@@ -631,7 +673,7 @@ SKIP_BUILD=1 bash scripts/package-image.sh    # 复用刚建好的镜像，导�
 
 ```bash
 curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' | grep -E '"version"'
-# 期望：version 1.2.0
+# 期望：version 1.2.0（`1.3.0` 起这一行应显示 1.3.0 —— 见上面那一节）
 ```
 
 > **构建期修复（随 `1.2.0` 一起）**：`better-sqlite3` 的原生预编译包不在 npm registry 上，

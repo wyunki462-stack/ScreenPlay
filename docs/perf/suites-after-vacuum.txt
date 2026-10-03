@@ -1,0 +1,1062 @@
+# 离线全量回归 2026-10-03 02:16:43
+# 退出码取 node/sh 自身状态（不用管道，避免被 tail 掩盖）
+
+### typecheck-backend
+
+退出码=0
+
+### typecheck-web
+
+退出码=0
+
+### review-pagination-test
+
+[1m媒体评价分页 · 离线测试[0m
+
+  [1m[常量][0m
+  [32m✓[0m 每页最多条数 → 10
+  [32m✓[0m 第一页默认露出条数 → 5
+
+  [1m[第一页默认 5 条][0m
+  [32m✓[0m 66 条时可见条数 → 5
+  [32m✓[0m 66 条时已显示 → 5
+  [32m✓[0m 66 条时可展开 → true
+  [32m✓[0m 66 条时总页数 → 7
+  [32m✓[0m 4 条时可见条数 → 5
+  [32m✓[0m 4 条时已显示（不能超过总数） → 4
+  [32m✓[0m 4 条时无可展开 → false
+  [32m✓[0m 恰好 5 条时已显示 → 5
+  [32m✓[0m 恰好 5 条时无可展开（没有多余的了） → false
+  [32m✓[0m 6 条时可展开 → true
+
+  [1m[展开后 10 条，且不越过页边界][0m
+  [32m✓[0m 66 条展开后可见条数 → 10
+  [32m✓[0m 66 条展开后已显示 → 10
+  [32m✓[0m 展开后不再提供展开按钮 → false
+  [32m✓[0m 7 条展开后已显示（不超过总数） → 7
+  [32m✓[0m 200 条展开后仍只有一页 10 条 → 10
+
+  [1m[第 2 页起][0m
+  [32m✓[0m 第 2 页可见条数 → 10
+  [32m✓[0m 第 2 页无展开按钮 → false
+  [32m✓[0m 第 2 页已显示 → 10
+  [32m✓[0m 最后一页（第 7 页）已显示 → 6
+  [32m✓[0m 最后一页无展开按钮 → false
+
+  [1m[页码越界夹取 —— 重新抓取后条数变化][0m
+  [32m✓[0m 15 条却停在第 7 页 → 夹到第 2 页 → 2
+  [32m✓[0m 夹取后已显示 → 5
+  [32m✓[0m 页码 0 → 夹到第 1 页 → 1
+  [32m✓[0m 负数页码 → 夹到第 1 页 → 1
+  [32m✓[0m 超大页码 → 夹到最后一页 → 7
+  [32m✓[0m 小数页码 → 向下取整 → 2
+  [32m✓[0m NaN 页码 → 第 1 页 → 1
+
+  [1m[空集合][0m
+  [32m✓[0m 0 条时总页数（至少 1，便于渲染「第 x / y 页」） → 1
+  [32m✓[0m 0 条时已显示 → 0
+  [32m✓[0m 0 条时无可展开 → false
+  [32m✓[0m 负数条数不产生负页码 → 1
+  [32m✓[0m 负数条数按 0 处理 → 0
+
+  [1m[切片与页码一致][0m
+  [32m✓[0m 第 1 页切片首项 → 1
+  [32m✓[0m 第 1 页切片长度 → 10
+  [32m✓[0m 第 3 页切片首项 → 21
+  [32m✓[0m 第 7 页切片长度（余 6 条） → 6
+  [32m✓[0m 逐页取完的总条数 → 66
+  [32m✓[0m 无重复 → 66
+  [32m✓[0m 首尾连续 → true
+
+  [1m[展开态与翻页的组合][0m
+  [32m✓[0m 第 2 页 expanded=true 时可见条数 → 10
+  [32m✓[0m 第 2 页 expanded=true 时无展开按钮 → false
+
+  [1m[平台筛选][0m
+  [32m✓[0m 「全部」的哨兵值不与真实平台名冲突 → true
+  [32m✓[0m 「全部」返回原列表（同一引用即可） → 5
+  [32m✓[0m 空值等同于「全部」 → 5
+  [32m✓[0m undefined 等同于「全部」 → 5
+  [32m✓[0m 筛 PS5 → 2
+  [32m✓[0m 筛 PC → 1
+  [32m✓[0m 筛 Switch → 1
+  [32m✓[0m 筛不存在的平台 → 空 → 0
+  [32m✓[0m 无平台评价不被任何平台筛中 → false
+  [32m✓[0m 大小写不敏感 → 1
+  [32m✓[0m 首尾空白不敏感 → 1
+  [32m✓[0m 选项数 = 1（全部）+ 3 个真实平台 → 4
+  [32m✓[0m 首项是「全部」 → __all__
+  [32m✓[0m 「全部」计数含无平台评价 → 5
+  [32m✓[0m PS5 计数 → 2
+  [32m✓[0m 不把无平台评价单列成一项 → false
+  [32m✓[0m 条数多的平台排在前 → B
+  [32m✓[0m 同数量按名称排序（A 条数少，B/C 同数量时按名称） → BCA
+  [32m✓[0m 空列表只有「全部」一项 → 1
+  [32m✓[0m 空列表的「全部」计数为 0 → 0
+  [32m✓[0m 全无平台时只有「全部」 → 1
+  [32m✓[0m 全无平台时「全部」仍有计数 → 2
+
+  [1m[媒体名搜索][0m
+  [32m✓[0m 空查询原样返回（同一个引用，不复制） → [object Object],[object Object],[object Object],[object Object]
+  [32m✓[0m 纯空白也算空查询 → [object Object],[object Object],[object Object],[object Object]
+  [32m✓[0m 按子串匹配（IGN 同时命中 IGN 与 IGN Japan） → 2
+  [32m✓[0m 大小写不敏感 → 2
+  [32m✓[0m 首尾空白不敏感 → 1
+  [32m✓[0m 只匹配媒体名，不匹配其他字段 → 0
+  [32m✓[0m outlet 为 null 不会被任何词命中 → 0
+  [32m✓[0m 无命中返回空数组 → 0
+  [32m✓[0m 不原地改动原列表 → 4
+
+  [1m[排序方式][0m
+  [32m✓[0m 排序选项齐全（顺序即下拉框顺序） → default,score-desc,score-asc,newest,oldest
+  [32m✓[0m default 原样返回（同一个引用） → [object Object],[object Object],[object Object],[object Object]
+  [32m✓[0m 分数从高到低 → CADB
+  [32m✓[0m 分数从低到高 → DACB
+  [32m✓[0m 时间从新到旧 → BACD
+  [32m✓[0m 时间从旧到新 → CABD
+  [32m✓[0m 降序时无分数的垫底 → B
+  [32m✓[0m 升序时无分数的同样垫底 → B
+  [32m✓[0m 降序时无日期的垫底 → D
+  [32m✓[0m 升序时无日期的同样垫底 → D
+  [32m✓[0m 解析不了的日期算缺值垫底 → BA
+  [32m✓[0m 不原地排序（原列表顺序不变） → ABCD
+  [32m✓[0m 空列表排序不炸 → 0
+
+  [1m[页码条][0m
+  [32m✓[0m 1 页 → 只有 1 → 1
+  [32m✓[0m 5 页全部铺开 → 1,2,3,4,5
+  [32m✓[0m 7 页仍然全铺开，不出现省略号 → 1,2,3,4,5,6,7
+  [32m✓[0m 8 页开始省略：首 + 当前及相邻 + 末 → 1,gap,3,4,5,gap,8
+  [32m✓[0m 第 1 页（左侧不出现省略号） → 1,2,gap,20
+  [32m✓[0m 第 2 页（左侧仍不出现省略号） → 1,2,3,gap,20
+  [32m✓[0m 靠末页时右侧不出现省略号 → 1,gap,18,19,20
+  [32m✓[0m 中间页两侧都有省略号 → 1,gap,9,10,11,gap,20
+  [32m✓[0m span=2 时相邻页更多 → 1,gap,8,9,10,11,12,gap,20
+  [32m✓[0m 页数非法（0）时兜底成 1 页 → 1
+  [32m✓[0m 页码条里没有 undefined/NaN → true
+
+[1m结果：98 项通过 / 0 项失败[0m
+
+
+退出码=0
+
+### metacritic-reviews-test
+
+[1m媒体评价解析器离线测试（不联网）[0m
+
+   夹具：dom.html, empty.html, landing-no-pager.html, nextdata.html, notfound.html, paginated-p1.html, paginated-p2.html, paginated-p3.html, paginated-p4.html, paginated-p5.html, paginated-p6.html
+
+   [32m✓[0m __NEXT_DATA__ 结构解析出 3 条（实际 3）
+   [32m✓[0m 找到媒体「IGN」
+   [32m✓[0m IGN 打分 90（实际 90）
+   [32m✓[0m IGN 的评语原文被取到
+   [32m✓[0m GameSpot 打分 80（实际 80）
+   [32m✓[0m Polygon 的判定词归一化为 Mixed（实际 Mixed）
+   [32m✓[0m DOM 结构解析出 >=3 条（实际 3）
+   [32m✓[0m DOM 里找到 IGN（实际 ["IGN","GameSpot","Eurogamer"]）
+   [32m✓[0m 过滤器/平台/判定词没有被当成媒体名
+   [32m✓[0m 相对链接被补成绝对链接
+   [32m✓[0m 95 分的媒体被打分正确解析
+   [32m✓[0m 无评价页面返回空数组（实际 0 条）
+   [32m✓[0m 404 页面不产生任何评价（实际 0 条）—— 否则会把导航文字当成媒体
+   [32m✓[0m 空字符串输入返回空数组
+   [32m✓[0m null 输入返回空数组（不抛错）
+   [32m✓[0m "90" → 90
+   [32m✓[0m "8.4/10" → 84（按 10 分制换算，而不是读成 8）
+   [32m✓[0m "85 out of 100" → 85
+   [32m✓[0m "Metascore 93" → 93
+   [32m✓[0m "—" → null
+   [32m✓[0m 空文本 → null
+   [32m✓[0m 判定词 "Positive" → null（不猜数字）
+   [32m✓[0m clampScore(3056) → null（挡住 RSC 列索引）
+   [32m✓[0m clampScore(0) → null（0 不是有效 Metascore）
+   [32m✓[0m clampScore(93) → 93
+   [32m✓[0m clampScore("88") → 88
+   [32m✓[0m clampScore("abc") → null
+   [32m✓[0m "Nov 12, 2020" → 2020-11-12
+   [32m✓[0m "12 November 2020" → 2020-11-12
+   [32m✓[0m ISO 日期原样返回
+   [32m✓[0m 无法识别的日期 → null
+   [32m✓[0m PlayStation 5 → PS5
+   [32m✓[0m PC → PC
+   [32m✓[0m Nintendo Switch → Switch
+   [32m✓[0m 不认识的平台保留原文而不是乱猜
+   [32m✓[0m IGN 是合法媒体名
+   [32m✓[0m "All"（筛选器）被拒
+   [32m✓[0m "PC"（平台标签）被拒
+   [32m✓[0m "90"（纯数字）被拒
+   [32m✓[0m 空字符串被拒
+   [32m✓[0m 超长字符串被拒
+   [32m✓[0m "No critic reviews have been published yet."（空状态句子）被拒
+   [32m✓[0m "No reviews yet"（空状态短语）被拒
+   [32m✓[0m "Nintendo Life"（真实长名）通过
+   [32m✓[0m "PlayStation Universe" 通过
+   [32m✓[0m 同一媒体的重复条目被合并（实际 1 条）
+   [32m✓[0m 合并后同时保留分数与评语
+   [32m✓[0m 同一媒体的不同分数不会被误合并
+   [32m✓[0m parseReviewsFromDom 独立可用（3 条）
+   [32m✓[0m 分页首页只含 2 条（实际 2）—— 真实站点首页只印前几条，其余在分页里
+   [32m✓[0m 首页能识别出「下一页」链接（/game/astro-bot/critic-reviews/?page=2）
+   [32m✓[0m 识别出总页数 5（实际 5）
+   [32m✓[0m 下一页指向 page=2（实际 /game/astro-bot/critic-reviews/?page=2）
+   [32m✓[0m 第 0 页出发 → 拉 page=2（实际 https://www.metacritic.com/game/astro-bot/critic-reviews/?page=2）
+   [32m✓[0m 已在 page=2 → 拉 page=3，不回头（实际 https://www.metacritic.com/game/astro-bot/critic-reviews/?page=3）
+   [32m✓[0m 末页(page=6)不再返回下一页（实际 null）
+   [32m✓[0m 没有分页器的页面不会产生下一页（避免死循环）
+   [32m✓[0m pageOfUrlIn 解析出 7（实际 7）
+   [32m✓[0m pageOfUrlIn 无 page 参数时返回 null
+   [32m✓[0m 合并 6 页共 66 条唯一媒体评价（实际 66）—— 而不是只有首页的 2 条
+   [32m✓[0m 每条都带媒体名 + 打分 + 评价原文（三要素齐全，不是只有第一条）
+   [32m✓[0m 媒体名无重复（去重有效）
+   [32m✓[0m 首尾两页的媒体都在（覆盖到最后一页，不是提前中断）
+
+   [1m结果：63 项通过 / 0 项失败[0m
+
+
+退出码=0
+
+### metacritic-api-test
+
+[1m== 1. 真实响应 → 完整映射（frontend 需要的每个字段）[0m
+   真实 p1 映射出 10 条
+   第一条：Cultura Geek / 100 / PS5 / 2026-05-26
+   原文链接：https://culturageek.com.ar/review-007-first-light-james-bond-analisis/
+   [32m✓[0m 真实第一页 10 条全部映射出来（HTML 落地页只有 1 条）
+   [32m✓[0m 媒体名取自 publicationName，且不含分数（不是「100 Cultura Geek」）
+   [32m✓[0m 10 条媒体名都干净（无空、无数字前缀）
+   [32m✓[0m 10 条都带分数（100,100,100,100,100,100,100,100,100,100）
+   [32m✓[0m 10 条都有评语原文
+   [32m✓[0m 10 条原文链接都指向站外媒体（「查看原文」可用）
+   [32m✓[0m 10 条日期都解析成 YYYY-MM-DD
+   [32m✓[0m 平台归一：真实响应里的 "PlayStation 5" → "PS5"（面板筛选用的是后者）
+   [32m✓[0m 包含面板里原本只显示到的那条（Washington Post）
+   [32m✓[0m 拿到 10 条但站点自报 99 条 → 明确 warn：Metacritic 媒体评价接口：「007-first-light」应有 99 条，仅取到 10 条
+
+[1m== 2. 跟随响应里的 links.next（原样使用，不自己拼 offset）[0m
+   两页合并 20 条；请求 3 次
+     · https://mc-api.test/reviews/metacritic/critic/games/007-first-light/web?offset=0&limit=10&filter…
+     · https://backend.metacritic.com/reviews/metacritic/critic/games/007-first-light/web?offset=10&lim…
+     · https://backend.metacritic.com/reviews/metacritic/critic/games/007-first-light/web?offset=20&lim…
+   [32m✓[0m 20 条（两页各 10 条）都进来了
+   [32m✓[0m 第二次请求用的就是响应里的 links.next（原样，没有另拼 URL）
+   [32m✓[0m 两页之间无重复媒体（去重有效）
+   [32m✓[0m 接口可用时完全不回落到 HTML 抓取（没有多打一次列表页）
+
+[1m== 3. totalResults 抓满即停（站点继续给 next 也不多发请求）[0m
+   [32m✓[0m 抓满 23 条（totalResults 的数目）
+   [32m✓[0m 只请求 3 次（offset=0/10/20），抓满后没有再跟着 next 走
+   [32m✓[0m 抓满时没有多余的 warn
+
+[1m== 4. 接口不可用 / 返回垃圾 → 回落 HTML 抓取（不能退化的底线）[0m
+   接口失败时回落到 HTML：拿到 66 条，HTML 请求 6 次
+   [32m✓[0m 接口不通时 HTML 兜底仍抓到 66 条（不是 0，也没抛错）
+   [32m✓[0m 接口返回空列表时同样回落 HTML（66 条）
+   [32m✓[0m 接口返回意外结构时不抛错、回落 HTML（66 条）
+
+[1m== 5. 纯函数映射规则[0m
+   [32m✓[0m 媒体名去除首尾空白
+   [32m✓[0m 字符串分数 "100" → 数字 100
+   [32m✓[0m 评语折叠换行
+   [32m✓[0m 平台 "PlayStation 5" → "PS5"
+   [32m✓[0m 日期 ISO 直通
+   [32m✓[0m 接口不提供判定词 → 不伪造 verdict
+   [32m✓[0m 缺媒体名的条目被丢弃（面板无法渲染）
+   [32m✓[0m 超出 0–100 的分数被丢弃（与 HTML 路径同一套 clampScore）
+   [32m✓[0m 超长评语截断到 1200（与 HTML 路径一致）
+   [32m✓[0m 0 分按共用约定视为「无分数」，与 HTML 路径一致
+   [32m✓[0m platform 缺失时回落到 reviewedProduct.platform.name
+   [32m✓[0m parseCriticReviewsApi 读出 totalResults = 99
+   [32m✓[0m parseCriticReviewsApi 原样给出 links.next
+   [32m✓[0m 空载荷 → 空数组（不抛错）
+   [32m✓[0m slug 做 URL 编码（不会被拼出歧义路径）
+
+[1m== 隔离：HTML 基址被改写时，接口地址必须跟着走（不许漏到真实站点）[0m
+   [32m✓[0m 只设 HTML 基址时接口跟着它走（桩服拦得住）
+   [32m✓[0m 显式指定接口基址时优先用它
+   [32m✓[0m 两个都不设时用官方接口地址
+
+[1m结果：38 项通过 / 0 项失败[0m
+
+
+退出码=0
+
+### metacritic-crawl-test
+
+[1m== 1. 着陆页无分页器 → 仍抓完整个列表（回归点）[0m
+[Nest] 417845  - 10/03/2026, 2:17:01 AM     LOG [MetacriticProvider] Metacritic 媒体评价：「astro-bot」抓取至第 6 页，合并后 66 条
+   拿到 66 条；请求了 6 个 URL
+     · /game/astro-bot/critic-reviews/
+     · /game/astro-bot/critic-reviews/?page=2
+     · /game/astro-bot/critic-reviews/?page=3
+     · /game/astro-bot/critic-reviews/?page=4
+     · /game/astro-bot/critic-reviews/?page=5
+     · /game/astro-bot/critic-reviews/?page=6
+   [32m✓[0m 抓到的条数多于着陆页（66 > 2）—— 分页确实被走通了
+   [32m✓[0m 请求了 /critic-reviews/ 列表页
+   [32m✓[0m 翻到了 5 个后续页
+   [32m✓[0m 媒体名无重复（66 个唯一媒体）
+   [32m✓[0m 66/66 条同时具备媒体名 + 打分 + 评语
+
+[1m== 2. 着陆页自带分页器 → 行为不变[0m
+[Nest] 417845  - 10/03/2026, 2:17:03 AM     LOG [MetacriticProvider] Metacritic 媒体评价：「astro-bot」抓取至第 6 页，合并后 66 条
+   拿到 66 条；请求了 5 个 URL
+   [32m✓[0m 抓到的条数多于着陆页（66）
+   [32m✓[0m 没有触发兜底探测（着陆页分页器已够用，未浪费请求）
+   [32m✓[0m 按分页器请求了 page=2..6 共 5 页
+
+[1m== 3. 只有一页评价 → 不白白多发请求[0m
+   拿到 2 条；请求了 1 个 URL
+     · /game/astro-bot/critic-reviews/
+   [32m✓[0m 保留着陆页的 2 条
+   [32m✓[0m 请求数合理（1 ≤ 2），没有循环
+
+[1m== 4. 列表页抓取失败 → 保留着陆页已有的评价[0m
+   拿到 2 条
+   [32m✓[0m 列表页失败时保留着陆页的 2 条（没有清空、没有抛错）
+
+[1m== 5. 请求路径正确 / 旧式前缀[0m
+[Nest] 417845  - 10/03/2026, 2:17:05 AM     LOG [MetacriticProvider] Metacritic 媒体评价：「astro-bot」抓取至第 6 页，合并后 66 条
+   [32m✓[0m 所有请求都指向该游戏的路径
+[Nest] 417845  - 10/03/2026, 2:17:07 AM     LOG [MetacriticProvider] Metacritic 媒体评价：「astro-bot」抓取至第 6 页，合并后 66 条
+   [32m✓[0m 旧式 "pc/" 前缀被剥掉，没有拼出 /game/pc/astro-bot/
+
+[1m结果：13 项通过 / 0 项失败[0m
+
+
+退出码=0
+
+### media-reviews-e2e
+[1m准备隔离实例（桩服 + 独立 DATA_DIR）[0m
+   [stub] Metacritic 桩服已启动：http://127.0.0.1:4600（模式 ok）
+   [32m✓[0m 隔离实例已启动（媒体评价源 = http://127.0.0.1:4600，未访问真实站点）
+   夹具游戏：血源诅咒（3adfdaeb-8868-5bab-97a4-e5620e121d7d）→ bloodborne；Hades（8c353a3c-f54f-5ffd-9afe-a30bdc5bbc5b）→ hades
+
+[1m== 场景 A · 正常抓取：解析 → 落库 → 接口[0m
+   批量接口返回：处理 2 个，新增 2 个，共 6 条，失败 0 个
+   [32m✓[0m POST /api/games/backfill-ratings 返回 201
+   [32m✓[0m 批量接口处理了 >= 2 个游戏
+   [32m✓[0m 至少抓到 6 条媒体评价
+   [32m✓[0m 结果列表长度与 processed 一致
+   库里 血源诅咒 的评价：IGN/90, GameSpot/80, Polygon/70
+   [32m✓[0m 血源诅咒落库 3 条媒体评价
+   [32m✓[0m IGN 90 已落库
+   [32m✓[0m 评价原文已落库（不只是分数）
+   [32m✓[0m 排序字段已写入
+   [32m✓[0m reviews_status = 'ok'
+   [32m✓[0m reviews_fetched_at 已记录
+   [32m✓[0m reviews_source_url 指向本次抓取地址
+   [32m✓[0m 成功时 reviews_error 为空
+   [32m✓[0m 无分数但有评语的评价同样落库
+
+[1m== 场景 B · 详情接口与面板读接口[0m
+   [32m✓[0m 详情接口包含 mediaReviews 字段
+   [32m✓[0m 详情接口返回 3 条
+   [32m✓[0m 详情接口包含 mediaReviewsSummary.status
+   [32m✓[0m GET /api/games/:id/media-reviews 返回 3 条
+   [32m✓[0m 面板接口按分数从高到低排序（未打分的排最后）
+   [32m✓[0m 面板接口带媒体名称
+   [32m✓[0m 不存在的游戏返回 404 而不是空数组
+
+[1m== 场景 C · 桩服返回「没有评价」的页面 —— 已有评价绝不能被清空[0m
+   单游戏刷新返回：status=empty stored=3
+   [32m✓[0m 空页面记为 status='empty'（而不是 failed）
+   [32m✓[0m 空页面不清空已有评价（仍为 3 条）
+   [32m✓[0m games.reviews_status 更新为 'empty'
+
+[1m== 场景 D · 抓取失败（403 / 500 / 404）—— 同样不清空，且记录原因[0m
+   403 拒绝 → status=failed reviews_error=Metacritic 页面抓取失败：http://127.0.0.1:4600/game/bloodborne/
+   [32m✓[0m 403 拒绝：记为 'failed'
+   [32m✓[0m 403 拒绝：已有 3 条评价保留
+   [32m✓[0m 403 拒绝：失败原因已写入 reviews_error
+   500 服务端错误 → status=failed reviews_error=Metacritic 页面抓取失败：http://127.0.0.1:4600/game/bloodborne/
+   [32m✓[0m 500 服务端错误：记为 'failed'
+   [32m✓[0m 500 服务端错误：已有 3 条评价保留
+   [32m✓[0m 500 服务端错误：失败原因已写入 reviews_error
+   404 页面不存在 → status=failed reviews_error=Metacritic 页面抓取失败：http://127.0.0.1:4600/game/bloodborne/
+   [32m✓[0m 404 页面不存在：记为 'failed'
+   [32m✓[0m 404 页面不存在：已有 3 条评价保留
+   [32m✓[0m 404 页面不存在：失败原因已写入 reviews_error
+   未绑定条目 → status=unsupported error=未绑定媒体评价站条目
+   [32m✓[0m 未绑定条目返回 'unsupported'（而不是 failed —— 重试永远不可能成功）
+   [32m✓[0m 未绑定落状态为 'unsupported'，与成就/奖杯的处理口径一致
+   [32m✓[0m 未绑定不会清掉此前抓到的评价
+   [32m✓[0m 重新绑定后刷新即恢复 ok（unsupported 不是终点）
+   加入未匹配游戏后：覆盖率 2/3，待补全 2
+   [32m✓[0m 覆盖率总数包含新加入的游戏
+   [32m✓[0m 第一次补全会去访问这个游戏（它确实还没抓过）
+   [32m✓[0m 它被记为 'unsupported'
+   补全后：待补全 1（其中无对应条目 1、失败 0）
+   [32m✓[0m 补全后无对应条目的游戏仍算「待补全」（它确实还没抓到评价，不该显示成已完成）
+   [32m✓[0m 接口返回的 remaining 与覆盖率卡片的数字一致
+   第二次补全：结果里含无对应条目的游戏=true，桩服页面请求 17 → 17
+   [32m✓[0m 无对应条目的游戏仍会被列入（这样「待补全」数字才按得掉）
+   [32m✓[0m 但它不产生任何网络请求（绑定判断在抓取之前短路）
+   失败后重试：处理 1 个，其中失败 0 个
+   [32m✓[0m 失败过的游戏会被重新尝试（不会因为失败而永久跳过）
+   [32m✓[0m 重试成功后状态回到 ok
+   [32m✓[0m 重试成功后清掉旧的失败原因
+
+[1m== 场景 E · 已完成的游戏不会被重复抓取[0m
+   missing 批次处理 0 个；桩服页面请求 18 → 18
+   [32m✓[0m 没有需要补全的游戏时，一次页面请求都不发
+
+[1m== 场景 F · 覆盖率接口 + 全量重抓[0m
+   覆盖率：2/2 有评价，待补全 0，失败 0
+   [32m✓[0m 覆盖率统计到了已有评价的游戏
+   [32m✓[0m 覆盖率接口返回游戏总数
+   [32m✓[0m 覆盖率接口返回待处理游戏名列表
+   全量重抓：处理 2 个，共 0 条
+   [32m✓[0m scope=all 会重新处理所有游戏
+   [32m✓[0m 全量重抓后不会产生重复行（幂等）
+
+[1m== 场景 G · 重新绑定游戏会清掉旧评价[0m
+   重新匹配返回状态 201
+   重新绑定后：0 条评价，状态 empty，fetched_at=1790965094665
+   [32m✓[0m 重新绑定后旧评价被清空（不会把上一款游戏的媒体评价留在新游戏下）
+   [32m✓[0m 重新绑定后按新条目重新抓取（状态 empty）
+
+[1m== 场景 H · 分页：一次刷新要把全部分页的媒体评价都抓回来[0m
+   绑定到分页条目返回状态 201
+   已种 Metascore=94，使刷新走绑定而不是改去搜索
+   补全处理 2 个游戏
+   桩服列表页请求 14 → 20（应 ≥5，说明真的在翻页）
+   落库 66 条，状态 ok
+   [32m✓[0m 全部 66 家媒体的评价都落库了（而不是只有首页的 2 条）
+   [32m✓[0m 确实翻到了后续分页（新增 6 次列表页请求）
+   [32m✓[0m 分页抓取后状态为 ok
+   [32m✓[0m 每条都带媒体名 + 打分 + 评价内容（不是只有第一条完整）
+   [32m✓[0m 媒体名无重复（首页与分页内容正确合并去重）
+   首页媒体 IGN=true，末页媒体 Gamona=true
+   [32m✓[0m 首页与末页的媒体都在（没有提前中断）
+   [32m✓[0m 详情接口返回全部 66 条（前端「媒体评价」面板能拿到）
+   [32m✓[0m 重复抓取幂等（仍为 66 条，无重复行）
+
+[1m结果：63 项通过 / 0 项失败[0m
+
+退出码=0
+
+### duration-cache-e2e
+[1m准备隔离实例（桩服 + 独立 DATA_DIR）[0m
+   [stub] [hltb-stub] listening on http://127.0.0.1:4599 mode=empty
+   [32m✓[0m 隔离实例已启动（时长源指向本地桩服）
+   夹具游戏：血源诅咒（4739c472-cfc2-5ea4-8ad1-e8dbc4abefb5）
+
+[1m== 场景 A · 时长源返回 200 但 data 为空[0m
+   详情接口：mainStoryHours=null durationSource=null
+   页面会显示："未知"
+   [32m✓[0m 时长源无数据时，游戏确实没有时长（显示未知）
+   metadata_cache 中 hltb 记录 0 条，其中 mainStoryHours 为空的 fetch 记录 0 条
+   [32m✓[0m 空时长结果没有被写入缓存（缓存缺陷已修复）
+
+[1m== 场景 B · 时长源恢复后，重试/补全能拿到时长[0m
+   补全前：missing=1 withDuration=0/1
+   POST /api/games/backfill-durations → HTTP 201 {"started":true,"total":1}
+   补全后：missing=0 withDuration=1/1 sources=[{"source":"hltb","count":1}]
+   [32m✓[0m 补全成功：0 → 1 款有时长
+   详情接口：mainStoryHours=32.2 source=hltb
+   [32m✓[0m 拿到时长 32.2 小时（来源 hltb）
+   缓存中 hltb fetch 记录 1 条，其中有值的 1 条
+   [32m✓[0m 成功结果被写入缓存（下次直接复用）
+
+[1m== 场景 C · 时长源再次变空，已有时长不得被清空[0m
+   再次补全后：mainStoryHours=32.2 source=hltb
+   [32m✓[0m 已有时长没有被空结果清空（稳定显示，不会变回未知）
+   [32m✓[0m 缓存里保留的仍是有值的记录
+
+[1m== 场景 D · HTTP 403（token 失效）触发换 token 重试[0m
+   强制刷新：HTTP 201
+   403 期间请求：token 端点 +1，搜索端点 +1
+   [32m✓[0m 403 后会重新取 token 并重试搜索（不是一次失败就放弃）
+   403 之后：mainStoryHours=32.2
+   [32m✓[0m 上游失败期间已有时长保持不变
+   [32m✓[0m 时长源失败没有把整条刮削标记为失败（时长是尽力而为的数据源）
+
+[1m== 场景 E · 页面确实把时长渲染出来（真实浏览器）[0m
+   页面渲染："平均通关时长\n主线 32.2 小时 · 主线+支线 43.3 小时 · 完美通关 75 小时"
+   [32m✓[0m 页面展示「主线 X 小时」
+   [32m✓[0m 截图已保存：/vol2/1000/ScreenPlay/.tmp-dc/shots/duration-cache.png
+
+[1m结果：13 项通过 / 0 项失败[0m
+现场已清理。
+
+退出码=0
+
+### poster-rotation-e2e
+
+[1m轮播归属验证（相册截图默认不勾选 / 可取消 / 不被加回）[0m
+
+准备隔离实例
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [NestFactory] Starting Nest application...
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] PluginsModule dependencies initialized +21ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] ConfigHostModule dependencies initialized +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] DatabaseModule dependencies initialized +2ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] MediaReviewsModule dependencies initialized +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] AuthModule dependencies initialized +2ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] HttpModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] TrophiesModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] AppModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] LibraryModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] MediaModule dependencies initialized +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] SettingsModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] MetadataModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] PostersModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] MaintenanceModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [InstanceLoader] GamesModule dependencies initialized +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [Bootstrap] Serving Web frontend from /vol2/1000/ScreenPlay/web/dist
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] AppController {/}: +2ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/health, GET} route +3ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] MediaController {/api/media}: +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/media/proxy, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/media/:id/stream, GET} route +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/media/:id/thumbnail, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/media/:id/cover, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/media/:id/original, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/media/:id/preview, GET} route +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] LibraryController {/api/library}: +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/library/scan, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/library/status, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] LibraryRootsController {/api/library/roots}: +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/library/roots, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/library/roots/mounted, GET} route +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/library/roots/check, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/library/roots, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/library/roots, PATCH} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/library/roots, DELETE} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] PostersController {/api}: +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/upload, POST} route +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/from-media, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/select, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/clear-selection, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/reconcile, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/:posterId, PATCH} route +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/:posterId, DELETE} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/posters/:posterId/image, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] SettingsController {/api/settings}: +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/settings, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/settings, PUT} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/settings/preferences, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/settings/preferences, PUT} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/settings/test-rawg, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/settings/test-steam-achievements, GET} route +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/settings/test-image, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/settings/test-proxy, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] GamesController {/api/games}: +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/platforms, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/order, PUT} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/order, DELETE} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/media-reviews/coverage, GET} route +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/duration-coverage, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/neighbors, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/media, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id, PATCH} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id, DELETE} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/refresh, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/achievements/refresh, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/match/search, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/match, POST} route +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/rating-candidates, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/rating-target, PUT} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/rating-target, DELETE} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/refresh-all, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/backfill-durations, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/backfill-ratings, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/backfill-scores, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/media-reviews, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/:id/media-reviews/refresh, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/games/refresh-all/status, GET} route +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] AchievementsController {/api/achievements}: +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId/candidates, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId/target, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId/target, PUT} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId/target, DELETE} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] StatsController {/api/stats}: +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/stats, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RoutesResolver] AuthController {/api/auth}: +1ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/auth/session, GET} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/auth/login, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/auth/logout, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:30 AM     LOG [RouterExplorer] Mapped {/api/auth/password, POST} route +0ms
+[Nest] 419408  - 10/03/2026, 2:19:31 AM     LOG [DatabaseService] Schema upgrade: added games.platforms
+[Nest] 419408  - 10/03/2026, 2:19:31 AM     LOG [DatabaseService] Schema upgrade: added games.poster_mode
+[Nest] 419408  - 10/03/2026, 2:19:31 AM     LOG [DatabaseService] Schema upgrade: added games.custom_platform
+[Nest] 419408  - 10/03/2026, 2:19:31 AM     LOG [DatabaseService] Schema upgrade: added game_posters.is_user_choice
+[Nest] 419408  - 10/03/2026, 2:19:31 AM     LOG [DatabaseService] Schema upgrade: added game_posters.slideshow_user_set
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added games.reviews_fetched_at
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added games.reviews_status
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added games.reviews_error
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added games.reviews_source_url
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added achievements.tier
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added achievements.rarity
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added achievements.source
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added achievements.dlc_app_id
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added achievements.dlc_name
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added achievements.sort_order
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added games.achievements_status
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added games.achievements_error
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added games.last_achievements_refresh
+[Nest] 419408  - 10/03/2026, 2:19:32 AM     LOG [DatabaseService] Schema upgrade: added games.trophy_source
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [DatabaseService] Schema upgrade: added games.duration_source
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [DatabaseService] Schema upgrade: added games.custom_order
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [DatabaseService] SQLite database ready at /vol2/1000/ScreenPlay/.tmp-rot/data/screenplay.db
+[Nest] 419408  - 10/03/2026, 2:19:33 AM    WARN [AuthService] 认证已禁用（AUTH_DISABLED=1）——所有接口无需登录即可访问
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [MaintenanceService] Boot maintenance disabled (MAINTENANCE_ON_BOOT=0).
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [NestApplication] Nest application successfully started +0ms
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [Bootstrap] ScreenPlay backend listening on http://0.0.0.0:4466
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [Bootstrap] Runtime proxy: (none — direct)
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [Bootstrap] Data dir: /vol2/1000/ScreenPlay/.tmp-rot/data | Media dirs: /vol2/1000/ScreenPlay/.tmp-rot/media
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [Bootstrap] Ready after 3.8s (health: /api/health)
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [LibraryService] Scanning media root: /vol2/1000/ScreenPlay/.tmp-rot/media (type=auto, recursive=true)
+[Nest] 419408  - 10/03/2026, 2:19:33 AM     LOG [LibraryService] Scan complete: 1 games, 6 media files
+   [32m✓[0m 隔离实例已启动
+   游戏：RotationGame（2ad87d85-6524-589c-a61e-4576f992fd0c）
+   相册图片 6 张
+
+[1m== 问题 2-A · 从相册添加的海报默认不勾选轮播[0m
+[Nest] 419408  - 10/03/2026, 2:19:34 AM     LOG [PostersService] Restored cover flag for game 2ad87d85-6524-589c-a61e-4576f992fd0c (poster c4b00d88-1b52-53fb-824c-fb23e659b9e8)
+   [32m✓[0m 3 张相册截图已添加为海报
+   media 海报：in_slideshow=0,user_set=1 | in_slideshow=0,user_set=1 | in_slideshow=0,user_set=1
+   [32m✓[0m 全部 3 张默认 in_slideshow=0（默认不勾选）—— 修复前是 1
+   [32m✓[0m 全部标记为已决定（slideshow_user_set=1），兜底逻辑不会自行改动
+
+[1m== 问题 2-B · 手动勾选后能取消，且取消状态不会被加回[0m
+   [32m✓[0m 主动勾选生效（PATCH 200，in_slideshow=1）
+   [32m✓[0m 取消勾选生效（PATCH 200，in_slideshow=0）
+   [32m✓[0m 取消后仍标记为用户决定（slideshow_user_set=1）
+
+[1m== 问题 2-C · 「重新刮削」不会把取消掉的又打开[0m
+[Nest] 419408  - 10/03/2026, 2:19:40 AM    WARN [MetacriticProvider] Metacritic fetch failed for http://127.0.0.1:4610/reviews/metacritic/critic/games/hades/web?offset=0&limit=10&filterBySentiment=all&sort=score&componentName=critic-reviews&componentDisplayName=critic+Reviews&componentType=ReviewList: Request failed with status code 404
+[Nest] 419408  - 10/03/2026, 2:19:42 AM     LOG [MetadataService] "Bloodborne" still has no Metascore; re-searching metacritic instead of reusing binding hades.
+[Nest] 419408  - 10/03/2026, 2:19:42 AM    WARN [HltbProvider] HLTB token fetch failed: Client network socket disconnected before secure TLS connection was established
+[Nest] 419408  - 10/03/2026, 2:19:42 AM    WARN [HttpService] Request to https://store.steampowered.com/api/storesearch/ failed (status=network), retrying in 1000ms (attempt 1/3)
+[Nest] 419408  - 10/03/2026, 2:19:43 AM    WARN [HttpService] Request to https://store.steampowered.com/api/storesearch/ failed (status=network), retrying in 2000ms (attempt 2/3)
+[Nest] 419408  - 10/03/2026, 2:19:46 AM    WARN [HttpService] Request to https://store.steampowered.com/api/storesearch/ failed (status=network), retrying in 4000ms (attempt 3/3)
+[Nest] 419408  - 10/03/2026, 2:19:51 AM     LOG [GamesService] Matched game 2ad87d85-6524-589c-a61e-4576f992fd0c → metacritic:hades as "Bloodborne" (missing: summary, developers, rating, screenshots)
+   重新匹配返回 201
+[Nest] 419408  - 10/03/2026, 2:19:51 AM     LOG [MetadataService] "Bloodborne" still has no Metascore; re-searching metacritic instead of reusing binding hades.
+[Nest] 419408  - 10/03/2026, 2:19:51 AM    WARN [HltbProvider] HLTB token fetch failed: Client network socket disconnected before secure TLS connection was established
+   [32m✓[0m 重新刮削/刷新后取消状态保留（in_slideshow 仍为 0）
+   已造 2 条旧规则遗留行（in_slideshow=1, slideshow_user_set=0）：media + scraped
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [NestFactory] Starting Nest application...
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] PluginsModule dependencies initialized +18ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] ConfigHostModule dependencies initialized +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] DatabaseModule dependencies initialized +2ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] MediaReviewsModule dependencies initialized +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] AuthModule dependencies initialized +2ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] HttpModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] TrophiesModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] AppModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] LibraryModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] MediaModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] SettingsModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] MetadataModule dependencies initialized +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] PostersModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] MaintenanceModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [InstanceLoader] GamesModule dependencies initialized +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [Bootstrap] Serving Web frontend from /vol2/1000/ScreenPlay/web/dist
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] AppController {/}: +3ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/health, GET} route +2ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] MediaController {/api/media}: +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/media/proxy, GET} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/media/:id/stream, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/media/:id/thumbnail, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/media/:id/cover, GET} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/media/:id/original, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/media/:id/preview, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] LibraryController {/api/library}: +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/library/scan, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/library/status, GET} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] LibraryRootsController {/api/library/roots}: +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/library/roots, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/library/roots/mounted, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/library/roots/check, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/library/roots, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/library/roots, PATCH} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/library/roots, DELETE} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] PostersController {/api}: +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/upload, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/from-media, POST} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/select, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/clear-selection, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/reconcile, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/:posterId, PATCH} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/posters/:posterId, DELETE} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/posters/:posterId/image, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] SettingsController {/api/settings}: +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/settings, GET} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/settings, PUT} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/settings/preferences, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/settings/preferences, PUT} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/settings/test-rawg, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/settings/test-steam-achievements, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/settings/test-image, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/settings/test-proxy, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] GamesController {/api/games}: +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games, GET} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/platforms, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/order, PUT} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/order, DELETE} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/media-reviews/coverage, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/duration-coverage, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/neighbors, GET} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/media, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id, PATCH} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id, DELETE} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/refresh, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/achievements/refresh, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/match/search, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/match, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/rating-candidates, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/rating-target, PUT} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/rating-target, DELETE} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/refresh-all, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/backfill-durations, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/backfill-ratings, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/backfill-scores, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/media-reviews, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/:id/media-reviews/refresh, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/games/refresh-all/status, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] AchievementsController {/api/achievements}: +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId, GET} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId/candidates, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId/target, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId/target, PUT} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/achievements/:gameId/target, DELETE} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] StatsController {/api/stats}: +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/stats, GET} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RoutesResolver] AuthController {/api/auth}: +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/auth/session, GET} route +1ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/auth/login, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/auth/logout, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [RouterExplorer] Mapped {/api/auth/password, POST} route +0ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [DatabaseService] SQLite database ready at /vol2/1000/ScreenPlay/.tmp-rot/data/screenplay.db
+[Nest] 419642  - 10/03/2026, 2:19:52 AM    WARN [AuthService] 认证已禁用（AUTH_DISABLED=1）——所有接口无需登录即可访问
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [NestApplication] Nest application successfully started +7ms
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [Bootstrap] ScreenPlay backend listening on http://0.0.0.0:4466
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [Bootstrap] Runtime proxy: (none — direct)
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [Bootstrap] Data dir: /vol2/1000/ScreenPlay/.tmp-rot/data | Media dirs: /vol2/1000/ScreenPlay/.tmp-rot/media
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [Bootstrap] Ready after 1.0s (health: /api/health)
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [LibraryService] Scanning media root: /vol2/1000/ScreenPlay/.tmp-rot/media (type=auto, recursive=true)
+[Nest] 419642  - 10/03/2026, 2:19:52 AM     LOG [LibraryService] Scan complete: 1 games, 6 media files
+   [32m✓[0m 实例已重启（启动期数据修复开启）
+[Nest] 419642  - 10/03/2026, 2:19:53 AM     LOG [MaintenanceService] Completion-time backfill: 1 game(s) have no duration yet — asking the sources in the background (first boot of this image only).
+[Nest] 419642  - 10/03/2026, 2:19:53 AM     LOG [GamesService] Completion-time backfill started (1 games)
+[Nest] 419642  - 10/03/2026, 2:19:53 AM     LOG [MaintenanceService] Boot maintenance finished in 0.7s — auto-added frames removed from the card rotation: 2; completion-time backfill started for 1 game(s); caches reclaimed: 0 expired cache row(s), 0 stale file(s) (0 B).
+   启动期清理已完成（两条遗留行都已移出轮播）
+   [32m✓[0m 启动期修复后取消状态仍然保留 —— 这是「无法取消」的核心回归点
+   [32m✓[0m 没有任何相册截图被自动加进轮播（用户一张都没勾）
+   [32m✓[0m 启动期清理把 source=media 的遗留帧移出轮播（泛化到所有来源，不只相册截图）
+   [32m✓[0m 启动期清理把 source=scraped 的遗留帧移出轮播（泛化到所有来源，不只相册截图）
+   已删除测试用的 2 条遗留行，避免影响后续断言
+
+[1m== 问题 3-A · 新上传的官方海报默认不勾选轮播（in_slideshow=0）[0m
+[Nest] 419642  - 10/03/2026, 2:19:53 AM     LOG [PostersService] Uploaded poster for game 2ad87d85-6524-589c-a61e-4576f992fd0c (16x16)
+   [32m✓[0m 上传成功（201）
+   [32m✓[0m 登记的是官方图（source=upload）
+   [32m✓[0m 新上传的官方图默认 in_slideshow=0（不再默认进卡片轮播）—— 修复前是 1
+
+[1m== 问题 3-B · 首页卡片集 = 封面 + 勾选；详情页大图 = 全部官方海报[0m
+   摘要 posters=1；登记总数=4；封面=1；勾选中=0
+   [32m✓[0m 封面在首页卡片集内（结构性：封面永远是第一帧，不靠 in_slideshow）
+   [32m✓[0m 未勾选的行全部不在卡片集里（封面以外、未勾选共 3 张）
+   [32m✓[0m 勾选后该行进入首页卡片集（1 → 2）
+   [32m✓[0m 取消勾选后该行退出首页卡片集
+   posterList 共 4 条；官方海报 1/1
+   [32m✓[0m posterList 含全部官方海报（详情页大图用全集，不经 in_slideshow 过滤）
+   [32m✓[0m 未勾选的官方海报仍在 posterList（1 条）—— 大图默认全轮播，不靠勾选
+
+[1m结果：22 项通过 / 0 项失败[0m
+
+
+退出码=0
+
+### poster-ui-ssr
+
+[1m前端 DOM 行为验证（SSR）[0m
+
+[1m== 问题 2 · 「编辑海报」的轮播勾选框[0m
+   [32m✓[0m static 模式下渲染出 3 个轮播勾选框（静态模式下也渲染 —— 旧实现这里是 0 个）
+   [32m✓[0m 初始勾选 1 张 —— 只有官方海报在轮播里，相册截图一张都没勾
+   [32m✓[0m slideshow 模式下渲染出 3 个轮播勾选框（静态模式下也渲染 —— 旧实现这里是 0 个）
+   [32m✓[0m 静态模式下勾选框确实存在于 DOM（不再是 mode==="slideshow" 才渲染）
+
+[1m== 问题 3 · 详情页大图区轮播（只看张数，不看任何模式开关）[0m
+   [32m✓[0m 大图区容器存在（详情页大图轮播挂载点）
+   [32m✓[0m 大图区有计数器（3 张图 → 多张时可翻页）
+   [32m✓[0m 3 张图时渲染上一张/下一张两个箭头（箭头常驻，不靠 hover）
+   [32m✓[0m 大图区不再渲染 data-mode（没有「模式」这一维，恒定自动轮播）
+   [32m✓[0m 单张图时不渲染翻页箭头（不会造成可翻页的错觉）
+   [32m✓[0m 单张图时不渲染计数器（1/1 没有意义）
+   [32m✓[0m 两张图时渲染上一张/下一张两个箭头
+
+[1m结果：11 项通过 / 0 项失败[0m
+
+
+退出码=0
+
+### requirements-ui
+
+[1m== 需求 1 · 媒体评价分页（默认 5 / 展开 10 / 单页最多 10 / 标注总数）[0m
+   灌入 13 条评价（PS5 6 / PC 3 / Switch 2 / 无平台 2）
+   [32m✓[0m 标注了总数：共 13 条媒体评价
+   [32m✓[0m 默认显示 5 条
+   [32m✓[0m 有「展开」按钮：展开显示 10 条
+   [32m✓[0m 展开后显示 10 条
+   [32m✓[0m 单页不超过 10 条（本轮要求的上限）
+   [32m✓[0m 展开后按钮消失（没有可再展开的余地）
+   [32m✓[0m 有分页指示：第 1 / 2 页
+   [32m✓[0m 翻到第 2 页显示剩余 3 条（13 = 10 + 3）
+   [32m✓[0m 条数提示正确：当前显示 3 / 共 13 条
+   [32m✓[0m 翻回第 1 页回到默认的 5 条
+
+[1m== 需求 2 · 平台切换[0m
+   [32m✓[0m 渲染出平台选择器
+   选项：__all__ / PS5 / PC / Switch
+   [32m✓[0m 选项包含 __all__
+   [32m✓[0m 选项包含 PS5
+   [32m✓[0m 选项包含 PC
+   [32m✓[0m 选项包含 Switch
+   [32m✓[0m 选项数恰好 4（不列出该游戏没出现过评价的平台）
+   [32m✓[0m 选项标注了该平台条数：PS5（6 条）
+   切到 PC 后：3 条 → PC Gamer, Rock Paper Shotgun, PCGamesN
+   [32m✓[0m 切到 PC 后只剩 3 条
+   [32m✓[0m 剩下的确实都是 PC 平台的媒体
+   [32m✓[0m 卡片上的平台标注与筛选一致（PC）
+   [32m✓[0m 条数提示跟着筛选变化：当前显示 3 / 共 3 条
+   [32m✓[0m 切到 Switch 后剩 2 条
+   [32m✓[0m 剩下的确实都是 Switch 平台的媒体
+   [32m✓[0m 切回「全部平台」后回到第一页 5 条
+   [32m✓[0m 没有为无平台评价单独建选项（它们留在「全部」里）
+
+[1m== 需求 3 · 首页卡片轮播箭头（设为轮播才显示，否则隐藏）[0m
+   [32m✓[0m 0 张图片时不渲染箭头
+   [32m✓[0m 1 张图片时不渲染箭头（无可浏览对象）
+   [32m✓[0m 这 1 张图正常渲染
+   [32m✓[0m 2 张图片时渲染上一张/下一张两个箭头
+   [32m✓[0m 点「下一张」计数从 1/2 变为 2/2（确实换到了第 2 张）
+   [32m✓[0m 点「上一张」计数回到 1/2
+   [32m✓[0m 在第 1 张点「上一张」会绕到最后一张（2/2），不会卡住
+   [32m✓[0m 5 张图片时仍是 2 个箭头（不是每张一个）
+   [32m✓[0m 计数器显示 1/5
+   [32m✓[0m 重复的同一张图被当作 1 张，不渲染箭头
+   [32m✓[0m 静态封面（未设轮播）3 张图时不渲染箭头
+   [32m✓[0m 静态封面仍显示计数器 1/3（仍能看出有多张海报）
+   [32m✓[0m 静态封面照常渲染（隐藏箭头没有影响封面）
+   [32m✓[0m 同一组图设为轮播后箭头出现（2 个）
+
+[1m== 需求 4 · 媒体搜索栏 / 排序方式 / 点页码直接跳页[0m
+   [32m✓[0m 渲染出「媒体搜索 + 排序方式」工具栏
+   [32m✓[0m 排序选项 5 个：默认（站点顺序） / 评分从高到低 / 评分从低到高 / 时间从新到旧 / 时间从旧到新
+   [32m✓[0m 默认排序是「站点顺序」，不擅自改变抓取结果
+   [32m✓[0m 搜「ign」只剩 1 条：IGN（大小写不敏感）
+   [32m✓[0m 命中条数提示正确：「ign」命中 1 条
+   [32m✓[0m 总数跟着搜索结果走，不再谎报 13 条：当前显示 1 / 共 1 条
+   [32m✓[0m 「评分从低到高」首条是最低分的 Unknown Outlet B
+   [32m✓[0m 换排序后回到第 1 页的 5 条
+   [32m✓[0m 「评分从高到低」首条是最高分的 IGN
+   [32m✓[0m 「时间从新到旧」首条是最新的 IGN
+   [32m✓[0m 「时间从旧到新」首条是最旧的 Unknown Outlet B
+   [32m✓[0m 页码条渲染出 2 个可点页码（13 条 = 2 页）
+   [32m✓[0m 点页码「2」直接跳到第 2 页（3 条）
+   [32m✓[0m 页码文本跟着跳到第 2 页：第 2 / 2 页
+   [32m✓[0m 当前页按钮带 aria-current="page"（读屏能听出自己在第几页）
+   [32m✓[0m 搜索无命中 → 显示搜索空态
+   [32m✓[0m 搜索空态没有复用「该平台暂无评价」那块（否则会误导用户去换平台）
+   [32m✓[0m 清空搜索框后回到第 1 页的 5 条
+
+[1m== 本轮修复 · 卡片箭头点击不能被外层链接吞掉（点了跳详情页 = 用户报的「上一张/下一张失效」）[0m
+   [32m✓[0m 轮播卡片上渲染出上一张/下一张两个箭头
+   [32m✓[0m 测试卡片挂在首页路径上（起始路径 /）
+   [32m✓[0m 点「下一张」封面确实换到第 2 张（计数 1/3 → 2/3）
+   [32m✓[0m 点「下一张」没有跳走（路径仍是 /）—— 本轮修的「按钮失效」
+   [32m✓[0m 点「上一张」回到 1/3 且仍停在首页（路径 /）
+   [32m✓[0m 正对照：点卡片正文照常进详情页（路径 → /game/g-1），链接本身是好的
+
+[1m== 页面运行时无 JS 错误（忽略环境性的后端请求失败）[0m
+   [32m✓[0m 没有渲染期错误（已忽略 9 条环境性的后端请求失败）
+
+[1m结果：64 项通过 / 0 项失败[0m
+
+
+退出码=0
+
+### poster-merge-unit
+
+[1m海报归属 · 离线测试（1.0.0 海报覆盖缺陷）[0m
+
+  [1m[用户自选的海报：谁都不能覆盖][0m
+  [32m✓[0m 用户外链海报 + provider 给了海报 → 保持原值（返回 null，交给 COALESCE） → null
+  [32m✓[0m 用户外链海报 + provider 没给海报 → 保持原值 → null
+  [32m✓[0m 用户外链海报 + provider 给了空白 → 保持原值 → null
+
+  [1m[自家下载的海报 / 空白位：可以填][0m
+  [32m✓[0m 自家海报 + provider 新海报 → 换成新的 → "https://images.igdb.com/igdb/image/upload/t_cover_big/new.jpg"
+  [32m✓[0m 空白海报 + provider 新海报 → 填上 → "https://x/cover.jpg"
+  [32m✓[0m 两侧都没有 → 保持原值 → null
+  [32m✓[0m provider 给首尾空白 → trim 后再存 → "https://x/cover.jpg"
+
+  [1m[接线：persist() 真的用它，而不是回到旧写法][0m
+  [32m✓[0m persist() 用 mergePoster(posterIsUserChoice, fragment.poster) 算海报
+  [32m✓[0m UPDATE 的参数首位是 mergePoster 的结果，不再是 fragment.poster
+  [32m✓[0m SQL 仍是 COALESCE(?, poster_url)（null 即「保持原值」）
+
+[1m结果：10 项通过 / 0 项失败[0m
+
+
+退出码=0
+
+### password-change
+[1m准备隔离实例（AUTH_MODE=local + 独立 DATA_DIR）[0m
+   [32m✓[0m 隔离实例已启动（AUTH_MODE=local，编译产物 backend/dist/main.js）
+   [32m✓[0m 按 AUTH_ADMIN_PASSWORD 落库了本地管理员 admin（scrypt 哈希）
+   [32m✓[0m 密码以 scrypt$N$r$p$salt$key 形式存储，非明文
+
+[1m== 场景 0 · 登录与未登录语义[0m
+   POST /api/auth/login（种子密码）→ HTTP 201
+   [32m✓[0m 初始密码可正常登录，拿到会话 cookie
+   [32m✓[0m 第二个会话已建立（模拟另一台设备同时登录）
+   未登录改密 → HTTP 201 {"ok":false,"code":"unauthenticated","error":"未登录或会话已过期，请重新登录"}
+   [32m✓[0m 未登录改密 → 2xx + {ok:false, code:"unauthenticated"}（不是 401，不会误触登出）
+
+[1m== 场景 ① · 原密码错误：改密失败，旧密码仍可登录[0m
+   错误原密码 → HTTP 201 {"ok":false,"code":"wrong_current","error":"当前密码不正确"}
+   [32m✓[0m 原密码错误被拒（code=wrong_current）
+   [32m✓[0m 失败请求没有写库（password_hash 与改密前一致）
+   [32m✓[0m 原密码错误后，旧密码仍可登录
+   [32m✓[0m 原密码错误不会注销当前会话（用户留在页面上，只是看到错误提示）
+
+[1m== 场景 ④ · 新密码不合法：过短 / 全空白 / 与原密码相同，都必须被拒[0m
+   过短新密码 → {"ok":false,"code":"too_short","error":"新密码至少 4 位"}
+   [32m✓[0m 新密码短于 4 位被拒（code=too_short）
+   全空白新密码（4 个空格，长度侥幸 ≥4）→ {"ok":false,"code":"blank","error":"新密码不能为空"}
+   [32m✓[0m 全空白新密码被拒（code=blank）——长度校验不能只看字符数
+   与原密码相同 → {"ok":false,"code":"same","error":"新密码不能与原密码相同"}
+   [32m✓[0m 新密码与原密码相同被拒（code=same）
+   [32m✓[0m 以上三种拒绝都没有写库
+
+[1m== 场景 ② · 原密码正确：改密成功、新密码可登录、旧密码不可登录[0m
+   改密前 admin 的会话数：3
+   正确原密码 → HTTP 201 {"ok":true}
+   [32m✓[0m 改密成功（2xx + {ok:true}）
+   [32m✓[0m 新哈希已落库（password_hash 变了，仍是 scrypt 格式）
+   [32m✓[0m 数据库中没有出现明文新密码
+   [32m✓[0m 发起改密的当前会话保持有效（不会被自己踢下线）
+   [32m✓[0m 其它设备的会话已被注销（偷到 cookie 的人被锁在外面）
+   旧密码登录 → HTTP 401
+   [32m✓[0m 旧密码不可再用（401）
+   新密码登录 → HTTP 201
+   [32m✓[0m 新密码可正常登录
+
+[1m== 场景 ⑤ · NAS 系统账户：明确拒绝，而不是静默失败[0m
+   以 system 身份改密 → HTTP 201 {"ok":false,"code":"not_local","error":"当前登录的是 NAS 系统账户，其密码请在 NAS 上修改"}
+   [32m✓[0m system 账户改密被明确拒绝（code=not_local，附中文原因）
+   [32m✓[0m 被拒绝的 system 请求没有改到本地账户的密码
+
+[1m== 场景 ③ · 进程重启后新密码仍然可用（真持久化）[0m
+   [32m✓[0m 使用同一 DATA_DIR 重启了进程
+   [32m✓[0m 重启后数据库里的哈希不变（密码未被重新初始化）
+   重启后新密码登录 → HTTP 201
+   [32m✓[0m 重启进程后新密码仍可登录（持久化生效，不必再翻启动日志）
+   [32m✓[0m 重启后旧密码仍然不可用
+
+[1m结果：27 项通过 / 0 项失败[0m
+现场已清理。
+
+退出码=0
+
+### sqlite-vacuum
+
+[1m可选启动期 VACUUM（MAINTENANCE_VACUUM）验证[0m
+
+准备隔离现场
+   膨胀库（3 行业务数据 + 40000 行写入后删除）：12.1 MB
+
+[1m== 场景 A · 不设 MAINTENANCE_VACUUM（默认路径）[0m
+   [32m✓[0m onModuleInit 正常返回
+   [32m✓[0m 能读到库（keep=3 行）
+   [32m✓[0m 默认路径没有出现任何 VACUUM 日志
+   [32m✓[0m 默认路径没有收缩文件（12.1 MB → 12.1 MB，未归还空闲页属预期）
+   [32m✓[0m 业务行数不变（keep=3）
+
+[1m== 场景 B · MAINTENANCE_VACUUM=1（显式开启）[0m
+   [32m✓[0m onModuleInit 正常返回（VACUUM 失败也不会让启动失败）
+   [32m✓[0m 日志出现 `VACUUM finished in …`
+   [32m✓[0m 日志给出了回收量（reclaimed …）
+   [32m✓[0m 没有出现 `VACUUM skipped`（收缩真的成功了）
+   [32m✓[0m 文件被收缩：12.1 MB → 0.2 MB（−98.6%）
+   [32m✓[0m integrity_check = ok
+   [32m✓[0m 收缩后业务行数一个不少（keep=3）
+
+[1m结果：12 项通过 / 0 项失败[0m
+
+退出码=0
+
+### verify-build-artifacts
+
+[1m== 1. 目录存在性 ==[0m
+[1;32m  ✓[0m backend/dist/main.js 存在
+[1;32m  ✓[0m web/dist/index.html 存在
+[1;32m  ✓[0m web/dist/assets 存在（前端静态资源已产出）
+
+[1m== 2. 本轮功能（媒体评价）在后端产物里 ==[0m
+[1;32m  ✓[0m games.controller.js 含 批量补全路由 backfill-ratings
+[1;32m  ✓[0m games.controller.js 含 媒体评价面板路由 media-reviews
+[1;32m  ✓[0m media-reviews.service.js 含 媒体评价表名 media_reviews
+[1;32m  ✓[0m metacritic-reviews.js 含 页面内嵌 JSON 解析策略（__NEXT_DATA__）
+[1;32m  ✓[0m metacritic-reviews.js 含 媒体名合理性校验
+[1;32m  ✓[0m maintenance.service.js 含 用户勾选判定列（启动期清理不覆盖用户决定）
+[1;32m  ✓[0m maintenance.service.js 含 启动期通关时长补全
+
+[1m== 3. 本轮功能（媒体评价）在前端产物里 ==[0m
+[1;32m  ✓[0m web 产物含 媒体评价面板挂载点
+[1;32m  ✓[0m web 产物含 媒体名称渲染
+[1;32m  ✓[0m web 产物含 媒体打分渲染
+[1;32m  ✓[0m web 产物含 媒体评价原文渲染
+[1;32m  ✓[0m web 产物含 设置页补全按钮
+
+[1m== 4. 前端产物里要有中文文案（确认 i18n 打进去了）==[0m
+[1;32m  ✓[0m web 产物含 「媒体评价」标签文案
+[1;32m  ✓[0m web 产物含 空状态文案
+
+[1m== 5. 本轮新增的前端行为在产物里 ==[0m
+[1;32m  ✓[0m web 产物含 媒体评价「展开」按钮（默认 5 条 → 10 条）
+[1;32m  ✓[0m web 产物含 媒体评价分页指示（第 x / y 页）
+[1;32m  ✓[0m web 产物含 「展开显示 {n} 条」文案
+[1;32m  ✓[0m web 产物含 相册截图「取消展示」按钮文案
+[1;32m  ✓[0m web 产物含 分页 i18n 键（确认打包时键名未丢）
+[1;32m  ✓[0m web 产物含 平台切换下拉框
+[1;32m  ✓[0m web 产物含 平台切换 i18n 键
+[1;32m  ✓[0m metacritic.provider.js 含 落地页无分页器时的列表页补探（评价抓全）
+
+[1m== 6. 后端仍保留启动期清理（本轮的核心数据修复）==[0m
+[1;32m  ✓[0m maintenance.service.js 含 启动期清理：摘掉没人手动勾选过的轮播帧
+[1;32m  ✓[0m maintenance.service.js 含 清理条数日志（确认泛化后的清理逻辑在产物里）
+
+[1m== 7. 本轮新增的改密码 / 轮播拆分在产物里 ==[0m
+[1;32m  ✓[0m auth.service.js 含 改密码业务方法（原密码校验 + 重新 setLocalPassword）
+[1;32m  ✓[0m auth.service.js 含 原密码错误的失败码（2xx + code，不许用 401）
+[1;32m  ✓[0m auth.service.js 含 改密成功后注销其它会话
+[1;32m  ✓[0m auth.controller.js 含 改密码路由 POST /api/auth/password
+[1;32m  ✓[0m auth.guard.js 含 改密码路由列入 PUBLIC_PATHS（未登录也返回统一 JSON）
+[1;32m  ✓[0m games.service.js 含 首页卡片轮播取数（原 slideshowPosters，已按职责改名）
+[1;32m  ✓[0m app.controller.js 含 features 标记：两套轮播互不相干
+[1;32m  ✓[0m app.controller.js 含 features 标记：改密码接口
+[1;32m  ✓[0m web 产物含 设置页改密码卡片锚点
+[1;32m  ✓[0m web 产物含 原密码错误的 i18n 键（前端按 code 映射文案）
+[1;32m  ✓[0m web 产物含 详情页官方海报大图轮播锚点
+
+[1m结果：38 项命中 / 0 项缺失[0m
+[1;32m产物自查通过 —— 镜像里确定包含本轮功能。[0m
+
+退出码=0
+
+# 汇总：216s，15 项通过 / 0 项失败

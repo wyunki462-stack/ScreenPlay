@@ -20,11 +20,28 @@ README.md
 # logs/ 目录整体排除（*.log 只匹配文件，目录本身仍会被打包进构建上下文）
 logs
 # 本地临时工作目录与私人备份：既不进镜像，也不该每次构建都发给 Docker 守护进程
-# （.tmp-* 实测累计 700MB+，其中单个就 554MB —— 每轮构建白传一遍）
+# （历史上 Playwright 浏览器就放在 `.tmp-b/pw`（554 MB），当时这条 `.tmp*` 顺带把它挡住了；
+#  后来它搬到 `.pw/`（见 docs/SLIMMING.md:94），这条规则就不再覆盖它 —— 下面那条 `.pw` 是补回覆盖）
 .tmp*
 .nas-mihomo-split-backup
 .nas-mihomo-split-backup.tar.gz
+# Playwright/Chromium 的浏览器下载目录（只用它的三个套件都在**宿主机**上跑：
+#   backend/scripts/verify/duration-cache-e2e.mjs:263、requirements-ui.mjs:198（同目录）、scripts/verify-browser.mjs:35；
+#   镜像里既没有 playwright 也不跑浏览器）：实测 553.0 MiB / 147 个文件，是当前构建上下文里唯一的大块。
+# 加上这两行之后整个构建上下文从 555.0 MiB / 363 个文件降到 2.0 MiB / 216 个文件。
+# （想复现 before 就得把下面两行去掉再算：已经在忽略集里时再追加排除是空操作。）
+.pw
+.pw-cache
 Dockerfile.windows
 *.md
 .vscode
 .idea
+# 桌面端构建链与它的产物：windows/（du -sh 835 MB ≈ apparent 767.7 MiB）会被 Docker 原样发给守护进程做上下文扫描
+# （Linux 镜像的两条 COPY 只碰 backend/ 与 web/，从不读它；Tauri/Rust 产物与
+# windows/.cache 里的三份 backend dist 副本全是白传）。android/ 同理。
+# 注意 **/dist 匹配不到 web/dist-desktop，所以桌面前端产物单独排一次。
+# scripts/ 必须留在上下文里（Dockerfile 要 COPY scripts/build/），别整目录排除。
+windows
+android
+dist-image
+**/dist-desktop

@@ -34,6 +34,15 @@ services:
     image: screenplay:latest
     container_name: screenplay
     restart: unless-stopped
+    # 日志上限：后端把全部输出走 stdout/stderr（没有文件日志），而 Docker 默认的
+    # json-file 驱动**不轮转** —— 长期运行的 NAS 容器会把这个文件单调写大。留 3×10MB
+    # 既够排查最近几次升级/扫描，又不会无限增长。想留全量历史的话把这段删掉即可
+    # （行为回到旧默认，其余一切不变）。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # 让容器内可用 host.docker.internal 指向 NAS 宿主机（用于访问宿主上的代理，如 mihomo 的 7890）。
     # 好处：换网桥/重建项目后网关 IP 变化也不影响，代理地址可固定写 host.docker.internal。
     extra_hosts:

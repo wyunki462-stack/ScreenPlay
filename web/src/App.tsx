@@ -1,11 +1,29 @@
+import { lazy, Suspense } from "react";
 import { Link, Route, Routes } from "react-router-dom";
 import { Gamepad2, Languages, LogOut, User } from "lucide-react";
 import Home from "./pages/Home";
-import GameDetail from "./pages/GameDetail";
-import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import { useAuthSession, useLogout } from "./api/auth";
 import { useI18n } from "./i18n";
+
+/**
+ * Route-level code splitting.
+ *
+ * `Home` stays in the main chunk — it is the entry screen, and deferring it would
+ * only move the delay to the first paint. Detail and settings are the two heavy
+ * graphs (the detail page alone drags in the media grid, the lightbox and, now,
+ * a lazily-fetched player) and both are only reached by navigation, so they are
+ * fetched on first visit instead of on every cold load.
+ *
+ * `Login` also stays eager on purpose: it is the first screen for a signed-out
+ * user, and making it wait on a second round trip would be visible on every fresh
+ * session — for ~20 KB it is not worth it.
+ *
+ * The fallback is the app's own muted placeholder rather than a spinner, so a slow
+ * chunk looks like the page still loading instead of a different UI flashing by.
+ */
+const GameDetail = lazy(() => import("./pages/GameDetail"));
+const Settings = lazy(() => import("./pages/Settings"));
 
 export default function App() {
   const { data: session, isPending } = useAuthSession();
@@ -92,11 +110,19 @@ export default function App() {
       </header>
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/game/:id" element={<GameDetail />} />
-          <Route path="/settings" element={<Settings />} />
-        </Routes>
+        <Suspense
+          fallback={
+            <div className="flex min-h-[40vh] items-center justify-center text-sm text-zinc-500">
+              {t("action.loading")}
+            </div>
+          }
+        >
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/game/:id" element={<GameDetail />} />
+            <Route path="/settings" element={<Settings />} />
+          </Routes>
+        </Suspense>
       </main>
 
       <footer className="border-t border-zinc-800/80 py-6 text-center text-xs text-zinc-500">

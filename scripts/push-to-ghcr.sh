@@ -11,14 +11,15 @@
 #
 # 用法：
 #   bash scripts/push-to-ghcr.sh                    # 默认镜像 screenplay:latest，版本号读 package.json
-#   bash scripts/push-to-ghcr.sh screenplay:1.2.0 1.2.0
-#   GH_USER=wyunki462-stack DOCKERHUB_USER=xxx bash scripts/push-to-ghcr.sh
+#   bash scripts/push-to-ghcr.sh screenplay:1.3.0 1.3.0
+#   DOCKERHUB_USER=otheruser bash scripts/push-to-ghcr.sh   # 覆盖 Docker Hub 命名空间
+#   DOCKERHUB_USER= bash scripts/push-to-ghcr.sh            # 显式置空 = 只推 GHCR
 #   RETRIES=8 SLEEP=10 bash scripts/push-to-ghcr.sh
 #   DRY_RUN=1 bash scripts/push-to-ghcr.sh          # 只打印将要执行的命令
 #
 # 环境变量：
 #   GH_USER          GHCR 命名空间（默认 wyunki462-stack）
-#   DOCKERHUB_USER   Docker Hub 命名空间；为空则只推 GHCR
+#   DOCKERHUB_USER   Docker Hub 命名空间（默认 wyunki）；显式置空 = 只推 GHCR
 #   RETRIES          每个标签最多尝试几次（默认 8）
 #   SLEEP            两次尝试之间等待秒数（默认 5）
 #   LOGIN_TRIES      登录最多尝试几次（默认 8）
@@ -41,7 +42,7 @@ IMAGE="${1:-${IMAGE:-screenplay:latest}}"
 VERSION="${2:-}"
 
 GH_USER="${GH_USER:-wyunki462-stack}"
-DOCKERHUB_USER="${DOCKERHUB_USER:-}"
+DOCKERHUB_USER="${DOCKERHUB_USER-wyunki}"
 RETRIES="${RETRIES:-8}"
 SLEEP="${SLEEP:-5}"
 LOGIN_TRIES="${LOGIN_TRIES:-8}"

@@ -1,11 +1,14 @@
 # =============================================================================
-# ScreenPlay — Linux production image (node:22-alpine)
+# ScreenPlay — Linux production image (build: node:22-alpine / run: alpine + node binary)
 #
 # Multi-stage build:
-#   1. build  — installs workspaces (incl. native modules), compiles backend
-#               (NestJS → dist) and web (Vite → dist).
-#   2. run    — slim runtime with ffmpeg for video frame extraction, the
-#               compiled backend + web bundle, and mounted /media + /data.
+#   1. build  — `node:22-alpine`：装工作区依赖（含原生模块）、编译后端（NestJS → dist）
+#               与前端（Vite → dist）。
+#   2. run    — `alpine:3.24` + 只从构建阶段 COPY 一个 `node` 二进制：运行期只需
+#               `node dist/main.js`，所以 npm / corepack / node 头文件都不进镜像
+#               （为什么必须换基础镜像而不是 `rm`，见本阶段 FROM 上方的说明）。
+#               另装 ffmpeg（视频抽帧）与 libstdc++（node 二进制的运行时依赖），
+#               载入编译产物 + 前端 bundle，并挂载 /media + /data。
 #
 # ── 源与代理（仅构建期）─────────────────────────────────────────────────────
 #   构建容器有独立网络命名空间，**不继承宿主机代理**；而且 docker.service 里若
@@ -202,6 +205,23 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
     NPM_MIRROR_REGISTRY="$NPM_MIRROR_REGISTRY" \
     sh /tmp/npm-run.sh run build
 
+# --- 预压缩前端产物：首屏 626KB → 104KB(gzip) / 90KB(brotli)，运行期零 CPU -----
+#
+# 后端是这套应用前面唯一的服务者，运行期现压（或按住一个 gzip 流）正是这次优化
+# 要消掉的稳态开销 —— 所以压缩放在构建期做一次，产物写成 `*.js.br` / `*.js.gz`
+# 放在原文件旁边，由 `precompressedStatic` 中间件（backend/src/common/http/
+# precompressed-static.ts）按 Accept-Encoding 直接发对的那一份。
+# 实测：index.js 552,818 B → br 135,064 / gz 159,299；配上前端分包后首屏
+# （entry.js + css + html）gzip 共约 104KB。用的是 node:zlib，不新增任何依赖。
+#
+# 放在这里（npm run build 之后、瘦身之前）：产物生成在 web/dist，随后被 run 阶段
+# COPY 进 /app/public。宿主上手工构建不跑这一步也没关系 —— 中间件找不到 .br/.gz
+# 就原样返回未压缩文件，是纯增量行为。
+#
+# 路径注意：构建阶段没有 `COPY . .`，脚本只在 /tmp 下（`COPY scripts/build/ /tmp/`
+# 是「拷贝目录内容」，所以是 /tmp/precompress.mjs，不是 /tmp/build/…）。
+RUN node /tmp/precompress.mjs web/dist
+
 # --- 瘦身：只把运行时真的会用到的依赖带进运行镜像 -----------------------------
 #
 # 运行阶段直接 COPY /app/node_modules（见下面的 run 阶段）。而这条线以上的
@@ -217,16 +237,37 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
 #      依据：backend/dist 里没有任何 require("react"|"lucide-react"|"@tanstack"|"plyr")。
 #      代价：在镜像里改前端本来就要重跑 npm install + build，没有额外损失。
 #
-# 保留 declaration（.d.ts）：产物自查脚本虽然只 grep *.js，但这些类型文件没有运行时
-# 开销；真正该砍的是 sourceMap —— 见 backend/tsconfig.build.json（生产构建不再产出
-# 73 个 .map，既省体积也不把源码带进镜像）。
+#      这一组要删**整个 web 生产闭包**，不只是直接声明的那个名字。@remix-run/router、
+#      loadjs、rangetouch、url-polyfill、react-aptor、scheduler 等是 react-router-dom /
+#      plyr / plyr-react / react-dom 带进来的，core-js（15M，全部来自 plyr 的 polyfill）
+#      连 web 自己都不需要 —— 它们都不在 backend 的生产闭包内，backend/dist 里也没有
+#      任何一处 require 它们，所以我用「backend 闭包 ∩ web 闭包」的差集而不是手写清单。
+#      逐个核对过：backend/dist 与 node_modules 生产代码里对这些包名的 require 命中 0。
 #
-#   3. 清完之后**自检原生依赖**：better-sqlite3 的编译产物（build/Release/
+#   3. 删掉包内的非入口目录（index.js/lib/cjs 之外的发布附赠品）：
+#      fluent-ffmpeg/coverage 是 nyc 覆盖率产物（12M，最大单项），
+#      libphonenumber-js 的 bundle/es6*/、class-validator 与 class-transformer 的
+#      bundles/esm*、rxjs/src、lodash/fp 都不在任何包的入口路径上。
+#      全部只删「main 之外的分发目录」——不碰任何包的 index/lib/cjs，所以 require 解析
+#      结果不变；改完紧跟一条入口冒烟（见下面 node -e），失败就让构建挂掉。
+#
+#   4. 清完之后**自检原生依赖**：better-sqlite3 的编译产物（build/Release/
 #      better_sqlite3.node）如果不在，容器起来时才会炸，而且报错是「数据库打不开」，
 #      与瘦身动作看不出关联。所以这里就地重建 + 真跑一次 SQL，失败就让构建挂掉。
 #      注意**不能**给 prune 加 --ignore-scripts：prune 会 reify 整棵树，一旦它决定重装
 #      某个含原生代码的包，--ignore-scripts 会让它装完却没有编译产物（这个坑在本地
 #      复现过），而脚本开着时 npm 才会去取/编译出 binding。
+#
+#   5. 删掉「非运行期文件类型」：*.map（source map）、*.md（包内文档）、*.d.ts（类型声明）。
+#      它们只在开发/构建期有用 —— 运行时不加 --enable-source-maps（全仓 grep 命中 0），
+#      运行镜像里也不再跑 tsc（backend/dist 只留 .js，见下面那一步）。按 backend 生产闭包
+#      （npm ls --omit=dev）**去重**实测：*.map 1,707 个 / 4.66 MiB、*.md 391 个 / 3.03 MiB、
+#      *.d.ts 1,639 个 / 2.15 MiB，合计 3,737 个文件 / 10,320,488 B = 9.84 MiB。
+#      统计时必须跳过 node_modules/@screenplay/* 这两个 workspace 软链接（跟进去会算到源码树），
+#      并按绝对路径去重 —— 否则会得到偏大的 18.29 MiB 那一版错数。
+#      注意**只能在这一步删**：run 阶段是 COPY --from=build 拿到这棵树的，在 COPY 之后再删
+#      只会多一个白洞层，字节照样留在镜像里（scripts/verify-docker-layers.mjs 把这条钉住）。
+#      *.ts 不删：不少包把 .ts 当发布内容的一部分，入口解析有风险，而收益只有 ~3.6 MiB。
 #
 # 只影响运行镜像：build 阶段自己的 node_modules 保持全量，后续步骤不受影响。
 RUN HTTP_PROXY="$HTTP_PROXY" \
@@ -236,7 +277,27 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
  && rm -rf node_modules/lucide-react node_modules/react node_modules/react-dom \
            node_modules/react-router-dom node_modules/@tanstack node_modules/plyr \
            node_modules/plyr-react node_modules/react-photo-view \
+           node_modules/core-js node_modules/@remix-run/router node_modules/loadjs \
+           node_modules/react-router node_modules/rangetouch node_modules/scheduler \
+           node_modules/prop-types node_modules/url-polyfill node_modules/react-aptor \
+           node_modules/react-is node_modules/loose-envify node_modules/js-tokens \
+           node_modules/custom-event-polyfill \
+ && rm -rf node_modules/fluent-ffmpeg/coverage node_modules/fluent-ffmpeg/doc \
+           node_modules/fluent-ffmpeg/OLD node_modules/fluent-ffmpeg/tools \
+           node_modules/libphonenumber-js/bundle node_modules/libphonenumber-js/es6 \
+           node_modules/libphonenumber-js/es6-modern \
+           node_modules/class-validator/bundles node_modules/class-validator/esm2015 \
+           node_modules/class-validator/esm5 \
+           node_modules/class-transformer/bundles node_modules/class-transformer/esm2015 \
+           node_modules/class-transformer/esm5 \
+           node_modules/lodash/fp node_modules/rxjs/src \
+ && find node_modules -type f -name '*.map' -delete \
+ && find node_modules -type f -name '*.md' -delete \
+ && find node_modules -type f -name '*.d.ts' -delete \
+ && find backend/dist -name '*.d.ts' -delete \
+ && printf '[slim] backend/dist: %s\n' "$(du -sh backend/dist | cut -f1)" \
  && printf '[slim] node_modules: %s\n' "$(du -sh node_modules | cut -f1)" \
+ && node -e "require('fluent-ffmpeg');require('class-validator');require('class-transformer');require('libphonenumber-js');require('rxjs');require('lodash');console.log('[slim] JS 依赖入口自检通过')" \
  && if [ ! -f node_modules/better-sqlite3/build/Release/better_sqlite3.node ]; then \
       echo '[slim] better-sqlite3 编译产物缺失，就地重建'; \
       npm rebuild better-sqlite3 --no-audit --no-fund; \
@@ -297,7 +358,48 @@ COPY scripts/expected-source-hash.sh /tmp/expected-source-hash.sh
 RUN sh /tmp/expected-source-hash.sh && rm -f /tmp/expected-source-hash.sh /tmp/expected.source-hash
 
 # ---------------------------------------------------------------------------
-FROM ${REGISTRY}node:22-alpine AS run
+# ════════════════════════════════════════════════════════════════════════════
+# 运行阶段基础镜像：最小 alpine + 只拷 node 二进制
+# ════════════════════════════════════════════════════════════════════════════
+#
+# 原来 run 阶段直接 `FROM node:22-alpine`。那一层在各层合计里是
+# **155,819,008 B（148.6 MiB）**（未压缩 tar 层，实测见 docs/SLIMMING.md 第三节），
+# 里面除了 node 二进制，还带着运行时**用不到**的东西：
+# npm（约 12 MB）、corepack（约 2 MB）、node 头文件 `/usr/local/include/node`（约 8 MB）、
+# npm/yarn/pnpm 的 shim、以及 node 自带的文档与 license。
+# 而本镜像运行期只用得到一句 `node dist/main.js`（全仓核过：容器内没有任何脚本/文档在跑 npm；
+# scripts/docker-verify.sh 明说「全部在容器里完成，宿主机不需要 node / npm」，它只用 node 与 sh）。
+#
+# **为什么必须换基础镜像，而不是在 node 镜像上 `rm -rf` 这些目录**：镜像是各层之和，
+# 删基础层里的文件只会多出一个白洞层，字节照旧被下载与落盘（见
+# docs/perf/PERF-REPORT.md 第七节「镜像体积的层语义」）。换成 alpine 后，node 二进制由下面
+# `COPY --from=build` 单独搬来 —— COPY 只搬幸存文件，npm / corepack / 头文件根本不产生字节。
+#
+# alpine 版本必须跟着构建阶段那版 `node:22-alpine`（当前 = **alpine 3.24**）：node 官方镜像就是
+# 官方 musl 预编译包叠在 alpine rootfs 上，二进制只额外需要 **libstdc++ + libgcc**
+# （见下面 apk 那一步）与 musl 本身。**libstdc++ 必须装**，否则容器起不来，报错形态是
+# `node: not found` / 库加载失败，看起来像「二进制坏了」。
+#
+# ⚠️ 为什么必须与构建阶段同版本（不是「随便挑个小版本就行」）—— 这行字曾经写错，代价是
+# **ffmpeg 跨两个大版本降级**：
+#   * 构建阶段的 `node:22-alpine` 现在是 alpine **3.24.2**（实测该基础镜像的 rootfs 层就是
+#     `alpine-minirootfs-3.24.2-x86_64.tar.gz`，层字节 8,704,000）。
+#   * 已经发布的 1.2.0 镜像跑在同一套 3.24 仓库上：从镜像里抽出 `/lib/apk/db/installed`
+#     看到的包是 `ffmpeg 8.1.2-r0`、`libstdc++ 15.2.0-r5`、`libgcc 15.2.0-r5`。
+#   * 若运行阶段写 `alpine:3.22`，apk 会从 v3.22 仓库装到 **`ffmpeg 6.1.2-r2`**
+#     （依赖 libavcodec.so.60，而 8.1.2 用 libavcodec.so.62）—— 抽帧是 fluent-ffmpeg 调 CLI，
+#     等于把运行时组件倒退两个大版本，属于「功能退化」。
+#   * 版本对照（实测 APKINDEX）：v3.22 → ffmpeg 6.1.2-r2 / libstdc++ 14.2.0-r6；
+#     v3.24 → ffmpeg 8.1.2-r0 / libstdc++ 15.2.0-r5（= 现状）。
+#   * 同版本的代价只有 +145,408 B（rootfs 8,704,000 vs 8,591,360；libstdc+++libgcc
+#     2,978,024 vs 2,945,256），换来 ffmpeg/libstdc++ 与现状**完全同包版本**。
+#   * node 镜像哪天再跳 alpine 大版本（3.25…），这里要**跟着改**，否则又会静默漂移；
+#     `scripts/verify-docker-layers.mjs` 第 9 组会把版本钉住并在漂移时报错。
+#
+# 这是构建结构改动：宿主开发环境没有 docker 权限，无法自测 ⇒ 由 `scripts/rebuild-and-verify.sh`
+# 在真机构建后验证（断言 `/api/health` = 200、15 个 feature 标记齐全、启动期维护日志措辞、
+# 前端投递的 `Content-Encoding` 与缓存头）。
+FROM ${REGISTRY}alpine:3.24 AS run
 
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
@@ -324,11 +426,32 @@ ARG APK_INSTALL_TIMEOUT
 # 不传时保持 "dev"，即不影响缓存 —— 不会因为 ARG 默认值而每次都重建。
 ARG APK_SETUP_VERSION=dev
 
-COPY scripts/build/ /tmp/
+# 运行阶段只需要 apk-setup.sh 这一个脚本（它自身不引用同目录的其它文件，见
+# scripts/build/README.md）。原来整目录 COPY，意味着 npm-run.sh / proxy-probe.js /
+# README.md / precompress.mjs 也进了这一层（这些是 build 阶段的东西），若清理列表漏掉
+# 任何一个就会永久留在镜像里。逐文件 COPY 后，镜像层里只有真正要用的那一个。
+COPY scripts/build/apk-setup.sh /tmp/apk-setup.sh
 RUN echo "[run] apk-setup.sh version=$APK_SETUP_VERSION"
 
 # --- run 阶段：同样用「容器内真实校验」装 ffmpeg 并建用户 ---
 # 同样只用行内环境变量前缀，运行镜像里不残留任何代理变量。
+#
+# **libstdc++ 是 node 二进制的运行时依赖**（alpine 版 node 是动态链接 libstdc++/libgcc 的）：
+# 官方 node 镜像自己在 Dockerfile 里也装了它。这里和 ffmpeg 一起装进**同一个 RUN**，
+# 不额外增加层；漏装的表现是容器起来就退出（`node: not found`）。
+#
+# 一层收尾：脚本、apk 日志、代理环境文件与 apk 索引缓存全部在**同一个 RUN** 里删掉 ——
+# 跨层删除只是多一个白洞层，字节仍然占着镜像体积（所以这条 rm 不能拆成独立 RUN）。
+# 其中 `rm -rf /var/cache/apk/*` 是**冗余保险**：apk-setup.sh 本身就是 `apk add --no-cache`
+# 且已在同一 RUN 末尾清过一次缓存，所以它不产生任何字节收益（同一 RUN 内创建又删除的
+# 字节本来就不进层），留着只是为了将来有人改脚本时兜底。
+# 运行阶段唯一的「跨层先加后删」是上面那条 `COPY scripts/build/apk-setup.sh /tmp/apk-setup.sh`
+# —— 它单独占一层（18,471 B，构建期 apk 换源/代理校验必需；不能用 `RUN --mount=type=bind`
+# 绕开，因为本仓检测到旧版 Docker 会降级为经典构建器，`--mount` 会直接构建失败）：
+# 那 18 KB 会以白洞形式留下，是有意保留的最小代价，其余 /tmp 脚本与日志都随本 RUN 清掉。
+# 清理列表里保留 npm-run.sh / proxy-probe.js / README.md / precompress.mjs 这些
+# 当前并不拷进来的名字也无害（`rm -f` 不报错），这样将来若把 COPY 改回整目录也不会漏删；
+# scripts/verify-docker-layers.mjs 会静态核对「拷进来的东西是否都在同一层被删掉」。
 RUN HTTP_PROXY="$HTTP_PROXY" \
     HTTPS_PROXY="$HTTPS_PROXY" \
     NO_PROXY="$NO_PROXY" \
@@ -337,12 +460,18 @@ RUN HTTP_PROXY="$HTTP_PROXY" \
     APK_MIRRORS="$APK_MIRRORS" \
     APK_PROBE_TIMEOUT="$APK_PROBE_TIMEOUT" \
     APK_INSTALL_TIMEOUT="$APK_INSTALL_TIMEOUT" \
-    sh /tmp/apk-setup.sh ffmpeg \
+    sh /tmp/apk-setup.sh ffmpeg libstdc++ \
  && addgroup -S screenplay \
  && adduser -S screenplay -G screenplay \
- && rm -f /tmp/apk-setup.sh /tmp/npm-run.sh /tmp/proxy-probe.js /tmp/README.md /tmp/screenplay-proxy-env /tmp/apk-probe.log /tmp/apk-add.log
+ && rm -f /tmp/apk-setup.sh /tmp/npm-run.sh /tmp/proxy-probe.js /tmp/README.md \
+           /tmp/precompress.mjs /tmp/screenplay-proxy-env /tmp/apk-probe.log /tmp/apk-add.log \
+ && rm -rf /var/cache/apk/*
 
 WORKDIR /app/backend
+
+# node 二进制：唯一需要从构建阶段那个 node 镜像搬过来的东西（npm / corepack / 头文件都不搬）。
+# 路径与官方镜像保持一致（/usr/local/bin/node），alpine 的默认 PATH 已含 /usr/local/bin。
+COPY --from=build /usr/local/bin/node /usr/local/bin/node
 
 COPY --from=build /app/backend/package.json ./package.json
 COPY --from=build /app/backend/dist ./dist
@@ -350,6 +479,10 @@ COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/web/dist /app/public
 # 构建指纹（见 build 阶段）：`cat /app/build-info.json` 即可确认镜像对应的源码。
 COPY --from=build /app/build-info.json /app/build-info.json
+
+# 构建期自检：搬过来的 node 二进制必须能被加载并执行 —— 换基础镜像最典型的坑是漏装
+# libstdc++，那会让容器运行时才炸；在这里失败比在部署现场失败便宜得多。
+RUN node -v
 
 # 版本号落成 ENV（构建期 ARG 不会持久化，必须显式转成 ENV）
 ARG BUILD_VERSION="0.0.0-dev"

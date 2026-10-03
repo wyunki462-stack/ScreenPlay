@@ -6,7 +6,6 @@ import type {
   AchievementsResponse,
   GameDetail,
   GameSummary,
-  LibraryStatus,
   Media,
   Poster,
   PosterMode,
@@ -319,12 +318,7 @@ export function useStats() {
   });
 }
 
-export function useLibraryStatus() {
-  return useQuery({
-    queryKey: ["library"],
-    queryFn: () => apiFetch<LibraryStatus>("/library/status"),
-  });
-}
+
 
 export function useScanLibrary() {
   const queryClient = useQueryClient();
@@ -499,6 +493,15 @@ export function useMetadataStatus() {
   return useQuery({
     queryKey: ["metadata-status"],
     queryFn: () => apiFetch<MetadataProgress>("/games/refresh-all/status"),
+    // Fast while a bulk job runs (the progress bar has to move); slow when idle,
+    // where nothing local can change on its own. Both mutations that START a job
+    // invalidate this query, so the switch to the 1500ms cadence happens on the
+    // same tick as the click — no user-visible lag.
+    // (react-query also stops the interval while the tab is hidden.)
+    // The idle rate is deliberately left at its pre-optimisation value: raising it
+    // only trims idle requests (no memory/storage win) while making changes made by
+    // *other* clients appear later, which this round's "interaction unchanged"
+    // constraint rules out. See docs/perf/PERF-REPORT.md §八 for the one-line variant.
     refetchInterval: (query) => (query.state.data?.running ? 1500 : 5000),
   });
 }
@@ -521,7 +524,9 @@ export function useDurationCoverage() {
   return useQuery({
     queryKey: ["duration-coverage"],
     queryFn: () => apiFetch<DurationCoverage>("/games/duration-coverage"),
-    // Poll while a bulk job is running so the counter moves with the progress bar.
+    // Poll while there is anything left to backfill (a bulk job may be running and
+    // the counter should move with the progress bar); rare poll otherwise.
+    // Idle cadence kept at its pre-optimisation value for the same reason as above.
     refetchInterval: (query) => (query.state.data?.missing ? 6000 : 20000),
   });
 }

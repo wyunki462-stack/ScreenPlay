@@ -13,6 +13,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import type { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
+import { precompressedStatic } from './common/http/precompressed-static';
 import { LibraryService } from './library/library.service';
 import fs from 'fs-extra';
 import path from 'path';
@@ -55,7 +56,26 @@ async function bootstrap(): Promise<void> {
   // Serve the Web frontend if its production bundle is present (Docker mode).
   const webDist = process.env.WEB_DIST || path.join(process.cwd(), 'public');
   if (fs.pathExistsSync(path.join(webDist, 'index.html'))) {
-    app.useStaticAssets(webDist);
+    // Pre-compressed variants first (see `precompressedStatic`): when the build
+    // produced `*.br`/`*.gz` siblings, the ~626 KB bundle is delivered as ~172 KB
+    // without any per-request compression work. Falls through to the static
+    // handler below when a variant is absent, so this is purely additive.
+    app.use(precompressedStatic(webDist));
+
+    app.useStaticAssets(webDist, {
+      // Vite names everything under /assets/ with a content hash, so those files
+      // can be cached forever — a rebuild produces a new name. They used to go out
+      // as `max-age=0` (Express's default), which re-validated both bundle files on
+      // every navigation. Everything else (index.html, favicon.svg) must be
+      // revalidated, otherwise a redeploy would be invisible until a hard refresh.
+      setHeaders: (res, filePath) => {
+        const hashed = `${path.sep}assets${path.sep}`;
+        res.setHeader(
+          'Cache-Control',
+          filePath.includes(hashed) ? 'public, max-age=31536000, immutable' : 'no-cache',
+        );
+      },
+    });
     // SPA fallback for client-side routes (everything except /api).
     const express = app.getHttpAdapter().getInstance() as {
       use: (handler: (req: Request, res: Response, next: NextFunction) => void) => void;

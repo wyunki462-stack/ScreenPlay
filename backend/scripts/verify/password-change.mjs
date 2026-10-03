@@ -88,7 +88,7 @@ async function sessionInfo(cookie) {
 // -------------------------------------------------------------------- DB ---
 
 function withDb(fn) {
-  const db = new DatabaseSync(path.join(DATA, 'screenplay.db'));
+  const db = new DatabaseSync(path.join(DATA, 'screenplay.db'), { timeout: 5000 }); // busy 5s：测试进程也在写同一个库，避免与在跑的服务撞出 database is locked
   try { return fn(db); } finally { db.close(); }
 }
 

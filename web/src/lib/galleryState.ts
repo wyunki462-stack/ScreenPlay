@@ -48,11 +48,6 @@ function read(): GalleryQuery {
   }
 }
 
-/** The query the gallery last displayed. Safe to call during render. */
-export function getGalleryQuery(): GalleryQuery {
-  return current;
-}
-
 export function setGalleryQuery(next: GalleryQuery): void {
   // Ignore no-op writes: the gallery recomputes this on every keystroke.
   if (JSON.stringify(next) === JSON.stringify(current)) return;
@@ -77,9 +72,4 @@ export function useGalleryQuery(): GalleryQuery {
     };
   }, []);
   return value;
-}
-
-/** Strip the fields that do not affect which games are in the list. */
-export function filterKey(q: GalleryQuery): string {
-  return `${q.search}|${q.platform}|${q.minScore}|${q.sort}|${q.order}`;
 }

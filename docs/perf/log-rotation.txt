@@ -1,0 +1,49 @@
+# 日志上限 + 轮转（方向②用户点名项）—— 实测与复现
+#
+# 复现：
+#   docker compose -f docker-compose.yml config -q ; echo $?          # 语法/合并校验
+#   docker compose -f docker-compose.deploy.yml config -q ; echo $?
+#   docker compose -f docker-compose.yml config | sed -n "/logging:/,/^[^ ]/p"
+#   git diff --numstat -- docker-compose.yml docker-compose.deploy.yml
+# 说明：docker compose config 只解析文件，不需要 docker 守护进程权限（本机 socket 无权限也能跑）。
+#
+== 1) 两份 compose 里各自的 logging 块（行号 + 原文）==
+docker-compose.yml:41:    logging:
+docker-compose.yml-42-      driver: json-file
+docker-compose.yml-43-      options:
+docker-compose.yml-44-        max-size: "10m"
+docker-compose.yml-45-        max-file: "3"
+--
+docker-compose.deploy.yml:45:    logging:
+docker-compose.deploy.yml-46-      driver: json-file
+docker-compose.deploy.yml-47-      options:
+docker-compose.deploy.yml-48-        max-size: "10m"
+docker-compose.deploy.yml-49-        max-file: "3"
+
+== 2) docker compose config 解析后的生效配置（两份一致）==
+--- docker-compose.yml
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    networks:
+--- docker-compose.deploy.yml
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    networks:
+
+== 3) 校验退出码 ==
+docker-compose.yml config -q  ->  exit=0
+docker-compose.deploy.yml config -q  ->  exit=0
+
+== 4) 生效上限换算 ==
+max-size 10m × max-file 3 = 30 MiB / 容器（json-file 驱动，超过后轮转丢弃最旧的那个文件）
+改动前：没有这段配置 ⇒ json-file 默认**不限制**，容器日志会一直长（这是方向②要消掉的磁盘风险）
+
+== 5) 两份 compose 的改动量（只增不删，除新增块外无其它变化）==
+10	0	docker-compose.deploy.yml
+9	0	docker-compose.yml

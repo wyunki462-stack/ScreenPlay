@@ -1,6 +1,6 @@
 {
   "name": "screenplay-desktop",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "ScreenPlay Windows 桌面端构建入口（Tauri v2 壳 + 内置 NestJS 后端）；仅负责编排构建，不参与运行时代码。",
   "license": "MIT",

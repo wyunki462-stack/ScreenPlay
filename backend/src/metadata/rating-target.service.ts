@@ -42,6 +42,20 @@ interface RatingTargetRow {
   created_at: number;
 }
 
+/** Row → the shape callers see. Shared by {@link RatingTargetService.get} and `all`. */
+function toTarget(row: RatingTargetRow): RatingTarget {
+  return {
+    source: row.source,
+    externalId: row.external_id,
+    name: row.name,
+    platform: row.platform,
+    metascore: row.metascore,
+    criticCount: row.critic_count,
+    releaseDate: row.release_date,
+    createdAt: row.created_at,
+  };
+}
+
 @Injectable()
 export class RatingTargetService {
   private readonly logger = new Logger(RatingTargetService.name);
@@ -54,17 +68,23 @@ export class RatingTargetService {
       'SELECT * FROM rating_targets WHERE game_id = ?',
       [gameId],
     );
-    if (!row) return null;
-    return {
-      source: row.source,
-      externalId: row.external_id,
-      name: row.name,
-      platform: row.platform,
-      metascore: row.metascore,
-      criticCount: row.critic_count,
-      releaseDate: row.release_date,
-      createdAt: row.created_at,
-    };
+    return row ? toTarget(row) : null;
+  }
+
+  /**
+   * Every manual target, keyed by game id — one statement for a whole gallery.
+   *
+   * The gallery needs the manual target of *every* row (it is part of the sort
+   * key), so asking {@link get} per row meant one `SELECT` per game on every
+   * list request. The table holds at most one small row per game the user has
+   * hand-picked a rating for, so reading it whole is cheaper than N round trips
+   * — and it returns exactly the same rows, so the resolved scores cannot drift.
+   */
+  all(): Map<string, RatingTarget> {
+    const rows = this.db.all<RatingTargetRow>('SELECT * FROM rating_targets');
+    const byGame = new Map<string, RatingTarget>();
+    for (const row of rows) byGame.set(row.game_id, toTarget(row));
+    return byGame;
   }
 
   has(gameId: string): boolean {

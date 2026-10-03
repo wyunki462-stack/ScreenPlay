@@ -1,0 +1,21 @@
+ScreenPlay 启动维护（回收）端到端验证 2026-10-03 01:34
+日志：Boot maintenance finished in 0.6s
+     caches reclaimed: 100 expired cache row(s), 78 stale file(s)
+
+五个缓存目录文件数：100 → 22（−78）
+五个缓存目录字节：122880 → 43008（回收 79872 字节 ≈ 78 KiB）
+metadata_cache：150 行 → 50 行（删掉 100 条过期行）
+
+断言：10 项通过 / 0 项失败
+口径：真启动 backend/dist 一次（MAINTENANCE_ON_BOOT 默认开启；宿主没有 better-sqlite3 原生产物，驱动由 node:sqlite shim 顶替），DATA_DIR 是造的，
+      媒体根是 seed-soak-db.js 造的真实 JPEG；posters/ 与不认识的文件名一律不动。
+
+# KEY=VALUE
+# maintenance_files_before=100
+# maintenance_files_after=22
+# maintenance_bytes_before=122880
+# maintenance_bytes_after=43008
+# maintenance_bytes_reclaimed=79872
+# maintenance_cache_rows_pruned=100
+# maintenance_checks_ok=10
+# maintenance_checks_bad=0

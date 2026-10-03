@@ -311,12 +311,6 @@ export interface LibraryStatus {
   totalMedia: number;
 }
 
-export interface Health {
-  status: string;
-  uptime?: number;
-  version?: string;
-}
-
 /** One Metacritic entry the user can pick as a game's score source. */
 export interface RatingCandidate {
   externalId: string;

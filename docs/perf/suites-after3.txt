@@ -1,0 +1,76 @@
+# 卡帧改用 thumbnail 之后的回归 2026-10-03 00:50:59
+### poster-ui-ssr
+
+[1m== 问题 3 · 详情页大图区轮播（只看张数，不看任何模式开关）[0m
+   [32m✓[0m 大图区容器存在（详情页大图轮播挂载点）
+   [32m✓[0m 大图区有计数器（3 张图 → 多张时可翻页）
+   [32m✓[0m 3 张图时渲染上一张/下一张两个箭头（箭头常驻，不靠 hover）
+   [32m✓[0m 大图区不再渲染 data-mode（没有「模式」这一维，恒定自动轮播）
+   [32m✓[0m 单张图时不渲染翻页箭头（不会造成可翻页的错觉）
+   [32m✓[0m 单张图时不渲染计数器（1/1 没有意义）
+   [32m✓[0m 两张图时渲染上一张/下一张两个箭头
+
+[1m结果：11 项通过 / 0 项失败[0m
+
+退出码=0
+### requirements-ui
+   [32m✓[0m 轮播卡片上渲染出上一张/下一张两个箭头
+   [32m✓[0m 测试卡片挂在首页路径上（起始路径 /）
+   [32m✓[0m 点「下一张」封面确实换到第 2 张（计数 1/3 → 2/3）
+   [32m✓[0m 点「下一张」没有跳走（路径仍是 /）—— 本轮修的「按钮失效」
+   [32m✓[0m 点「上一张」回到 1/3 且仍停在首页（路径 /）
+   [32m✓[0m 正对照：点卡片正文照常进详情页（路径 → /game/g-1），链接本身是好的
+
+[1m== 页面运行时无 JS 错误（忽略环境性的后端请求失败）[0m
+   [32m✓[0m 没有渲染期错误（已忽略 9 条环境性的后端请求失败）
+
+[1m结果：64 项通过 / 0 项失败[0m
+
+退出码=0
+### poster-rotation-e2e
+file:///vol2/1000/ScreenPlay/backend/scripts/verify/poster-rotation-e2e.mjs:344
+      for (const id of globalThis.__legacyIds) del.run(id);
+                                                   ^
+
+Error: database is locked
+    at file:///vol2/1000/ScreenPlay/backend/scripts/verify/poster-rotation-e2e.mjs:344:52 {
+  code: 'ERR_SQLITE_ERROR',
+  errcode: 5,
+  errstr: 'database is locked'
+}
+
+Node.js v24.15.0
+退出码=0
+### media-reviews-e2e
+   落库 66 条，状态 ok
+   [32m✓[0m 全部 66 家媒体的评价都落库了（而不是只有首页的 2 条）
+   [32m✓[0m 确实翻到了后续分页（新增 6 次列表页请求）
+   [32m✓[0m 分页抓取后状态为 ok
+   [32m✓[0m 每条都带媒体名 + 打分 + 评价内容（不是只有第一条完整）
+   [32m✓[0m 媒体名无重复（首页与分页内容正确合并去重）
+   首页媒体 IGN=true，末页媒体 Gamona=true
+   [32m✓[0m 首页与末页的媒体都在（没有提前中断）
+   [32m✓[0m 详情接口返回全部 66 条（前端「媒体评价」面板能拿到）
+   [32m✓[0m 重复抓取幂等（仍为 66 条，无重复行）
+
+[1m结果：63 项通过 / 0 项失败[0m
+退出码=0
+### verify-build-artifacts
+[1;32m  ✓[0m web 产物含 详情页官方海报大图轮播锚点
+
+[1m结果：38 项命中 / 0 项缺失[0m
+[1;32m产物自查通过 —— 镜像里确定包含本轮功能。[0m
+退出码=0
+
+# 补充说明（poster-rotation-e2e 首跑报错，属环境瞬时问题）
+# 首次运行在此处失败：
+#   file:///vol2/1000/ScreenPlay/backend/scripts/verify/poster-rotation-e2e.mjs:344
+#         for (const id of globalThis.__legacyIds) del.run(id);
+#   Error: database is locked  { code: 'ERR_SQLITE_ERROR', errcode: 5, errstr: 'database is locked' }
+# 单独重跑同一条用例：结果：22 项通过 / 0 项失败（退出码 0）—— 与基线一致，
+# 判定为测试库残留锁的瞬时抖动（同一批次里其余套件均正常），不是本次改动引起。
+### poster-rotation-e2e（重跑）
+结果：22 项通过 / 0 项失败
+退出码=0
+# 另：本文件里首跑的「退出码=」取值有误 —— `node … | tail` 会取到 tail 的状态。
+#      判断套件是否通过要看 `结果：` 行是否存在，最终全量回归见 docs/perf/suites-final.txt。

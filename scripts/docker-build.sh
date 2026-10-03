@@ -55,7 +55,14 @@ DOCKERFILE="${DOCKERFILE:-$PROJECT_DIR/Dockerfile}"
 IMAGE_TAG="${IMAGE_TAG:-screenplay:latest}"
 APK_SETUP_SCRIPT="$SCRIPT_DIR/build/apk-setup.sh"   # 构建期脚本统一在 scripts/build/
 
-BASE_IMAGE="node:22-alpine"   # 基础镜像（官方命名空间）
+BASE_IMAGE="node:22-alpine"   # 构建阶段基础镜像（官方命名空间）
+# 运行阶段基础镜像：从 Dockerfile 的 `FROM … AS run` 直接派生，避免脚本与 Dockerfile 两处漂移。
+# 当前是 alpine（只从构建阶段 COPY 一个 node 二进制，不带 npm/corepack/头文件）；
+# 机制与层核算见 docs/perf/PERF-REPORT.md 第七节「镜像体积的层语义」。
+RUN_BASE_IMAGE="$(sed -n 's/^FROM[[:space:]]\{1,\}\(.*\)[[:space:]]\{1,\}AS[[:space:]]\{1,\}run[[:space:]]*$/\1/p' "$DOCKERFILE" 2>/dev/null | tail -n 1)"
+[ -n "$RUN_BASE_IMAGE" ] || RUN_BASE_IMAGE='(未在 Dockerfile 中声明)'
+# Dockerfile 里写的是 ${REGISTRY}alpine:3.24；这里把前缀展开成实际会用的值，只为打印好看
+RUN_BASE_IMAGE="$(printf '%s' "$RUN_BASE_IMAGE" | sed "s|\${REGISTRY}|${REGISTRY:-}|g")"
 BASE_NAMESPACE="library"      # Docker Hub 官方镜像的命名空间
 BASE_REPO="library/node"      # 镜像清单仓库路径（namespace/repo）
 BASE_TAG="22-alpine"
@@ -351,7 +358,7 @@ main() {
   gp="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo '-')"
   info "目标 Dockerfile : $DOCKERFILE"
   info "项目目录        : $PROJECT_DIR  (git $gp)"
-  info "架构            : $(host_arch) | 基础镜像 $BASE_IMAGE"
+  info "架构            : $(host_arch) | 构建阶段基础镜像 $BASE_IMAGE | 运行阶段基础镜像 $RUN_BASE_IMAGE"
 
   # ── 第一步：代理探测与注入 ──────────────────────────────────────────────
   echo

@@ -22,6 +22,11 @@ node backend/scripts/verify/poster-ui-ssr.mjs            # 海报 UI 的 SSR DOM
 node backend/scripts/verify/requirements-ui.mjs          # 需求 1–4 交互（真实 Chromium，不启服务）
 node backend/scripts/verify/poster-merge-unit.mjs        # 海报归属规则（esbuild 打包真实源码 + 接线断言）
 node backend/scripts/verify/password-change.mjs          # 设置页「修改密码」（本地账户，27 项）
+node backend/scripts/verify/sqlite-vacuum.mjs            # 可选启动期 VACUUM（12 项；默认关，MAINTENANCE_VACUUM=1 才走）
+node scripts/verify-docker-layers.mjs                    # Dockerfile 分层自查（33 项；纯静态解析，不需要 docker）
+
+# 或者一键跑完上面 A 段全部（2 个类型检查 + 12 套件 + 产物自查 + Dockerfile 分层自查）
+bash scripts/verify-suites.sh                            # 可选：bash scripts/verify-suites.sh 输出文件.txt
 
 # C. Windows 桌面端产物自检（不需要 Rust；先准备产物）
 cd <仓库根目录>
@@ -47,6 +52,48 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 > 轮播归属 → `poster-rotation-e2e.mjs` / `poster-ui-ssr.mjs`；时长缓存 → `duration-cache-e2e.mjs`；
 > 设置页改密 → `password-change.mjs`（本轮新增）。
 > 下文的具体命令与数字作为**历史记录**保留，复现入口以上面 A/B 两段为准。
+
+---
+
+## 1.3.0：Linux 端全量性能优化（功能 / 交互 / 数据结构 / 接口未变）
+
+本轮**没有新增后端 feature 标记**（15 条标记与 `1.0.0` 相同），所以判据同样是 `version`：
+
+```bash
+curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' | grep -E '"version"'
+# 期望：version 1.3.0
+```
+
+### 一键复核（都不需要 docker 权限）
+
+```bash
+bash scripts/verify-suites.sh docs/perf/verify-mine.txt   # 12 套件 434 断言 + 产物自查 38 + 分层自查 33
+node scripts/verify-docker-layers.mjs                     # 只跑分层 / 瘦身自查：9 组 33 项
+node scripts/gen-source-hash.mjs --check                   # 源码指纹：期望 ✓ 35019ad7abf95fdd（137 文件）
+bash scripts/perf-compare.sh docs/perf/before-docker.txt docs/perf/after-docker.txt /tmp/my-compare.md
+```
+
+换基线的**包级等价性**（只读外网，取 APKINDEX；需要先有一次 before 镜像的包库导出）：
+
+```bash
+docker compose exec screenplay cat /lib/apk/db/installed > /tmp/installed.txt
+python3 scripts/perf-bench/apk-parity.py --before-db /tmp/installed.txt
+# 期望结果：包级等价性核对通过（rootfs 16 / before 123 / 闭包 113）
+```
+
+### 真机前后实测（`1.2.0` → `1.3.0`，同一台 NAS、同一个容器）
+
+| 口径 | before | after | 变化 |
+| --- | --- | --- | --- |
+| 镜像解压体积 | 405,580,274 B | 337,753,553 B | −16.72% |
+| 层数 / 层字节合计 | 13 / 426,022,167 B | 12 / 353,978,424 B | −16.91% |
+| 60 次列表请求的内存增量（VmRSS） | 9,424,896 B | 3,235,840 B | −65.7% |
+| `GET /api/games?limit=60` | 13.9 ms / 651 条 SQL | 9.6 ms / 4 条 SQL | −30.9% / −99.4% |
+| `/data` 总量 | 318,896 KB | 311,288 KB | −2.4% |
+| 空闲态 WAL | 4,247,752 B | 160,712 B | −96.2% |
+
+完整 55 项键值对照见 [`docs/perf/compare.md`](perf/compare.md)，逐项优化清单与「考虑过但没做」
+的条目见 [`docs/perf/PERF-REPORT.md`](perf/PERF-REPORT.md)。
 
 ---
 

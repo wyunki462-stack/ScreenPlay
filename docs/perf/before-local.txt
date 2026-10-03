@@ -1,0 +1,18 @@
+# ScreenPlay 宿主侧性能基线 2026-10-03 00:10:13（优化前）
+
+## 产物体积
+web/dist               620K
+web/dist-desktop       616K
+backend/dist           1.4M
+node_modules           359M
+logs                   152K
+dist-image             0
+
+## web/dist 资产（原始 / gzip / brotli）
+index-CJuUCj0a.js                              552818  gzip   158675  br （无 brotli 工具）
+index-DJoGE4mB.css                              73622  gzip    12667  br （无 brotli 工具）
+
+## 计数
+web/dist 文件数     4
+node_modules 顶层条目 444
+仓库 tracked 文件数 286

@@ -6,6 +6,37 @@
 
 ---
 
+## [1.3.0] — 2026-10-03
+
+**Linux 端全量性能优化**：功能、交互、数据结构、HTTP 接口**一律未变**（同一套前端源码、同一套 DTO
+与状态码、同一份数据库 schema），改的只有运行内存、镜像/磁盘占用、依赖与缓存策略。
+逐项明细见 [`docs/perf/PERF-REPORT.md`](docs/perf/PERF-REPORT.md)，真机前后对照见
+[`docs/perf/compare.md`](docs/perf/compare.md)，自己复核的步骤见
+[`docs/perf/RUN-ON-HOST.md`](docs/perf/RUN-ON-HOST.md)。
+
+### 实测结果（真机容器对照：`1.2.0` → `1.3.0`）
+
+- **镜像**：解压后 386.8 → 322.1 MiB（**−16.7%**），层数 13 → 12。运行阶段不再带 npm/corepack/yarn
+  与旧 alpine rootfs；基础镜像与构建阶段对齐到 `alpine:3.24`（同一套 apk 仓库，`ffmpeg 8.1.2-r0`，
+  换基线的**包级等价性**已逐包核对，见报告 §3.1.2）。
+- **内存**：同样 60 次列表请求造成的内存增量 VmRSS **−65.7%**、cgroup **−58.8%**；`GET /api/games?limit=60`
+  的 SQL 从 **651 条降到 4 条**（−99.4%），响应字节完全不变（60 张卡片 / 34,100 B）。压测 3000 次请求
+  后 RSS 到平台、无句柄/连接泄漏。
+- **磁盘**：`/data` 总量 −2.4%；启动期 `wal_checkpoint(TRUNCATE)` 让空闲态 WAL 4.1 MiB → 157 KiB（−96.2%）；
+  启动维护清理过期缓存与衍生文件（本次 100 条缓存行 + 78 个陈旧文件），**上传的海报一张未动**。
+- **接口**：12 条热接口耗时均不高于优化前（`/api/games?limit=60` 13.9 → 9.6 ms，`/api/health` 4.1 → 1.7 ms）。
+- **静态资源**：前端产物预压缩（brotli/gzip）按 `Accept-Encoding`（含 q 值）协商下发，`Vary` 与 CORS
+  正确合并，仍带 `immutable`；首屏原始 354,585 B → br 89,431 B / gzip 103,800 B。
+- **日志**：两份 compose 补 `logging` 上限（`json-file`，3 × 10 MiB/容器），此前不轮转。
+- **依赖**：`npm audit` 无新增漏洞，未新增/未升级任何依赖；桌面端与后端行为不变。
+
+### 考虑过但没做（理由见报告 §七）
+
+- Node 堆参数：实测四个变体（`--max-old-space-size=256`、`--max-semi-space-size=8/32`）都不优于默认，不加。
+- 缩略图进一步压缩：已成 WebP q80 再无损重编码反而 **+308%**；降质量属有损，不做。
+- Docker 层合并的进一步动作、`PRAGMA optimize`/`synchronous=NORMAL`/`auto_vacuum`：已到收益边界或
+  有风险，保持现状。
+
 ## [1.2.0] — 2026-10-02
 
 新增 **Windows 桌面端**（Tauri v2 壳 + 内置后端的完整源码与构建方案）、**三端左上角品牌图标统一**、

@@ -74,7 +74,7 @@ async function stubStats() {
 
 /** Read the cache table straight from the SQLite file (WAL-aware). */
 function cacheRows() {
-  const db = new DatabaseSync(path.join(DATA, 'screenplay.db'));
+  const db = new DatabaseSync(path.join(DATA, 'screenplay.db'), { timeout: 5000 }); // busy 5s：测试进程也在写同一个库，避免与在跑的服务撞出 database is locked
   try {
     return db
       .prepare("SELECT key, provider, payload FROM metadata_cache WHERE provider = 'hltb'")
@@ -85,7 +85,7 @@ function cacheRows() {
 }
 
 function gameRow() {
-  const db = new DatabaseSync(path.join(DATA, 'screenplay.db'));
+  const db = new DatabaseSync(path.join(DATA, 'screenplay.db'), { timeout: 5000 });
   try {
     return db
       .prepare('SELECT id, name, main_story_hours, duration_source FROM games')

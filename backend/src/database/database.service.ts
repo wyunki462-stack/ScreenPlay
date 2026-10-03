@@ -13,10 +13,39 @@ import path from 'path';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 
+/** Size of a file, or 0 if it cannot be read (used only for the VACUUM log). */
+function fileSize(file: string): number {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
+}
+
+/** Human-readable byte count for the VACUUM log line. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+
 @Injectable()
 export class DatabaseService implements OnModuleInit {
   private readonly logger = new Logger(DatabaseService.name);
   private db!: Database.Database;
+  /**
+   * Compiled statements, keyed by SQL text.
+   *
+   * better-sqlite3 does not cache `prepare()` results, so every call used to
+   * recompile the same statement text — the gallery read path alone compiled a
+   * few hundred identical statements per request (and it is synchronous, so all
+   * of that happened on the request thread). The SQL is a fixed set written in
+   * this codebase, so the map stays small; the cap only exists so a future caller
+   * that builds SQL dynamically cannot grow it without bound.
+   */
+  private readonly statements = new Map<string, Database.Statement>();
+  private static readonly STATEMENT_CACHE_LIMIT = 512;
 
   constructor(private readonly config: ConfigService<AppConfig, true>) {}
 
@@ -31,8 +60,72 @@ export class DatabaseService implements OnModuleInit {
     // the DB, but API handlers and the scan worker may overlap).
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    // Deliberate values instead of whatever the linked SQLite build defaults to:
+    // wait for a concurrent writer rather than failing immediately, and keep
+    // temporary tables/sorters in memory. Neither changes what is stored.
+    // `synchronous` is deliberately left at the default FULL: relaxing it trades
+    // durability on power loss for speed, which this work is not allowed to do.
+    this.db.pragma('busy_timeout = 5000');
+    this.db.pragma('temp_store = MEMORY');
     this.migrate();
+    // Fold the write-ahead log back into the database file on boot instead of
+    // leaving a large `-wal` (and its pages) on the data volume until SQLite
+    // decides to checkpoint on its own.
+    //
+    // Best-effort, exactly like the optional VACUUM below: contention is reported
+    // in the pragma's result row (not as a throw), so anything that does throw is a
+    // real I/O problem — and this call is new, so it must not be the difference
+    // between a service that starts and one that does not. On failure the WAL just
+    // stays where it is and SQLite checkpoints it later, as it always did.
+    try {
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+    } catch (err) {
+      this.logger.warn(`WAL checkpoint on boot skipped: ${(err as Error).message}`);
+    }
+    this.vacuumIfRequested(dbPath);
     this.logger.log(`SQLite database ready at ${dbPath}`);
+  }
+
+  /**
+   * Optional one-shot `VACUUM` on boot (`MAINTENANCE_VACUUM=1`).
+   *
+   * Deleting rows frees pages *inside* the file but never gives the bytes back to
+   * the filesystem — the maintenance sweep removes expired cache rows and derived
+   * files, so a long-lived install only ever grows. `VACUUM` rewrites the file
+   * compactly and is the only way to reclaim that space.
+   *
+   * Off by default, because it rewrites the whole database and therefore blocks:
+   * on a large library that can take minutes, which is a cost only the operator
+   * should opt into. Nothing about the stored data changes — same tables, same
+   * rows, same schema, just re-packed into fewer pages.
+   *
+   * Runs before `listen()`, so no request can be in flight while the file is
+   * rewritten, and it can never take the service down: a failure (no space left,
+   * a lock held by another process) is logged as a warning and boot continues.
+   */
+  private vacuumIfRequested(dbPath: string): void {
+    const raw = (process.env.MAINTENANCE_VACUUM ?? '').trim().toLowerCase();
+    if (!(raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on')) return;
+    const before = fileSize(dbPath);
+    const startedAt = Date.now();
+    try {
+      this.db.exec('VACUUM');
+      // The rewrite goes through the WAL; fold it back in so the `-wal` on the
+      // data volume ends up small too, then measure what is actually on disk.
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+      // `VACUUM` moves pages, so drop cached statement handles and let the next
+      // caller re-prepare against the compacted file.
+      this.statements.clear();
+      const after = fileSize(dbPath);
+      this.logger.log(
+        `VACUUM finished in ${((Date.now() - startedAt) / 1000).toFixed(1)}s — ` +
+          `database ${formatBytes(before)} → ${formatBytes(after)} ` +
+          `(reclaimed ${formatBytes(before - after)}).`,
+      );
+    } catch (error) {
+      this.statements.clear();
+      this.logger.warn(`VACUUM skipped: ${(error as Error).message}`);
+    }
   }
 
   /** Raw handle for callers that need prepared statements. */
@@ -40,20 +133,37 @@ export class DatabaseService implements OnModuleInit {
     return this.db;
   }
 
+  /**
+   * A prepared statement for `sql`, reused across calls.
+   *
+   * SQLite re-prepares a statement automatically when the schema changes under
+   * it, so a cached handle stays valid after a migration.
+   */
+  private prepare(sql: string): Database.Statement {
+    const cached = this.statements.get(sql);
+    if (cached) return cached;
+    const statement = this.db.prepare(sql);
+    if (this.statements.size >= DatabaseService.STATEMENT_CACHE_LIMIT) {
+      this.statements.clear();
+    }
+    this.statements.set(sql, statement);
+    return statement;
+  }
+
   /** Run a parameterised statement and return the insertion id. */
   run(sql: string, params: unknown[] = []): { changes: number; lastInsertRowid: number | bigint } {
-    const info = this.db.prepare(sql).run(...params);
+    const info = this.prepare(sql).run(...params);
     return info;
   }
 
   /** Fetch a single row or undefined. */
   get<T = Record<string, unknown>>(sql: string, params: unknown[] = []): T | undefined {
-    return this.db.prepare(sql).get(...params) as T | undefined;
+    return this.prepare(sql).get(...params) as T | undefined;
   }
 
   /** Fetch all rows. */
   all<T = Record<string, unknown>>(sql: string, params: unknown[] = []): T[] {
-    return this.db.prepare(sql).all(...params) as T[];
+    return this.prepare(sql).all(...params) as T[];
   }
 
   /** Execute a single statement that may span many rows (transactions handled by caller). */

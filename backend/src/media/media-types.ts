@@ -48,7 +48,3 @@ export function supportedExtensions(): string[] {
   const exts = [...EXTENSIONS.keys()].map((e) => e.slice(1));
   return [...new Set(exts)];
 }
-
-export function isSupported(filePathOrName: string): boolean {
-  return resolveFormat(filePathOrName) != null;
-}

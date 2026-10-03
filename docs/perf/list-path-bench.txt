@@ -1,0 +1,58 @@
+# 列表接口（/api/games）新旧实现基准实测
+
+采集：2026-10-03 01:08:44
+命令：
+  node scripts/perf-bench/seed-bench-db.js
+  node scripts/perf-bench/bench-list-path.js
+  node --expose-gc scripts/perf-bench/bench-peak-memory.js old
+  node --expose-gc scripts/perf-bench/bench-peak-memory.js new
+
+数据集：500 局游戏（每行约 3KB 大 TEXT：summary/screenshots/voice_actors/prices）+ 1500 条 media
+驱动口径：宿主 node:sqlite shim（容器里是真 better-sqlite3）—— 绝对值不代表容器，两组同口径，比值可信
+
+## 单请求 SQL 条数 / 物化文本 / 耗时（5 次中位）
+
+```
+旧 SELECT * + 每行 COUNT: SQL 执行 501 条 | 读入 500 行 | 物化 TEXT 1,640,970 B (1.56 MiB) | 返回 50 条 | 中位耗时 10.6 ms
+新 17 列投影（默认排序）: SQL 执行 1 条 | 读入 500 行 | 物化 TEXT 109,170 B (0.10 MiB) | 返回 50 条 | 中位耗时 4.4 ms
+新 17 列投影（sort=mediaCount）: SQL 执行 501 条 | 读入 500 行 | 物化 TEXT 109,170 B (0.10 MiB) | 返回 50 条 | 中位耗时 7.9 ms
+
+SQL 条数 501 → 1（-99.8%）
+TEXT 物化 1,640,970 → 109,170 B（-93.3%）
+中位耗时 10.6 → 4.4 ms（-58.5%）
+行数（games）： 500  媒体： 1500
+```
+
+## 连续 200 次列表请求的进程峰值（VmHWM，分进程）
+
+```
+[old] 200 次列表：总耗时 1332 ms（6.66 ms/次）| VmHWM 202.2 MiB（起跑前 48.4 MiB）| heapUsed 61.7 MiB / rss 202.0 MiB
+[new] 200 次列表：总耗时 522 ms（2.61 ms/次）| VmHWM 95.8 MiB（起跑前 48.4 MiB）| heapUsed 26.4 MiB / rss 95.6 MiB
+```
+
+## 真实后端端点级计数（新 dist + 500 局种子库，HTTP 实测）
+
+采集：2026-10-03 01:14–01:16
+环境：`PORT=3401 DATA_DIR=/tmp/perf-e2e MEDIA_DIRS=/tmp/perf-bench-media AUTH_DISABLED=1
+MAINTENANCE_ON_BOOT=0 node /tmp/run-count.js`（run-count.js = better-sqlite3 shim 补丁 +
+在 `prepare()` 出来的 `get/all/run` 与 `exec` 上计数；SIGUSR2 时把「自上次 dump 以来」的次数
+写到 /tmp/sql-count.json，用于把一次请求的 SQL 精确隔出来）。
+数据：`BENCH_DB=/tmp/perf-e2e/screenplay.db BENCH_FOLDER_ROOT=/tmp/perf-bench-media node
+scripts/perf-bench/seed-bench-db.js`（500 局带 3KB 大 TEXT + 1500 条 media；目录真实存在，
+避免启动扫描删行）。
+
+单次 `GET /api/games?limit=60`（返回 50 卡 / 34,150 B）：
+
+```
+                games 投影  rating_targets  卡片海报  媒体计数   合计
+优化前（旧）           1            550        50        50    651
+优化后（批量评分）      1              1        50        50    102     −84%
+```
+
+* 旧实现的 550 = 排序阶段对全部 500 行各查一次 `rating_targets` + 出页的 50 行再各查一次；
+  新实现整表读一次（每局最多一行，表很小），排序与出页共用同一个 Map。
+* 响应字节数、条数（50）与请求耗时（0.010–0.016 s）前后一致（未插手工评分时两次都是 34,150 B；
+  插入两行手工评分后是 34,183 B，差值只来自新增的 `metacriticReleaseDate` 字段）；`game_posters`、`media COUNT(*)`
+  仍是每张出页卡片各一条（只为自己真正渲染的那一页付费，这是有意保留的）。
+* 手工评分优先级（批量路径）逐条核对：`Game 0` → 99 / source `metacritic`；
+  `Game 1` → 77 / source `metacritic-SWITCH`；无手工行的一律回落到 `ratings` 里的自动分。

@@ -85,7 +85,7 @@ info "代码：$(git -c safe.directory='*' log --oneline -1 2>/dev/null || echo 
 } >> "$LOG"
 
 # ---------------------------------------------------------------------------
-step 1/4 "环境预检"
+step 1/5 "环境预检"
 
 if ! docker info >/dev/null 2>&1; then
   bad "连不上 Docker daemon（当前用户不在 docker 组？）"
@@ -109,7 +109,7 @@ OLD_IMAGE="$(docker inspect -f '{{.Image}}' screenplay 2>/dev/null || echo '')"
 [ -n "$OLD_STARTED" ] && info "当前容器启动于：$OLD_STARTED" || info "当前没有名为 screenplay 的容器"
 
 # ---------------------------------------------------------------------------
-step 2/4 "重建镜像（docker-build.sh）"
+step 2/5 "重建镜像（docker-build.sh）"
 
 BUILD_ARGS=()
 [ "${NO_CACHE:-0}" = "1" ] && BUILD_ARGS+=(--no-cache)
@@ -123,7 +123,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step 3/4 "重建并重启容器（docker-deploy.sh）"
+step 3/5 "重建并重启容器（docker-deploy.sh）"
 
 # 必须 force-recreate：compose 里的 /media 映射改过（现在指向真实相册目录），
 # 只 restart 不会换挂载。
@@ -149,7 +149,7 @@ fi
 [ "${SKIP_VERIFY:-0}" = "1" ] && { printf '\n完成（SKIP_VERIFY=1，跳过体检）\n'; exit 0; }
 
 # ---------------------------------------------------------------------------
-step 4/4 "体检"
+step 4/5 "体检"
 
 # 等健康检查就绪（启动期修复是异步的，这里只等 HTTP 起来）
 info "等待 $BASE/api/health 就绪…"
@@ -193,34 +193,85 @@ else
   fi
 fi
 
-# 版本号：1.2.0 的 features 列表与 1.0.0 完全相同（本轮改动全在前端产物与桌面端，
-# 后端没有新增标记），所以「跑的是不是 1.2.0」只能看 version 字段，标记查不出来。
+# 版本号：1.2.0 起 features 标记就不随版本变了（1.3.0 的性能优化全在内部实现与构建配置，
+# 后端没有新增标记），所以「跑的是不是这一版」只能看 version 字段，标记查不出来。
 VERSION_OUT="$(printf '%s' "$HEALTH" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
 if [ -n "$VERSION_OUT" ]; then
-  if [ "$VERSION_OUT" = "1.2.0" ]; then
+  if [ "$VERSION_OUT" = "1.3.0" ]; then
     ok "版本号：$VERSION_OUT"
   else
-    info "版本号是 $VERSION_OUT（期望 1.2.0）—— 若这是旧镜像请重建；若你刻意跑的是别的版本可忽略"
+    info "版本号是 $VERSION_OUT（期望 1.3.0）—— 若这是旧镜像请重建；若你刻意跑的是别的版本可忽略"
   fi
 else
   info "读不到 version 字段（health 返回异常？）"
 fi
 
-# 启动期清理的证据。旧规则已经写进库的相册帧要在这里被摘出去。
-printf '\n  \033[1m启动期修复日志：\033[0m\n'
-MAINT="$(docker compose logs screenplay 2>/dev/null | grep -E "cover rotation repaired|auto-added album frames removed|Boot maintenance" | tail -5)"
+# 启动期维护的证据：旧规则已经写进库的相册帧要在这里被摘出去，本轮还加了缓存/垃圾文件回收。
+#
+# 1.2.0 的实际措辞（`backend/src/maintenance/maintenance.service.ts:164-175`）：
+#   有活干活时 —— `Boot maintenance finished in Xs — auto-added frames removed from the card
+#   rotation: N; completion-time backfill …; caches reclaimed: R expired cache row(s), F stale file(s) (B).`
+#   无事可做时 —— `Boot maintenance finished in Xs — nothing to repair.`
+# 这里按实际措辞断言（旧的 `cover rotation repaired` / `auto-added album frames removed` 已不存在，
+# 照旧写只会每次都误报「只看到旧措辞」）。
+printf '\n  \033[1m启动期维护日志：\033[0m\n'
+MAINT="$(docker compose logs screenplay 2>/dev/null | grep -E 'Boot maintenance|auto-added frames removed from the card rotation|caches reclaimed|poster rotation topped up' | tail -5)"
 if [ -n "$MAINT" ]; then
   printf '%s\n' "$MAINT" | sed 's/^/    /'
-  if printf '%s' "$MAINT" | grep -q "cover rotation repaired"; then
-    ok "启动期修复用的是新措辞（cover rotation repaired），不是旧的 topped up"
-    PURGED="$(printf '%s' "$MAINT" | grep -oE 'auto-added album frames removed: [0-9]+' | grep -oE '[0-9]+' | tail -1)"
+  if printf '%s' "$MAINT" | grep -q 'auto-added frames removed from the card rotation'; then
+    ok "启动期清理用的是新措辞（auto-added frames removed from the card rotation），不是旧的 topped up"
+    PURGED="$(printf '%s' "$MAINT" | grep -oE 'auto-added frames removed from the card rotation: [0-9]+' | grep -oE '[0-9]+' | tail -1)"
     [ -n "$PURGED" ] && info "已从轮播里摘出的旧规则自动补帧：$PURGED 张"
+    RECLAIM="$(printf '%s' "$MAINT" | grep -oE 'caches reclaimed: [0-9]+ expired cache row\(s\), [0-9]+ stale file\(s\)' | tail -1)"
+    [ -n "$RECLAIM" ] && ok "缓存回收（本轮新增）：$RECLAIM"
+  elif printf '%s' "$MAINT" | grep -q 'nothing to repair'; then
+    info "本次启动没有需要修复的行（nothing to repair）—— 正常：库里状态本来就干净"
   else
     warn "只看到旧措辞（poster rotation topped up）—— 可能是重启前的历史日志"
   fi
 else
-  warn "没找到启动期修复日志（MAINTENANCE_ON_BOOT=0？或日志已被轮转）"
+  info "没找到启动期维护日志（MAINTENANCE_ON_BOOT=0？或日志已被轮转，可 docker compose logs screenplay | tail）"
 fi
+
+# 前端产物投递：本轮性能优化把「运行期现压」换成了「构建期预压缩 + 长缓存」。
+# 这里断言的是**投递行为**（有没有 Content-Encoding / 缓存头对不对），不是体积数字 ——
+# 体积数字看 docs/perf/after-docker.txt。
+step 5/5 "前端产物投递（预压缩 + 静态长缓存）"
+
+HTML_BODY="$(curl -s -m 10 "$BASE/" 2>/dev/null)"
+ENTRY_JS="$(printf '%s' "$HTML_BODY" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)"
+
+if [ -z "$ENTRY_JS" ]; then
+  warn "没从首页 HTML 里找到 /assets/index-*.js —— 跳过投递检查"
+else
+  info "首屏 entry：$ENTRY_JS"
+  HDR="$(curl -s -o /dev/null -D - -m 10 -H 'Accept-Encoding: gzip' "$BASE$ENTRY_JS" 2>/dev/null)"
+  CE="$(printf '%s' "$HDR" | grep -i '^content-encoding:' | tr -d '\r' | awk '{print $2}')"
+  CL="$(printf '%s' "$HDR" | grep -i '^content-length:' | tr -d '\r' | awk '{print $2}')"
+  CC="$(printf '%s' "$HDR" | grep -i '^cache-control:' | tr -d '\r' | cut -d' ' -f2-)"
+  RAW="$(curl -s -o /dev/null -w '%{size_download}' -m 10 "$BASE$ENTRY_JS" 2>/dev/null)"
+
+  case "$CE" in
+    br|gzip) ok "预压缩生效：Content-Encoding: $CE，传输 ${CL:-?} 字节（未压缩 ${RAW:-?} 字节）" ;;
+    "")      warn "没有 Content-Encoding —— 镜像里可能没有 .br/.gz（构建期预压缩没跑？）" ;;
+    *)       info "Content-Encoding: $CE" ;;
+  esac
+  case "$CC" in
+    *immutable*) ok "entry 缓存头：$CC" ;;
+    "")          warn "读不到 entry 的 Cache-Control（静态中间件没生效？）" ;;
+    *)           warn "entry 缓存头不是 immutable：$CC" ;;
+  esac
+  if [ -n "$CL" ] && [ -n "$RAW" ] && [ "$RAW" -gt "$CL" ] 2>/dev/null; then
+    ok "不压缩回落正确：无 Accept-Encoding 时返回 $RAW 字节"
+  fi
+fi
+
+HTML_CC="$(curl -s -o /dev/null -D - -m 10 "$BASE/" 2>/dev/null | grep -i '^cache-control:' | tr -d '\r' | cut -d' ' -f2-)"
+case "$HTML_CC" in
+  *no-cache*) ok "index.html 缓存头：$HTML_CC（重新部署后能拿到新版本）" ;;
+  "")         warn "读不到 index.html 的 Cache-Control" ;;
+  *)          warn "index.html 缓存头应为 no-cache，实际：$HTML_CC" ;;
+esac
 
 printf '\n\033[1m完成。\033[0m完整日志：%s\n' "$LOG"
 printf '有问题把上面这段（或日志文件）贴出来即可。\n\n'
