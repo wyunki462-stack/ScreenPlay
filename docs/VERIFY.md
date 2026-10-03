@@ -27,7 +27,7 @@ node backend/scripts/verify/android-auth-bearer.mjs      # 会话端点接受 Au
 node backend/scripts/verify/sqlite-vacuum.mjs            # 可选启动期 VACUUM（12 项；默认关，MAINTENANCE_VACUUM=1 才走）
 node scripts/verify-docker-layers.mjs                    # Dockerfile 分层自查（33 项；纯静态解析，不需要 docker）
 
-# 或者一键跑完上面 A 段全部（2 个类型检查 + 12 套件 + 产物自查 + Dockerfile 分层自查）
+# 或者一键跑完上面 A 段全部（2 个类型检查 + 14 套件 + 产物自查 + Dockerfile 分层自查）
 bash scripts/verify-suites.sh                            # 可选：bash scripts/verify-suites.sh 输出文件.txt
 
 # C. Windows 桌面端产物自检（不需要 Rust；先准备产物）
@@ -81,6 +81,9 @@ cd web && npx tsc --noEmit                           # 前端类型检查：无�
 二次删除 404 / 列表与 `mediaCount` 一致 / `game_posters` 悬挂引用清理 / `AUTH_DISABLED=1` 免凭证 200。
 `android-auth-bearer.mjs` 覆盖：Bearer-only（不带 Cookie）时 `/api/auth/session`、`/logout`、
 `/password` 均正确识别，且 Cookie 路径回归通过。
+
+整仓离线全量回归：`bash scripts/verify-suites.sh` ⇒ **18 项通过 / 0 项失败（508 条断言，211 s）**
+——本轮已把上面两个新套件加进 `scripts/verify-suites.sh` 的套件清单（原 16 项 → 18 项）。
 
 ### 构建复核（NAS 上实测）
 

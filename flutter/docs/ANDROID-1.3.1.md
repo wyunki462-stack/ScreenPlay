@@ -27,7 +27,7 @@
 
 | 交付物 | 位置 |
 | --- | --- |
-| 安卓安装包 | `flutter/build/app/outputs/flutter-apk/app-release-arm64-v8a.apk`（主推）、`app-release-armeabi-v7a.apk`、`app-release-x86_64.apk`（`--split-per-abi` 三个 ABI 分包） |
+| 安卓安装包 | `flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk` 21,240,968 B（主推，现代手机）、`app-armeabi-v7a-release.apk` 18,797,918 B（老设备）、`app-x86_64-release.apk` 22,359,823 B（模拟器）；`--split-per-abi` 三个 ABI 分包，另有同内容便利副本在 `flutter/dist/`（已被 `.gitignore` 忽略，不入库） |
 | 客户端源码 | `flutter/lib/**`（20 个 Dart 文件）、`flutter/android/**`（清单、Gradle 三件套、wrapper） |
 | 后端源码 | `backend/src/media/media.controller.ts`、`backend/src/media/media.service.ts`、`backend/src/auth/auth.controller.ts` |
 | 验证脚本 | `backend/scripts/verify/media-delete-e2e.mjs`（22 项断言）、`backend/scripts/verify/android-auth-bearer.mjs`（19 项断言） |

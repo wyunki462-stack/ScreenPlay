@@ -41,6 +41,8 @@ HTTP 接口只增不改、DTO 与状态码未动、数据库结构零改动（�
 - `node backend/scripts/verify/android-auth-bearer.mjs`：**19 项通过 / 0 失败**（Bearer-only 的
   `session` / `logout` / `password`，Cookie 路径回归）。
 - `npm --prefix backend run build`、`npx tsc --noEmit`：EXIT 0。
+- 整仓离线全量回归 `bash scripts/verify-suites.sh`（已把上面两个新套件加进套件清单，16 项 → 18 项）：
+  **18 项通过 / 0 项失败 / 508 条断言 / 211 s**。
 - 安卓包：`cd flutter && flutter build apk --release --split-per-abi` 成功，产出三个 ABI 分包：
   `app-arm64-v8a-release.apk` 21,240,968 B / `app-armeabi-v7a-release.apk` 18,797,918 B /
   `app-x86_64-release.apk` 22,359,823 B（`release` 用 debug keystore 签名，可侧载、不适用于上架）。
