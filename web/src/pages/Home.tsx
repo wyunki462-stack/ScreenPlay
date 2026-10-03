@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowUp,
@@ -116,6 +117,7 @@ export default function Home() {
     setGalleryQuery({ search: debouncedSearch, platform, sort, order, minScore });
   }, [debouncedSearch, platform, sort, order, minScore]);
 
+  const queryClient = useQueryClient();
   const reorder = useReorderGames();
   const resetOrder = useResetGameOrder();
   const customMode = sort === "custom";
@@ -163,6 +165,11 @@ export default function Home() {
     const below = next[at + 1] ?? null; // neighbour that ends up after it
 
     setPendingOrder(next.map((g) => g.id));
+    // Persist into the query cache as well. The optimistic mirror above is
+    // dropped the moment the request settles, so without this the grid would
+    // flash the pre-drop order until the agreeing refetch lands — on a slow
+    // round trip that reads as "the drag did not stick".
+    queryClient.setQueryData<GameSummary[]>(["games", filters], next);
     dropTargetRef.current = null;
     setDragId(null);
     setDropTarget(null);
@@ -285,7 +292,27 @@ export default function Home() {
               </Button>
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {reorder.isError && (
+            <div className="mb-3 rounded-lg border border-rose-900/50 bg-rose-950/30 px-4 py-2 text-sm text-rose-300">
+              {t("home.custom.saveFailed")}
+            </div>
+          )}
+          <div
+            className={`grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 ${
+              customMode ? "select-none" : ""
+            }`}
+            // Accept a drop anywhere inside the grid, not only on a card: without
+            // this the cursor turns into 「禁止」 in the gutters and the gesture
+            // feels dead at the edges. `preventDefault` is what arms onDrop.
+            onDragOver={
+              customMode
+                ? (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                  }
+                : undefined
+            }
+          >
             {orderedGames.map((game) => (
               <GameCard
                 key={game.id}

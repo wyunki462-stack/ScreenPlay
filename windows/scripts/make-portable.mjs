@@ -164,8 +164,10 @@ function main() {
   console.log(`  dist        : ${DIST}`);
   console.log('='.repeat(72));
 
-  const rootPkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
-  const version = rootPkg.version || '0.0.0';
+  // 与 prepare-backend 同规则：包名取 Windows 版号（windows/package.json），
+  // 该文件承载 1.3.1 这类「只有 Windows 端」的版本。
+  const winPkg = JSON.parse(fs.readFileSync(path.join(WIN_DIR, 'package.json'), 'utf8'));
+  const version = winPkg.version || '0.0.0';
 
   fs.mkdirSync(DIST, { recursive: true });
   // 本机 NAS：新建文件会继承所在目录的权限位，dist 目录权限为 0 时 zip 产物也会是 0

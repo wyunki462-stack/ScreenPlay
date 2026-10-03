@@ -8,6 +8,11 @@ export const mediaZh: Record<string, string> = {
   "media.sort.size": "按大小（大→小）",
   "media.count": "{n} 个媒体",
   "media.empty": "暂无媒体文件，点击右上角「刷新元数据」或返回图库「重新扫描」",
+  // 相册空态：这个文件夹里确实一张图都没有。与上面那条「可恢复」的提示区分开，
+  // 这条是终结答案，不该再劝用户去刷新元数据。
+  "media.emptyFolder": "暂无图片",
+  // 图库卡片上的空文件夹角标（「暂无图片」四个字放不进角标，用短标）。
+  "media.emptyBadge": "空",
 
   // Media grid — tile badges and lightbox toolbar.
   "media.badge.video": "视频",

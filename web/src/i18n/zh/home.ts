@@ -41,4 +41,5 @@ export const homeZh: Record<string, string> = {
   "home.sort.custom": "自定义排序",
   "home.custom.hint": "按住卡片拖到目标位置即可调整顺序，顺序会自动保存",
   "home.custom.reset": "恢复默认顺序",
+  "home.custom.saveFailed": "排序保存失败，已恢复原顺序",
 };

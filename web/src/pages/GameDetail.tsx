@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -43,6 +44,7 @@ import type {
   AchievementTier,
   AchievementsResponse,
   GameDetail as GameDetailType,
+  GameSummary,
   Price,
   Rating,
   TimelineEvent,
@@ -95,7 +97,9 @@ const timelineLabels: Record<TimelineType, string> = {
  * auto-rotating. The 「编辑海报」 ticks and `posterMode` do not reach either of
  * them — they belong to the homepage card slideshow.
  */
-function detailPosters(game: GameDetailType): string[] {
+function detailPosters(
+  game: GameSummary & Partial<Pick<GameDetailType, "posterList" | "screenshots">>,
+): string[] {
   const selected = (game.posterList ?? []).filter((p) => p.isSelected).map((p) => p.url);
   const rest = (game.posterList ?? []).map((p) => p.url);
   const list = [
@@ -106,6 +110,27 @@ function detailPosters(game: GameDetailType): string[] {
     ...(game.screenshots ?? []),
   ].filter((u): u is string => typeof u === "string" && u.length > 0);
   return [...new Set(list)];
+}
+
+/**
+ * 渐进渲染的兜底：从图库列表缓存里取这个游戏的 `GameSummary`。
+ *
+ * 为什么需要它：`useGame` 对应的 `GET /api/games/:id` 首访会在后端请求线程里
+ * await 一整轮外网元数据刮削（rawg/steam/metacritic/igdb/hltb 并发），冷刮削墙钟
+ * 可达数十秒。后端不允许改，所以前端不能让整页骨架等它 —— 列表接口已经带回了
+ * 封面与基础信息（name/folderPath/mediaCount/posters/…），先用它把首屏画出来，
+ * 详情独有的字段等 `gameQuery` 回来再补（见下面各区块的降级渲染）。
+ *
+ * 列表查询的 key 是 `["games", filters]`（web/src/api/hooks.ts:55），前缀匹配即可
+ * 覆盖所有筛选组合；渲染期直接调用，查询数量很少，不值得 memo。
+ */
+function findCachedSummary(queryClient: QueryClient, id: string | undefined): GameSummary | undefined {
+  if (!id) return undefined;
+  for (const [, data] of queryClient.getQueriesData<GameSummary[]>({ queryKey: ["games"] })) {
+    const hit = data?.find((g) => g.id === id);
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 const scoreTextColor: Record<MetacriticTone, string> = {
@@ -598,10 +623,41 @@ function DetailSkeleton() {
   );
 }
 
+/**
+ * 详情独有字段（简介 / 开发商 / 发行商 / 发售日 / 时长 / 价格）的占位。
+ *
+ * 这些字段只有 `GET /api/games/:id` 才有，在它回来之前用骨架顶住 —— 既不是错误，
+ * 也不能挡住上面已经能看的基础信息。
+ */
+function MetaPending() {
+  return (
+    <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="space-y-2">
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="h-4 w-32" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 「时间线 / 评分」这类只有详情才有的标签页内容的占位。 */
+function TabPending() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-16 w-full" />
+      <Skeleton className="h-16 w-full" />
+      <Skeleton className="h-16 w-full" />
+    </div>
+  );
+}
+
 export default function GameDetail() {
   const t = useT();
   const { id } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const gameQuery = useGame(id);
   const mediaQuery = useGameMedia(id);
   const refresh = useRefreshGame(id ?? "");
@@ -610,8 +666,15 @@ export default function GameDetail() {
   const [ratingOpen, setRatingOpen] = useState(false);
   const [posterOpen, setPosterOpen] = useState(false);
   const [platformOpen, setPlatformOpen] = useState(false);
+  // prev/next 只服务标题上方那两个按钮，延后到浏览器空闲再发请求（见下面的 effect）。
+  const [neighborsReady, setNeighborsReady] = useState(false);
 
-  const game = gameQuery.data;
+  /**
+   * `detail` 是完整详情（可能要等数十秒），`game` 是「现在能拿到的最好的那一条」：
+   * 有列表缓存兜底就先渲染它，页面不再是白屏，只有详情独有的字段走占位。
+   */
+  const detail = gameQuery.data;
+  const game = detail ?? findCachedSummary(queryClient, id);
 
   /**
    * Always start at the top.
@@ -625,6 +688,26 @@ export default function GameDetail() {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [id]);
 
+  /**
+   * 首屏只该等基础信息：prev/next 的邻居请求延后到浏览器空闲再发（1.5s 兜底，
+   * 老浏览器没有 requestIdleCallback 时退回 setTimeout）。切游戏时重置重排。
+   */
+  useEffect(() => {
+    setNeighborsReady(false);
+    let idle: number | undefined;
+    let timer: number | undefined;
+    const enable = () => setNeighborsReady(true);
+    if (typeof window.requestIdleCallback === "function") {
+      idle = window.requestIdleCallback(enable, { timeout: 1500 });
+    } else {
+      timer = window.setTimeout(enable, 1500);
+    }
+    return () => {
+      if (idle !== undefined) window.cancelIdleCallback(idle);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [id]);
+
   // Previous/next follow the gallery's own filters and sort mode.
   const galleryQuery = useGalleryQuery();
   const neighborsQuery = useGameNeighbors(id, {
@@ -633,7 +716,7 @@ export default function GameDetail() {
     minScore: galleryQuery.minScore ? Number(galleryQuery.minScore) : undefined,
     sort: galleryQuery.sort,
     order: galleryQuery.order,
-  });
+  }, { enabled: neighborsReady });
   const neighbors = neighborsQuery.data;
 
   /** Switch games while keeping the detail page's own state from leaking over. */
@@ -669,32 +752,32 @@ export default function GameDetail() {
    * 保证大图区不空白。
    */
   const heroPosters = useMemo(() => {
-    if (!game) return [];
-    const official = (game.posterList ?? []).filter((p) => p.source !== "media");
+    // 官方海报集合（`posterList`）只有详情才有；还在等它时大图区渲染骨架（见下面）。
+    if (!detail) return [];
+    const official = (detail.posterList ?? []).filter((p) => p.source !== "media");
     const selected = official.filter((p) => p.isSelected).map((p) => p.url);
     const rest = official.filter((p) => !p.isSelected).map((p) => p.url);
 
     // 官方集合为空（老数据 / 全是相册截图）时才用回退集合。
     const fallback = [
-      ...(game.posterUrl ? [game.posterUrl] : []),
-      ...(game.screenshots ?? []),
+      ...(detail.posterUrl ? [detail.posterUrl] : []),
+      ...(detail.screenshots ?? []),
     ];
     const source = official.length > 0 ? [...selected, ...rest] : fallback;
     return [...new Set(source)].filter((u): u is string => typeof u === "string" && u.length > 0);
-  }, [game]);
+  }, [detail]);
 
-  if (gameQuery.isLoading) {
-    return <DetailSkeleton />;
-  }
-
-  if (gameQuery.isError || !game) {
-    return (
+  // 渐进渲染：只有「既没有详情、也没有列表缓存」时才退化成整页骨架 / 整页报错。
+  if (!game) {
+    return gameQuery.isError ? (
       <div className="flex flex-col items-center gap-3 rounded-xl border border-rose-900/50 bg-rose-950/30 p-16 text-center">
         <p className="text-sm text-rose-300">{t("detail.loadFailed")}</p>
         <Button variant="outline" onClick={() => gameQuery.refetch()}>
           {t("action.retry")}
         </Button>
       </div>
+    ) : (
+      <DetailSkeleton />
     );
   }
 
@@ -703,6 +786,17 @@ export default function GameDetail() {
       <Link to="/" className="inline-flex items-center gap-1.5 text-sm text-zinc-400 transition-colors hover:text-white">
         <ArrowLeft className="h-4 w-4" /> {t("detail.backToGallery")}
       </Link>
+
+      {/* 有列表缓存兜底但详情请求失败：页面照常可用，只在顶部给一条可重试的提示，
+          不再把整个页面打成错误页。 */}
+      {gameQuery.isError && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-900/50 bg-rose-950/30 px-4 py-2 text-sm text-rose-300">
+          <span>{t("detail.loadFailed")}</span>
+          <Button variant="outline" size="sm" onClick={() => gameQuery.refetch()}>
+            {t("action.retry")}
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardContent className="flex flex-col gap-5 p-5 sm:flex-row">
@@ -720,14 +814,17 @@ export default function GameDetail() {
                   name={game.name}
                 />
               </div>
-              {/* Feature 4: custom poster entry point on the poster area. */}
-              <button
-                onClick={() => setPosterOpen(true)}
-                className="absolute inset-x-1 bottom-1 flex items-center justify-center gap-1.5 rounded-md bg-black/75 py-1.5 text-xs font-medium text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 focus:opacity-100"
-              >
-                <ImagePlus className="h-3.5 w-3.5" />
-                {t("detail.editPoster")}
-              </button>
+              {/* Feature 4: custom poster entry point on the poster area.
+                  「编辑海报」要读写完整的海报列表（只有详情接口才有），等详情回来再出现。 */}
+              {detail && (
+                <button
+                  onClick={() => setPosterOpen(true)}
+                  className="absolute inset-x-1 bottom-1 flex items-center justify-center gap-1.5 rounded-md bg-black/75 py-1.5 text-xs font-medium text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 focus:opacity-100"
+                >
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  {t("detail.editPoster")}
+                </button>
+              )}
             </div>
           </div>
           <div className="min-w-0 flex-1 space-y-4">
@@ -764,11 +861,19 @@ export default function GameDetail() {
                       {t("detail.nav.position", { index: neighbors.index + 1, total: neighbors.total })}
                     </span>
                   )}
-                  {neighborsQuery.isLoading && (
+                  {(neighborsQuery.isLoading || (!neighbors && !neighborsReady)) && (
                     <span className="text-xs text-zinc-600">{t("detail.nav.loading")}</span>
                   )}
                 </div>
                 <h1 className="text-2xl font-bold text-white">{game.name}</h1>
+                {/* 渐进渲染的轻量提示：标题区已经能用了，只有详情字段还在后台补全。
+                    不用整页遮罩 —— 用户现在就能读标题、平台、评分、相册。 */}
+                {gameQuery.isLoading && (
+                  <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-zinc-500">
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    {t("detail.metaPending")}
+                  </p>
+                )}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   {/* Feature 6: every user-set platform tag. */}
                   {platformTags(game).map((p) => (
@@ -802,9 +907,12 @@ export default function GameDetail() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={() => setPlatformOpen(true)}>
-                  <Gamepad2 className="h-4 w-4" /> {t("detail.platformSettings")}
-                </Button>
+                {/* 「平台设置」改的是详情里的 knownPlatforms / 已选平台，等详情回来再出现。 */}
+                {detail && (
+                  <Button variant="outline" onClick={() => setPlatformOpen(true)}>
+                    <Gamepad2 className="h-4 w-4" /> {t("detail.platformSettings")}
+                  </Button>
+                )}
                 <Button variant="outline" onClick={() => setMatchOpen(true)}>
                   <Search className="h-4 w-4" /> {t("detail.matchManually")}
                 </Button>
@@ -819,33 +927,40 @@ export default function GameDetail() {
               <div className="rounded-lg border border-rose-900/50 bg-rose-950/30 px-4 py-2 text-sm text-rose-300">{t("detail.refreshFailed")}</div>
             )}
 
-            {game.summary && <p className="text-sm leading-relaxed text-zinc-300">{game.summary}</p>}
+            {detail ? (
+              <>
+                {detail.summary && <p className="text-sm leading-relaxed text-zinc-300">{detail.summary}</p>}
 
-            <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
-              <InfoItem icon={<Building2 className="h-4 w-4" />} label={t("detail.developer")}>
-                {game.developers.length > 0 ? game.developers.join(t("detail.listSeparator")) : t("state.unknown")}
-              </InfoItem>
-              <InfoItem icon={<Users className="h-4 w-4" />} label={t("detail.publisher")}>
-                {game.publishers.length > 0 ? game.publishers.join(t("detail.listSeparator")) : t("state.unknown")}
-              </InfoItem>
-              <InfoItem icon={<Calendar className="h-4 w-4" />} label={t("detail.releaseDate")}>
-                {formatDate(game.releaseDate, t)}
-              </InfoItem>
-              <InfoItem icon={<Timer className="h-4 w-4" />} label={t("detail.playtime")}>
-                {formatHltb(game, t)}
-              </InfoItem>
-              <InfoItem icon={<Tag className="h-4 w-4" />} label={t("detail.price")}>
-                {game.prices.length > 0
-                  ? game.prices.map((p) => formatPrice(p, t)).join(t("detail.priceSeparator"))
-                  : t("state.unknown")}
-              </InfoItem>
-            </div>
+                <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+                  <InfoItem icon={<Building2 className="h-4 w-4" />} label={t("detail.developer")}>
+                    {detail.developers.length > 0 ? detail.developers.join(t("detail.listSeparator")) : t("state.unknown")}
+                  </InfoItem>
+                  <InfoItem icon={<Users className="h-4 w-4" />} label={t("detail.publisher")}>
+                    {detail.publishers.length > 0 ? detail.publishers.join(t("detail.listSeparator")) : t("state.unknown")}
+                  </InfoItem>
+                  <InfoItem icon={<Calendar className="h-4 w-4" />} label={t("detail.releaseDate")}>
+                    {formatDate(detail.releaseDate, t)}
+                  </InfoItem>
+                  <InfoItem icon={<Timer className="h-4 w-4" />} label={t("detail.playtime")}>
+                    {formatHltb(detail, t)}
+                  </InfoItem>
+                  <InfoItem icon={<Tag className="h-4 w-4" />} label={t("detail.price")}>
+                    {detail.prices.length > 0
+                      ? detail.prices.map((p) => formatPrice(p, t)).join(t("detail.priceSeparator"))
+                      : t("state.unknown")}
+                  </InfoItem>
+                </div>
+              </>
+            ) : (
+              <MetaPending />
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {/* 详情页大图：全部官方海报，恒定自动轮播、箭头常驻，无 mode 可配。 */}
-      <HeroPosterCarousel images={heroPosters} alt={game.name} />
+      {/* 详情页大图：全部官方海报，恒定自动轮播、箭头常驻，无 mode 可配。
+          官方海报集合只有详情接口才有，还在等它时用同样 16:9 比例的骨架占位。 */}
+      {detail ? <HeroPosterCarousel images={heroPosters} alt={game.name} /> : <Skeleton className="aspect-video w-full" />}
 
       <Card>
         <CardHeader>
@@ -853,9 +968,16 @@ export default function GameDetail() {
         </CardHeader>
         <CardContent className="py-4">
           {tab === "media" && (
-            mediaQuery.isLoading ? (
+            // 空文件夹零请求判空：`mediaCount === 0` 说明这个游戏本来就没有媒体，没必要
+            // 等查询回来 —— 直接给「暂无图片」。这是修复 B 的前端落点（后端
+            // `GET /api/games/:id/media` 没有 limit/offset、忽略一切查询参数，做不了
+            // 服务端判空，也不许改）。
+            // 有媒体时仍走原来的骨架（10 个占位对齐下面 MediaGrid 的 2/3/4 列栅格）。
+            mediaQuery.data == null && game.mediaCount === 0 ? (
+              <MediaGrid media={[]} />
+            ) : mediaQuery.isLoading ? (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                {Array.from({ length: 8 }).map((_, i) => (
+                {Array.from({ length: 10 }).map((_, i) => (
                   <Skeleton key={i} className="aspect-video" />
                 ))}
               </div>
@@ -866,30 +988,32 @@ export default function GameDetail() {
             )
           )}
 
-          {tab === "timeline" && <Timeline events={game.timeline} />}
+          {tab === "timeline" && (detail ? <Timeline events={detail.timeline} /> : <TabPending />)}
 
           {tab === "achievements" && <AchievementsPanel gameId={id} gameName={game.name} />}
 
-{tab === "ratings" && (
+          {tab === "ratings" && (
             <div className="space-y-6">
-              <RatingsPanel ratings={game.ratings} />
+              {detail ? <RatingsPanel ratings={detail.ratings} /> : <TabPending />}
               {/* 需求：媒体评价标签页展示 媒体名称 / 媒体打分 / 媒体评价原文 */}
               <MediaReviewsPanel
                 gameId={game.id}
-                fallbackReviews={game.mediaReviews}
-                fallbackSummary={game.mediaReviewsSummary}
+                fallbackReviews={detail?.mediaReviews}
+                fallbackSummary={detail?.mediaReviewsSummary}
               />
             </div>
           )}
         </CardContent>
       </Card>
 
-      {posterOpen && (
-        <PosterDialog game={game} onClose={() => setPosterOpen(false)} />
+      {/* 两个对话框都要求完整详情（海报列表 / 平台字段），详情没回来就不挂载；
+          「手动匹配」「评分来源」只需要 id/name/folderPath，列表缓存就够，保持可用。 */}
+      {posterOpen && detail && (
+        <PosterDialog game={detail} onClose={() => setPosterOpen(false)} />
       )}
 
-      {platformOpen && (
-        <PlatformDialog game={game} onClose={() => setPlatformOpen(false)} />
+      {platformOpen && detail && (
+        <PlatformDialog game={detail} onClose={() => setPlatformOpen(false)} />
       )}
 
       {ratingOpen && (

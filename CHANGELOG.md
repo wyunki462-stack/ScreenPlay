@@ -6,6 +6,49 @@
 
 ---
 
+## [1.3.1] — 2026-10-03
+
+**仅 Windows 端修复，Linux 版本无变更。** 桌面端版号 `1.3.0` → `1.3.1`，Linux 服务端、Docker 镜像、
+构建脚本与后端代码**一行未动**（`/api/health` 在 Linux 端仍是 `1.3.0`，`backend` / `web` 的版号也保持
+`1.3.0`）。桌面端自本版起有**独立版号线**（`windows/package.json` + `Cargo.toml` + `tauri.conf.json`
+三处同步，见 [`README.md`](README.md)「桌面端版号线」），这样「只修 Windows 端」的小版本不会牵动
+Linux 端版号。HTTP 接口、数据库结构、DTO 与三端功能一致性均未变；三处修复都在共享前端源码里
+（Web / Linux 重新构建时会一并带上），但**本版不重发** Linux 镜像。
+
+### 修复
+
+1. **图库「自定义排序」拖不动（Windows 桌面端）**：根因是 Tauri v2 窗口默认开启「内部拖放接管」
+   （`dragDropEnabled` 默认 `true`，外壳会替换 WebView2 的 drop handler），页面里的标准 HTML5 拖放
+   事件收不到 ⇒ 浏览器里正常、只有桌面端拖不动。`windows/src-tauri/tauri.conf.json` 显式关闭接管后
+   拖拽恢复；同时 `web/src/pages/Home.tsx` 在 `PUT /games/order` 发出后把新顺序**直接写进**
+   `["games", filters]` 缓存（否则请求 settle 时会清掉乐观顺序、在列表刷新落地前闪回旧顺序，
+   看起来像「拖了没生效」），并在落库失败时给出提示条；拖拽占位符与插入指示线保持原样。
+   细节与源码锚点见 [`windows/docs/PARITY.md`](windows/docs/PARITY.md) §3 ⑧。
+2. **游戏详情页加载过慢**：详情页不再**整页**等 `GET /api/games/:id` —— 先用图库列表缓存立刻画出封面与
+   基础信息（标题区显示「元数据补全中…」），只有详情才有的区块（时间线 / 评分 / 媒体评价 / 成就）
+   各自在数据到位前显示骨架屏，相册 tab 只依赖它自己的查询、可先行渲染；
+   `GET /api/games/:id/neighbors` 延后到浏览器空闲时（`requestIdleCallback`，带超时兜底）再发；
+   相册卡片改用仓库自带的 `LazyImage` 按需加载、大图查看器按需挂载；详情相关查询缓存延长
+   （`staleTime` 5 分钟 / `gcTime` 30 分钟），缩略图与封面继续吃后端已有的
+   `Cache-Control: public, max-age=2592000, immutable` ⇒ 二次进入同一详情页不再重复发起请求。
+3. **空相册文件夹点进去也长时间等待**：空文件夹在这套代码里就是一张 `mediaCount = 0` 的游戏卡
+   （扫描到 0 个文件也建行），慢的真正原因是详情页首访要等一轮外网元数据刮削（后端行为，本版不改）。
+   前端改为：`mediaCount = 0` 时相册区**零请求**直接渲染空态「暂无图片」，不再等任何加载；
+   新增 i18n 键 `media.emptyFolder`（中英同步），并给卡片加了「空」标记。
+
+### 有意保留（后端 / Linux 侧，本版禁止改动）
+
+- `GET /api/games/:id` 首次访问仍会在请求线程里 `await` 整轮元数据刮削
+  （`backend/src/games/games.service.ts:482-494` 的 `last_meta_refresh == null` 分支）；
+  前端只能做到「不等它也能先把页面画出来」。
+- `/api/media/:id/preview` 没有 `Cache-Control` ⇒ 大图查看器每次重下；可缓存的缩略图/封面不受影响。
+
+### 产物
+
+- Windows：`ScreenPlay_1.3.1_x64-portable.zip`（免安装，解压即用）与 `ScreenPlay.exe`
+  （PE 文件版本 / 产品版本均为 `1.3.1`）；需要安装包时在 Windows 上跑 `windows\build-windows.ps1`。
+- Linux：**无新版产物**，`1.3.0` 镜像照旧（`wyunki/screenplay:1.3.0` 与 `latest`）。
+
 ## [1.3.0] — 2026-10-03
 
 **Linux 端全量性能优化**：功能、交互、数据结构、HTTP 接口**一律未变**（同一套前端源码、同一套 DTO

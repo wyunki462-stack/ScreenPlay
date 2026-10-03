@@ -62,14 +62,29 @@ export function useGame(id: string | undefined) {
     queryKey: ["game", id],
     queryFn: () => apiFetch<GameDetail>(`/games/${encodeURIComponent(id as string)}`),
     enabled: !!id,
+    // 详情缓存：二次进入同一详情页不再重发请求。首访时这条请求要等后端在请求
+    // 线程里跑完一整轮外网元数据刮削（冷刮削可达数十秒），缓存久一点能省掉重复
+    // 的整轮刮削；页面本身已用列表缓存先把封面与基础信息画出来（渐进渲染）。
+    // 只改这三条详情相关 query，不动 main.tsx 的全局默认值。
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
   });
 }
 
-export function useGameMedia(id: string | undefined) {
+/**
+ * 相册列表。
+ *
+ * `options.enabled`（默认 true，既有调用点行为不变）让调用方把请求压到首屏之后；
+ * 详情页保持默认（它是纯 SQLite 查询，几毫秒返回，空文件夹还要靠它立刻出空态）。
+ * 缓存同上：二次进入同一详情页不再重发。
+ */
+export function useGameMedia(id: string | undefined, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["media", id],
     queryFn: () => apiFetch<Media[]>(`/games/${encodeURIComponent(id as string)}/media`),
-    enabled: !!id,
+    enabled: !!id && (options?.enabled ?? true),
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
   });
 }
 
@@ -134,7 +149,11 @@ export interface GameNeighbors {
  * The ordering is computed on the server from the same filters the gallery is
  * using, so it stays exact beyond the loaded page and inside a filtered subset.
  */
-export function useGameNeighbors(id: string | undefined, filters: GameFilters) {
+export function useGameNeighbors(
+  id: string | undefined,
+  filters: GameFilters,
+  options?: { enabled?: boolean },
+) {
   const params = new URLSearchParams();
   if (filters.search) params.set("search", filters.search);
   if (filters.platform) params.set("platform", filters.platform);
@@ -146,7 +165,11 @@ export function useGameNeighbors(id: string | undefined, filters: GameFilters) {
     queryKey: ["game-neighbors", id, qs],
     queryFn: () =>
       apiFetch<GameNeighbors>(`/games/${encodeURIComponent(id as string)}/neighbors?${qs}`),
-    enabled: !!id,
+    enabled: !!id && (options?.enabled ?? true),
+    // 详情页把这条请求延后到浏览器空闲（它只服务标题上方那两个按钮）。筛选条件
+    // 已经在 queryKey 里，缓存久了也不会串味；二次进入不再重发。
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
   });
 }
 

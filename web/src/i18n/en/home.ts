@@ -41,4 +41,5 @@ export const homeEn: Record<string, string> = {
   "home.sort.custom": "Custom order",
   "home.custom.hint": "Drag a card to its new position; the order is saved automatically",
   "home.custom.reset": "Reset to default order",
+  "home.custom.saveFailed": "Could not save the new order; the previous order was restored",
 };

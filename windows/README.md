@@ -160,6 +160,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build-windows.ps1
 
 | 我想知道… | 看这里 |
 | --- | --- |
+| 每个版本改了什么、为什么这么改 | [`docs/RELEASE-1.3.1.md`](docs/RELEASE-1.3.1.md)（1.3.1：三项 Windows 端修复 + 版号分离） |
 | 怎么构建、构建失败怎么办 | [`docs/BUILD-WINDOWS.md`](docs/BUILD-WINDOWS.md)（三条路径 + 镜像代理 + 报错对照表） |
 | 产物的结构、运行要求、体积、数据目录、升级卸载备份、排障 | [`docs/ARTIFACTS.md`](docs/ARTIFACTS.md) |
 | Web 端的功能在桌面端是不是都有、有哪些差异 | [`docs/PARITY.md`](docs/PARITY.md) |

@@ -170,6 +170,32 @@
 * **源码锚点**：`web/src/lib/platform.ts`（`SCREENPLAY_TARGET` / `IS_DESKTOP_TARGET`）、`web/vite.config.ts`、
   `web/.env.desktop`、`web/src/pages/Settings.tsx`（`{IS_DESKTOP_TARGET ? null : <ChangePasswordCard session={session} />}`）。
 
+### ⑧ 网页标准拖放排序需要关掉外壳的拖放接管（`1.3.1` 修复）
+
+* **情况**：图库「自定义排序」用的是**网页标准 HTML5 拖放**（`web/src/pages/Home.tsx` 的
+  `customMode` + `drag` 属性、`web/src/components/GameCard.tsx` 的 `draggable` / `onDragStart` /
+  `onDragOver` / `onDrop`）。Tauri v2 的窗口默认开启「内部拖放接管」：`dragDropEnabled` 默认 `true`，
+  此时外壳会**替换 WebView2 的 drop handler** 来生成自己的 `DragDropEvent`，页面里的
+  `dragstart` / `dragover` / `drop` 就收不到事件 ⇒ 只有桌面端表现为「按住卡片拖不动、排序不生效」，
+  浏览器/Web 端完全正常。这是 Tauri 官方配置项注释里写明的平台约束（原文：
+  `Disabling it is required to use HTML5 drag and drop on the frontend on Windows since we replace
+  the drag drop handler of WebView2.`）。
+* **处理**：窗口配置显式关闭接管 —— `windows/src-tauri/tauri.conf.json` 的窗口对象里
+  `"dragDropEnabled": false`。**不改任何前端源码即可恢复拖拽**（源码在 Web 端本来就工作）。
+* **为什么不影响别的**：`web/src` 与 `windows/src-tauri/src` 里对 Tauri 文件拖放事件
+  （`onDragDropEvent` / `tauri://` / `DragDropEvent`）**零引用**，桌面端没有「把文件拖进窗口」这类
+  依赖；关掉接管后网页标准拖放全量可用。
+* **顺带的前端修复**（同一版：拖后立即生效、不再闪回）：
+  * `web/src/pages/Home.tsx` 的 `commitMove` 在发 `PUT /games/order`（`web/src/api/hooks.ts`
+    `useReorderGames`）的同时，把新顺序**直接写进** react-query 的 `["games", filters]` 缓存
+    （`queryClient.setQueryData`）；否则请求 settle 时会清掉乐观顺序，在「同意性 refetch」落地前
+    闪回旧顺序，看起来像「拖了没生效」。
+  * 落库失败时不再静默回滚：提示条显示 `home.custom.saveFailed`（中英同步）。
+* **源码锚点**：`windows/src-tauri/tauri.conf.json`（`app.windows[].dragDropEnabled`）、
+  `web/src/pages/Home.tsx`（`pendingOrder` / `commitMove` / 网格容器级 `onDragOver`）、
+  `web/src/components/GameCard.tsx`（`CardDragProps`、`DropIndicator`）、
+  `web/src/api/hooks.ts`（`useReorderGames` → `PUT /games/order`，后端 `games.service.ts` 的 `reorder`）。
+
 ---
 
 ## 4. 一次能跑完的验收清单

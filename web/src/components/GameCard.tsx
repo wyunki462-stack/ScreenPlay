@@ -173,6 +173,17 @@ export default function GameCard({
             // 全部官方海报、恒定自动轮播、箭头常驻，与这里的设置无关。
             showArrows={(game.posterMode ?? "static") === "slideshow"}
           />
+          {/* 空文件夹角标：`mediaCount` 随列表接口一起返回，所以进详情页之前就能看出
+              这个文件夹里一张图都没有（进去后相册也零请求直接显示「暂无图片」）。
+              放左下角，避开右上角的菜单按钮和左上角的元数据错误角标。 */}
+          {game.mediaCount === 0 && (
+            <span
+              title={t("media.emptyFolder")}
+              className="pointer-events-none absolute bottom-1.5 left-1.5 z-10 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-zinc-300"
+            >
+              {t("media.emptyBadge")}
+            </span>
+          )}
         </div>
         <div className="flex flex-1 flex-col gap-2 p-3">
           <div className="flex items-start justify-between gap-2">

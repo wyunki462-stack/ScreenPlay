@@ -15,7 +15,11 @@
 | 随包资源 | `resources/` | 安装包内随 `ScreenPlay.exe` 分发；便携包内是同名子目录 | 见 §2 |
 | 构建日志 | `build-<yyyyMMdd-HHmmss>.log` | `windows/dist/` | 一次构建一份 |
 
-`<version>` 与项目版号一致（例如 `1.0.0`），来自构建时的 `package.json` / `Cargo.toml`。
+`<version>` 是**桌面端自己的版号**，来自构建时的 `windows/package.json`；`windows/src-tauri/Cargo.toml`
+的 `version` 与 `windows/src-tauri/tauri.conf.json` 的 `version` 与它同步（前者决定 exe 的 PE 版本资源，
+后者决定安装包/便携包的文件名）。自 `1.3.1` 起桌面端不再读根 `package.json`：根 / `backend` / `web`
+的版号属于 Linux/Docker 发布线（`scripts/docker-build.sh` 用它生成 `BUILD_VERSION`），这样「仅 Windows
+端修复」的小版本号不会牵动 Linux 端。
 
 **两个产物都不包含**：Playwright 与测试依赖、Web 端的 `node_modules`、TypeScript 源码与编译器、
 Rust 源码与 `target/`。用户机器上**不需要**安装 Node.js、Rust 或任何开发工具。

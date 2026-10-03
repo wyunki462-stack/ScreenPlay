@@ -55,6 +55,49 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 
 ---
 
+## 1.3.1：Windows 桌面端三项修复（backend / Linux 端未变，版号仍 1.3.0）
+
+范围：只动 `web/src/**`（三端共用前端，修复①拖拽、②详情页渐进渲染、③空相册零请求）与
+`windows/**`（拖拽接管开关、桌面端独立版号线、文档）。`backend/`、`Dockerfile`、
+`docker-compose*`、Linux 构建脚本零改动；**Linux 端版本保持 1.3.0**，桌面端版号改为
+1.3.1（唯一来源 `windows/package.json`）。
+
+判据（桌面端自己那条版号线）：
+
+| 形态 | `GET /api/health` 的 `version` |
+| --- | --- |
+| 便携包 / NSIS 安装包（Rust 壳读 `resources/build-info.json`） | `1.3.1` |
+| webapp 包（`windows/launcher/launch.mjs`） | `1.3.1-desktop-portable` |
+| Linux 容器 / 源码直跑（根 `package.json` → `docker-build.sh`） | `1.3.0`（不变） |
+
+### 一键复核（都不需要 docker 权限、不需要 Windows 机器）
+
+```bash
+cd web && npx tsc --noEmit          # 前端类型检查：无输出即通过
+node windows/scripts/verify-desktop.mjs   # 桌面端离线自查：期望「57 项通过 / 0 项失败」
+node scripts/gen-source-hash.mjs --check  # 源码指纹：期望 ✓ 1736b31e358104b9（137 文件）
+unzip -l windows/dist/ScreenPlay_1.3.1_x64-portable.zip | tail -3   # 期望 11427 条目
+```
+
+产物口径（2026-10-03 本机 NAS 交叉编译 + 打包）：
+
+| 项 | 值 |
+| --- | --- |
+| `windows/dist/ScreenPlay.exe` | 7,384,576 B（PE：machine 0x8664 / subsystem 2 / 资源目录 10,368 B / FileVersion=ProductVersion=`1.3.1`） |
+| `windows/dist/ScreenPlay_1.3.1_x64-portable.zip` | 114,362,118 B（109.06 MiB）／11,427 条目 |
+| `resources/build-info.json`（zip 内） | `{"version":"1.3.1","sourceHash":"1736b31e358104b9","builtAt":"2026-10-03T13:33:41.731Z","nodeVersion":"22.20.0"}` |
+| `resources/web/assets/` | `index-DrJx1YXK.js` 309.01 kB、`GameDetail-KCdYxMvX.js` 91.12 kB、`Settings-C2k6kKoR.js`、`VideoPlayer-LLlQ56fq.js`、`Card-BiYUmhZX.js` |
+
+浏览器套件（`scripts/verify-browser.mjs`）本轮未在本机跑（需要 repo 自带 Chromium 与在跑的服务）：
+详情页的 prev/next 请求被延后到浏览器空闲（1.5s 兜底），但 `openDetail()` 用
+`waitForFunction` 等的是「按钮可用 + 位置文本」，自动等待足够覆盖这段延迟。
+
+> 注意：`web/src` 由三端共用，本轮改动同时改变了源码指纹（`35019ad7abf95fdd` →
+> `1736b31e358104b9`）。Linux 侧本次**不发新镜像**、版号也不动；下一次重建 Linux 镜像时
+> 会自然带上这同一份前端改进。
+
+---
+
 ## 1.3.0：Linux 端全量性能优化（功能 / 交互 / 数据结构 / 接口未变）
 
 本轮**没有新增后端 feature 标记**（15 条标记与 `1.0.0` 相同），所以判据同样是 `version`：

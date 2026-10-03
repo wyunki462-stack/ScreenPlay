@@ -3,6 +3,8 @@ export const detailEn: Record<string, string> = {
   "detail.backToGallery": "Back to gallery",
   "detail.loadFailed": "Failed to load game details",
   "detail.mediaFailed": "Failed to load media",
+  // Progressive render: the basics are on screen, detail-only fields still loading.
+  "detail.metaPending": "Completing metadata…",
   "detail.editPoster": "Edit poster",
   "detail.platformSettings": "Platform settings",
   "detail.matchManually": "Match manually",

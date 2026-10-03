@@ -500,11 +500,14 @@ function main() {
   stepLog.push(`step 7 backend/dist：${distStats.files} 个文件 / ${human(distStats.bytes)}`);
 
   // --------------------------------------------------------- 8. build-info.json
-  const rootPkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+  // 桌面端版号单独走 `windows/package.json`，**不读根 package.json**：根版号与
+  // Linux/Docker 发布线共用（scripts/docker-build.sh 用它生成 BUILD_VERSION），
+  // 只修 Windows 的版本不能从根上发布出去。
+  const desktopPkg = JSON.parse(fs.readFileSync(path.join(WIN_DIR, 'package.json'), 'utf8'));
   const hashPath = path.join(REPO_ROOT, '.source-hash');
   const sourceHash = fs.existsSync(hashPath) ? fs.readFileSync(hashPath, 'utf8').trim() : null;
   const buildInfo = {
-    version: rootPkg.version,
+    version: desktopPkg.version,
     sourceHash,
     builtAt: new Date().toISOString(),
     nodeVersion: NODE_VERSION,

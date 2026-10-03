@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, ExternalLink, Play, X, ZoomIn, ZoomOut } fro
 import { useT } from "../i18n";
 import type { Media } from "../types";
 import { formatClock } from "../lib/format";
+import LazyImage from "./LazyImage";
 
 /**
  * The player is only mounted after a video is clicked (see the render below), so
@@ -13,10 +14,11 @@ import { formatClock } from "../lib/format";
  * the bundle) and the gallery never needs them. Loading it lazily moves all of that
  * into a chunk that is fetched the first time a video is actually opened.
  *
- * `PhotoSlider` (below) deliberately stays a static import: this component keeps it
- * mounted with `visible={false}` so the viewer can animate on open/close, and
- * mounting it conditionally would change that interaction. Its 17 KB is not worth
- * that risk.
+ * `PhotoSlider` keeps its static import (17 KB, always in the graph) but is now
+ * mounted only after the viewer is opened for the first time: mounting it up front
+ * handed react-photo-view every full-size `/preview` URL of the game on page load,
+ * which a 4K-heavy album does not need before the user asks to look at a picture.
+ * Once opened it stays mounted, so open/close keeps its transition.
  */
 const VideoPlayer = lazy(() => import("./VideoPlayer"));
 
@@ -68,14 +70,22 @@ export default function MediaGrid({ media }: MediaGridProps) {
   const t = useT();
   const [sortKey, setSortKey] = useState<SortKey>("default");
   const sortedMedia = useMemo(() => sortMedia(media, sortKey), [media, sortKey]);
-  const imageMedia = sortedMedia.filter((m) => m.type !== "video");
+  const imageMedia = useMemo(() => sortedMedia.filter((m) => m.type !== "video"), [sortedMedia]);
   const [photoIndex, setPhotoIndex] = useState(0);
   const [photoVisible, setPhotoVisible] = useState(false);
+  /**
+   * 查看器第一次被打开之前不挂载。`images` 里装的是每张图的 `/preview`
+   * （4K 截图 2.5–9.8 MB），只有真要看图时才需要构造；打开过之后保持挂载，
+   * 关闭/再打开仍走原来的过渡动画。
+   */
+  const [viewerMounted, setViewerMounted] = useState(false);
   const [activeVideo, setActiveVideo] = useState<Media | null>(null);
 
   // Use previewUrl, not streamUrl: JXR/WDP originals are not decodable by any
   // browser and are transcoded to WebP by the backend on this endpoint.
-  const images = imageMedia.map((m) => ({ key: m.id, src: m.previewUrl || m.streamUrl }));
+  const images = viewerMounted
+    ? imageMedia.map((m) => ({ key: m.id, src: m.previewUrl || m.streamUrl }))
+    : [];
 
   useEffect(() => {
     if (!photoVisible) return;
@@ -88,10 +98,12 @@ export default function MediaGrid({ media }: MediaGridProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [photoVisible, imageMedia.length]);
 
+  // 空文件夹的终结答案：「暂无图片」。不再劝用户去刷新元数据 —— 这个文件夹里
+  // 确实一张图都没有（空相册的游戏卡在进入前就会显示「空」角标）。
   if (sortedMedia.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-zinc-800 p-10 text-center text-sm text-zinc-500">
-        {t("media.empty")}
+        {t("media.emptyFolder")}
       </div>
     );
   }
@@ -99,6 +111,7 @@ export default function MediaGrid({ media }: MediaGridProps) {
   const openImage = (id: string) => {
     const idx = imageMedia.findIndex((m) => m.id === id);
     if (idx >= 0) {
+      setViewerMounted(true);
       setPhotoIndex(idx);
       setPhotoVisible(true);
     }
@@ -124,6 +137,10 @@ export default function MediaGrid({ media }: MediaGridProps) {
         </label>
       </div>
 
+      {/* 缩略图/封面用仓库自带的 `LazyImage`（IntersectionObserver 闸门 + 骨架占位）：
+          一进页面不再把整页的图同时变成在途请求，比例容器仍是 `aspect-video`，不产生
+          CLS。图片本身依赖后端给的 `Cache-Control: public, max-age=2592000, immutable`
+          （/api/media/:id/thumbnail|cover|proxy），浏览器缓存即可命中，前端不另加缓存层。 */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {sortedMedia.map((item) =>
           item.type === "video" ? (
@@ -134,12 +151,10 @@ export default function MediaGrid({ media }: MediaGridProps) {
               className="group relative aspect-video overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900"
             >
               {item.coverUrl ? (
-                <img
+                <LazyImage
                   src={item.coverUrl}
                   alt={item.fileName}
-                  loading="lazy"
-                  decoding="async"
-                  className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                  className="transition-transform duration-300 group-hover:scale-105"
                 />
               ) : (
                 <div className="h-full w-full bg-gradient-to-br from-zinc-800 to-zinc-900" />
@@ -163,12 +178,10 @@ export default function MediaGrid({ media }: MediaGridProps) {
               onClick={() => openImage(item.id)}
               className="group relative aspect-video overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900"
             >
-              <img
+              <LazyImage
                 src={item.thumbnailUrl}
                 alt={item.fileName}
-                loading="lazy"
-                decoding="async"
-                className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                className="transition-transform duration-300 group-hover:scale-105"
               />
               {item.type === "gif" && (
                 <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-zinc-200">{t("media.badge.gif")}</span>
@@ -178,7 +191,7 @@ export default function MediaGrid({ media }: MediaGridProps) {
         )}
       </div>
 
-      {imageMedia.length > 0 && (
+      {viewerMounted && imageMedia.length > 0 && (
         <PhotoSlider
           images={images}
           visible={photoVisible}

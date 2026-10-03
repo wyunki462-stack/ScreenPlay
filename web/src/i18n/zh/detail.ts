@@ -3,6 +3,8 @@ export const detailZh: Record<string, string> = {
   "detail.backToGallery": "返回图库",
   "detail.loadFailed": "加载游戏详情失败",
   "detail.mediaFailed": "加载媒体失败",
+  // 渐进渲染：基础信息已经画出来了，只有「只有详情才有」的字段还在后台补全。
+  "detail.metaPending": "元数据补全中…",
   "detail.editPoster": "编辑海报",
   "detail.platformSettings": "平台设置",
   "detail.matchManually": "手动匹配",

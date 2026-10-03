@@ -63,9 +63,10 @@
 | — | **`1.0.0`**：瘦身（依赖 / 构建 / 文件）+ 6 组重复实现合并 + 海报归属缺陷修复，无新功能 | 10 个离线套件 / 382 条断言 |
 | 10 | **`1.2.0`**：Windows 桌面端（Tauri v2 壳 + 内置后端）、三端品牌图标统一、设置页改密（桌面端按平台剔除）、首页卡片箭头修复、构建期原生包换源 | 11 个离线套件 / 422 条断言 + 三端产物自检 |
 | 11 | **`1.3.0`**：Linux 端全量性能优化（内存 / 镜像 / 磁盘 / 依赖 / 缓存），功能、交互、数据结构与接口未变 | 12 个离线套件 / 434 条断言 + 真机前后实测对照 |
+| 12 | **`1.3.1`（仅 Windows 桌面端）**：自定义排序拖拽修复（WebView2 拖放接管）、详情页分级加载 + 骨架屏 + 图片/数据本地缓存、空相册文件夹直接空态 | `node windows/scripts/verify-desktop.mjs` 桌面自检 + Web 端类型检查 |
 
 累计约 **21 项编号需求**的落地与回归，外加第 7～10 轮的修复项、`1.2.0` 的桌面端 / 三端图标统一，
-以及 `1.3.0` 的性能优化。每轮的完整验收记录
+`1.3.0` 的性能优化，以及 `1.3.1` 的桌面端三项修复（Linux 端版号与产物不变）。每轮的完整验收记录
 （含实测输出）保留在 [`docs/VERIFY.md`](docs/VERIFY.md)。
 
 > 上表里的一次性轮次脚本（`scripts/verify-round-*.sh`、`scripts/verify-*.mjs` 等 37 个文件）
@@ -448,10 +449,20 @@ bash scripts/rebuild-and-verify.sh
 - **构建**：在 Windows 上运行 `windows\build-windows.ps1`（或 `build-windows.cmd`）。仓库
   **自带全部离线依赖**（Node 运行时、原生模块、ffmpeg），构建机不需要联网拉取这些资源；
   具体步骤、产物说明与「功能对齐对照表」见 [`windows/docs/BUILD-WINDOWS.md`](windows/docs/BUILD-WINDOWS.md)、
-  [`windows/docs/ARTIFACTS.md`](windows/docs/ARTIFACTS.md)、[`windows/docs/PARITY.md`](windows/docs/PARITY.md)。
+  [`windows/docs/ARTIFACTS.md`](windows/docs/ARTIFACTS.md)、[`windows/docs/PARITY.md`](windows/docs/PARITY.md)、
+  [`windows/docs/RELEASE-1.3.1.md`](windows/docs/RELEASE-1.3.1.md)（桌面端版本变更点）。
 
 > 产物形态：NSIS 安装包（`bundles/nsis/*.exe`）与免安装 zip（`portable/*.zip`，解压即用）。
 > 桌面端不重复实现任何后端逻辑，所有数据都来自同一个 REST API。
+
+### 桌面端版号线（`1.3.1` 起与 Linux 端分开）
+
+桌面端有**自己的版号线**，三处同步：`windows/package.json`（打包与 `build-info.json` 的来源）、
+`windows/src-tauri/Cargo.toml`（写进 exe 的 PE 版本资源）、`windows/src-tauri/tauri.conf.json`
+（安装包 / 便携包文件名）。根 `package.json` 与 `backend` / `web` 的版号属于 **Linux/Docker 发布线**
+（`scripts/docker-build.sh` 用它生成 `BUILD_VERSION`，`/api/health` 读的就是它），桌面端**不**再跟随它，
+所以「只修 Windows 端」的小版本（`1.3.1`）不会牵动 Linux 端版号与镜像。桌面端的 `/api/health`
+在便携包 / 安装包里显示该版号，在 webapp 包（复用系统浏览器的旧形态）里显示 `<版号>-desktop-portable`。
 
 ---
 

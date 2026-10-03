@@ -8,6 +8,11 @@ export const mediaEn: Record<string, string> = {
   "media.sort.size": "By size (largest first)",
   "media.count": "{n} items",
   "media.empty": "No media here yet — use “Refresh metadata” at the top right, or go back to the gallery and rescan.",
+  // Album empty state: this folder really has nothing. A final answer, unlike the
+  // recoverable hint above — it must not tell the user to try refreshing.
+  "media.emptyFolder": "No images or videos",
+  // Gallery card corner badge for an empty folder ("暂无图片" is too long for a badge).
+  "media.emptyBadge": "Empty",
 
   // Media grid — tile badges and lightbox toolbar.
   "media.badge.video": "Video",
