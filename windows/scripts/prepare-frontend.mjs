@@ -223,12 +223,9 @@ function main() {
       final += '\n/* desktop shim: --reduce-motion */\n' +
         '.plyr, *{animation-duration:0.001ms!important;animation-iteration-count:1!important;transition-duration:0.001ms!important}\n';
     }
-    if (outCss.length > 1) {
-      fail('CSS 精简', `假设只有 1 个 CSS 产物，实际 ${outCss.length} 个：${outCss.join(', ')}`);
-    }
     fs.writeFileSync(p, final, 'utf8');
-    minWidthKept = minBefore;
-    removedTotal = removed;
+    minWidthKept += minBefore;
+    removedTotal += removed;
     log(`step 3: 精简 ${f}`);
     console.log(`    @media min-width 断点保留 ${minBefore} 条（属于桌面布局，不可删）`);
     console.log(`    @media max-width 规则删除 ${removed} 条（移动端冗余）: ${removedBlocks.join(', ') || '无'}`);

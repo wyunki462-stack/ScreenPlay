@@ -57,6 +57,19 @@ const RES = path.join(ROOT, 'resources');
 function log(msg) { process.stdout.write(`[ScreenPlay] ${msg}\n`); }
 function die(msg) { process.stderr.write(`[ScreenPlay] 错误：${msg}\n`); process.exit(1); }
 
+/**
+ * 版号：构建期由 prepare-backend 写进 resources/build-info.json（{version, sourceHash, builtAt, nodeVersion}）。
+ * 免安装包/便携包里它就在包根下，直接读；读不到（有人手改包内容）时退回 '0.0.0'，
+ * 不写死某个具体版号——否则每次发版都会漏改，桌面端 /api/health 就报旧版本。
+ */
+function readBuildVersion() {
+  try {
+    const info = JSON.parse(fs.readFileSync(path.join(RES, 'build-info.json'), 'utf8'));
+    if (info && typeof info.version === 'string' && info.version.trim()) return info.version.trim();
+  } catch { /* 文件缺失或 JSON 损坏：走下面的兜底 */ }
+  return '0.0.0';
+}
+
 /* ---------------------------------------------------------------- 配置 */
 
 function defaultDataDir() {
@@ -196,7 +209,7 @@ async function main() {
     MEDIA_DIRS: mediaDirs,
     WEB_DIST: webDist,
     MAINTENANCE_ON_BOOT: '0',
-    BUILD_VERSION: '1.2.0-desktop-portable',
+    BUILD_VERSION: `${readBuildVersion()}-desktop-portable`,
     ...(auth === 'off' ? { AUTH_DISABLED: '1' } : { AUTH_MODE: auth }),
     ...(auth === 'local' && cfg.adminPassword ? { AUTH_ADMIN_PASSWORD: String(cfg.adminPassword) } : {}),
     ...(fs.existsSync(ffmpeg) ? { FFMPEG_PATH: ffmpeg } : {}),

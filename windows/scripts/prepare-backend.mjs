@@ -124,14 +124,41 @@ function findFile(root, name, maxDepth = 8) {
   }
   return null;
 }
-function sameSize(a, b) {
-  try { return fs.statSync(a).size === fs.statSync(b).size; } catch { return false; }
+/**
+ * 内容比较（逐块 64 KiB，避免把 100+ MB 的 node.exe/ffmpeg.exe 整个读进内存）。
+ * 只比大小是不够的：`"version": "1.0.0"` → `"1.3.0"` 这种改动字节数完全一样，
+ * 会让「幂等跳过」把旧文件留在 resources 里（发版后包里还写着上一个版本号）。
+ */
+function sameContent(a, b) {
+  let fa;
+  let fb;
+  try {
+    if (fs.statSync(a).size !== fs.statSync(b).size) return false;
+    fa = fs.openSync(a, 'r');
+    fb = fs.openSync(b, 'r');
+    const A = Buffer.alloc(64 * 1024);
+    const B = Buffer.alloc(64 * 1024);
+    let pos = 0;
+    for (;;) {
+      const na = fs.readSync(fa, A, 0, A.length, pos);
+      const nb = fs.readSync(fb, B, 0, B.length, pos);
+      if (na !== nb) return false;
+      if (na === 0) return true;
+      if (!A.subarray(0, na).equals(B.subarray(0, nb))) return false;
+      pos += na;
+    }
+  } catch {
+    return false;
+  } finally {
+    if (fa !== undefined) { try { fs.closeSync(fa); } catch { /* 关闭失败无所谓 */ } }
+    if (fb !== undefined) { try { fs.closeSync(fb); } catch { /* 同上 */ } }
+  }
 }
-/** 幂等复制：目标已存在且大小相同则跳过。 */
+/** 幂等复制：目标已存在且**内容一致**则跳过。 */
 function copyIfNeeded(src, dest, label) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  if (!FORCE && fs.existsSync(dest) && sameSize(src, dest)) {
-    ok(`跳过（已存在且大小一致）: ${label}  ${human(fs.statSync(dest).size)}`);
+  if (!FORCE && fs.existsSync(dest) && sameContent(src, dest)) {
+    ok(`跳过（已存在且内容一致）: ${label}  ${human(fs.statSync(dest).size)}`);
     return 'skipped';
   }
   fs.copyFileSync(src, dest);
