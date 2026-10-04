@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/api_client.dart';
 import '../core/prefs.dart';
 import '../core/server_config.dart';
+import '../widgets/brand_mark.dart';
 
 class ConnectScreen extends ConsumerStatefulWidget {
   const ConnectScreen({super.key});
@@ -150,7 +151,8 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: <Widget>[
-          Icon(Icons.dns_outlined, size: 64, color: theme.colorScheme.secondary),
+          // 与 Web 端同一个品牌块（web/src/pages/Login.tsx:36-37），三端视觉一致。
+          const Center(child: BrandMark(size: 64, shadow: true)),
           const SizedBox(height: 12),
           Text(
             '输入 ScreenPlay 服务地址',

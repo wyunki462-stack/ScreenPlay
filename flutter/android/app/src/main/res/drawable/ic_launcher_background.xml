@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GENERATED FILE — 请勿手改；由 `node scripts/brand-icons.mjs` 从 web/public/favicon.svg 生成。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 品牌对角渐变（#7c3aed → #06b6d4）；形状由系统自适应图标蒙版裁切。 -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0"
+                android:startY="0"
+                android:endX="108"
+                android:endY="108">
+                <item android:offset="0" android:color="#FF7C3AED" />
+                <item android:offset="1" android:color="#FF06B6D4" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

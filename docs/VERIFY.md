@@ -27,6 +27,10 @@ node backend/scripts/verify/android-auth-bearer.mjs      # 会话端点接受 Au
 node backend/scripts/verify/sqlite-vacuum.mjs            # 可选启动期 VACUUM（12 项；默认关，MAINTENANCE_VACUUM=1 才走）
 node scripts/verify-docker-layers.mjs                    # Dockerfile 分层自查（33 项；纯静态解析，不需要 docker）
 
+# 安卓端（离线；需要 flutter + 已就绪的 pub 缓存，未纳入 verify-suites.sh 清单）
+cd flutter && flutter analyze && flutter test --no-pub    # 期望 0 error / 0 warning；43 项通过 / 1 项跳过
+cd .. && node scripts/brand-icons.mjs --check            # 品牌图标产物 = web/public/favicon.svg（零依赖，漂移即 exit 1）
+
 # 或者一键跑完上面 A 段全部（2 个类型检查 + 14 套件 + 产物自查 + Dockerfile 分层自查）
 bash scripts/verify-suites.sh                            # 可选：bash scripts/verify-suites.sh 输出文件.txt
 
@@ -54,6 +58,83 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 > 轮播归属 → `poster-rotation-e2e.mjs` / `poster-ui-ssr.mjs`；时长缓存 → `duration-cache-e2e.mjs`；
 > 设置页改密 → `password-change.mjs`（本轮新增）。
 > 下文的具体命令与数字作为**历史记录**保留，复现入口以上面 A/B 两段为准。
+
+---
+
+## 1.3.1+2：安卓端「连 Linux 后端五项体验修复」（后端 / Web / Linux 镜像 / Windows 均未动）
+
+范围：只改 `flutter/**`，外加一个新零依赖生成器 `scripts/brand-icons.mjs`。`node scripts/gen-source-hash.mjs --check`
+仍是 `a0e18c54d5340a97`（137 文件）；Linux 端 `/api/health` 仍 `1.3.0`；安卓端 `versionName` 仍 `1.3.1`
+（三端版号一致），只把 build number 升到 **`1.3.1+2`**（`--split-per-abi` 后 `versionCode` arm64 2002 /
+v7a 1002 / x86_64 4002）。五项修复的根因、修法与取证见
+[`../flutter/docs/ANDROID-1.3.1.md`](../flutter/docs/ANDROID-1.3.1.md) §9。
+
+### 一键复核（不需要手机，也不需要 docker 权限）
+
+```bash
+cd flutter && flutter analyze         # 期望 0 error / 0 warning（7 条 info 为既有 riverpod 2.6.1 弃用提示）
+cd flutter && flutter test --no-pub   # 期望 43 项通过 / 1 项跳过（跳过的是真后端用例）
+cd .. && node scripts/brand-icons.mjs --check   # 期望「品牌图标产物与 web/public/favicon.svg 一致」
+node scripts/gen-source-hash.mjs --check        # 期望 ✓ a0e18c54d5340a97（137 文件）
+bash scripts/verify-suites.sh                   # 期望 18 项通过 / 0 项失败（508 条断言；本轮实测 235 s）
+```
+
+`flutter test` 覆盖：`models_parse_test.dart`（列表 / 详情夹具、snake_case 内嵌成就、逐项容错、camelCase 兼容、
+海报列表）、`api_client_urls_test.dart`（`resolve` / `imageSource` / `cardImageSource` / `cardPosterSources` /
+`imageHeaders`）、`brand_mark_test.dart`（品牌常量、字形包围盒、20/36 比例、安卓资源同源）。
+
+### 连真实 Linux 后端复核（一条命令覆盖 ① ② ⑤ 的数据面）
+
+```bash
+# 复现环境：任意 Linux 后端 + 已登录账号即可；本轮用的是 Docker 起的一次性容器
+docker run -d --name sp-linux-test -p 3007:3000 -e AUTH_MODE=local \
+  -e AUTH_ADMIN_PASSWORD=test-Pass-123 -e DATA_DIR=/data -e MEDIA_DIRS=/media \
+  -e NODE_ENV=production -v /tmp/sp-linux-test/data:/data \
+  -v "/vol2/1000/相册/游戏相册:/media:ro" screenplay:latest
+
+cd flutter && flutter test --dart-define=SP_LIVE_BASE=http://127.0.0.1:3007 test/live_backend_test.dart
+```
+
+| 断言（`flutter/test/live_backend_test.dart` 7 项） | 实测（39 游戏 / 1917 媒体库，2026-10-04） |
+| --- | --- |
+| 列表全部可解析、每个游戏都有海报来源、都指向本服务端 | **39 游戏 / 海报来源 41 张 / 无海报 0 个**，URL 全部以 `http://127.0.0.1:3007` 开头（① 数据面） |
+| 逐个游戏详情都能解析 | **39/39 成功，其中 34 个带成就**（② 修复前这 34 个点开必「加载详情失败」） |
+| 封面带凭证可取、同一张不带凭证必须被拒 | 抽检 10 张全部 `200 image/jpeg\|webp`；同一张**不带凭证 `401`**（凭证必要性） |
+| 远端 CDN 海报经后端代理可取 | `https://media.rawg.io/media/games/86f/86f2dc1b9671f25a13ff92e069b51786.jpg` → 代理 `200 image/jpeg`（① 另一半根因） |
+| 成就图标走 `imageSource` + 凭证 | 抽样可取图 11 / 服务端数据坏 502 **13** / **鉴权失败 0**（客户端契约成立；坏数据见下「已知」） |
+| 下拉刷新数据面 | `POST /api/library/scan` **24–26 ms** 返回（后台任务），随后列表与统计仍可全量取到 |
+
+### 构建复核（修订 2 实测）
+
+| 项 | 值 |
+| --- | --- |
+| `app-arm64-v8a-release.apk` | 21,243,136 B，`versionCode` 2002，SHA-256 `720d786a7321dc2e67e0e08bc6eb64bfead01c9fd5a31f488a227ee8b43fc5df`（主推，现代手机） |
+| `app-armeabi-v7a-release.apk` | 18,800,086 B，`versionCode` 1002，SHA-256 `321ec70f0d949d1b0a1779fbd1ee80522766a0bcfda4885c57d9c72b235c5fd5`（老设备） |
+| `app-x86_64-release.apk` | 22,427,527 B，`versionCode` 4002，SHA-256 `91adf41e8576cd68cdb531579eb3be02913e9148c5de6de2d56186bdc3874ee1`（模拟器） |
+| 包信息（三包一致） | `package com.screenplay.app` / `versionName 1.3.1` / `sdkVersion 28` / `targetSdkVersion 34` / `compileSdkVersion 34`（`aapt2 dump badging`） |
+| 权限（与 1.3.1+1 首发包逐条相同） | `INTERNET`、`ACCESS_NETWORK_STATE`、`WRITE_EXTERNAL_STORAGE`(maxSdk 28)、`READ_EXTERNAL_STORAGE`(maxSdk 28，插件清单合并带入)、`com.screenplay.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` |
+| 签名 | `apksigner verify --verbose` ⇒ `Verifies`（v2 方案；证书 SHA-256 `9a1a94436902c1bc5f43e76ff0435c4b1da46dfff30d3e5a60f1cf8ea9597fe3`，debug keystore 同首发） |
+
+> `flutter/dist/*.apk.sha1` 里记的是 **SHA-1**（arm64 `146da08414372137e66cb6f384ad693064421fc1`、
+> v7a `57245f52a083e5539241ef4a596ed43cf3a7e249`、x86_64 `c996abad0b44c12c26eb69a77ff57627e158aef7`）。
+
+### 真机手工验收（本轮新增 4 条，接在下面 1.3.1 清单之后）
+
+1. **整卡点击（③）**：首页随便点卡片的**海报区域**（不是下方文字）→ 能进详情页；左右滑动海报时**不会**误进详情。
+2. **下拉刷新（⑤）**：首页顶部下拉 → 出现转圈 → 提示「已与后端同步」；在服务端新增/删除游戏或改评分后，
+   下拉即可看到列表、海报、元数据、评分更新（不用杀进程重进）。断网下拉 → 提示「同步失败：…」且列表不清空。
+3. **图标（④）**：手机桌面 / 启动器里 ScreenPlay 图标 = 紫青渐变色块 + 白色手柄；应用内首页左上角、
+   连接页与登录页头图是同一品牌标记（Web 页眉 / Windows 侧重装后图标应一致）。
+4. **海报（①）**：**移动数据下**（不是 WiFi）滚动首页与详情页，海报能逐个加载出来（不再只剩渐变占位）；
+   成就图标若显示为奖杯占位，属服务端坏数据（见下），非本端缺陷。
+
+### 已知（不阻塞本轮，未改后端）
+
+- **服务端成就图标数据缺陷**：`GET /api/games/:id` 内嵌 `achievements[].icon_url` 有 **1409/1738（81%）** 是
+  「域名+路径后又拼一个完整 URL」的双重地址（尾巴指向已下线的 `steamcdn-a.akamaihd.net`），怎么取都是 502；
+  正确形式实测可用（见 [`../flutter/docs/ANDROID-1.3.1.md`](../flutter/docs/ANDROID-1.3.1.md) §8.6）。
+  `media[].coverUrl`（0/335 坏）与 `/posters` 的 `url`（0/536 坏）均正常；**Web 端同样显示裂图**，
+  安卓端退回奖杯占位图标。建议后续在后端爬虫侧加绝对 URL 守卫 + 一次性迁移归一化。
 
 ---
 
@@ -101,7 +182,7 @@ flutter build apk --release --split-per-abi
 | `app-arm64-v8a-release.apk` | 21,240,968 B（20.26 MiB），`versionCode` 2001，SHA-256 `8c5a1d731ac4403b4b6ebfde93c64dbd787778a9cc4663730cb61e2fecdaca82`（主推，现代手机） |
 | `app-armeabi-v7a-release.apk` | 18,797,918 B（17.93 MiB），`versionCode` 1001，SHA-256 `8ec12348958376abd14d636abe3245c49768a0df6d50cf1482c9128f5743b1a6`（老设备） |
 | `app-x86_64-release.apk` | 22,359,823 B（21.32 MiB），`versionCode` 4001，SHA-256 `689a2922aa17bbcf6c3922def7dfa870ca1981c2fb697610acab79ba270ffaed`（模拟器 / x86 设备） |
-| 包信息（三个包一致） | `package com.screenplay.app` / `versionName 1.3.1` / `sdkVersion 28` / `targetSdkVersion 34` / 权限仅 `INTERNET` + `ACCESS_NETWORK_STATE` + `WRITE_EXTERNAL_STORAGE(maxSdkVersion=28)`（`aapt2 dump badging` 实测） |
+| 包信息（三个包一致） | `package com.screenplay.app` / `versionName 1.3.1` / `sdkVersion 28` / `targetSdkVersion 34` / 主清单权限 `INTERNET` + `ACCESS_NETWORK_STATE` + `WRITE_EXTERNAL_STORAGE(maxSdkVersion=28)`（`aapt2 dump badging` 实测）。**合并后的 APK 另含插件带入的 `READ_EXTERNAL_STORAGE(maxSdkVersion=28)` 与 `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`**，1.3.1+2 复核时实测确认（见上节权限行） |
 | 签名 | `apksigner verify --verbose` ⇒ `Verifies`（v2 方案；证书 `CN=Android Debug`，SHA-256 `9a1a94436902c1bc5f43e76ff0435c4b1da46dfff30d3e5a60f1cf8ea9597fe3`） |
 
 > 源码指纹说明：`backend/src` 本轮改动（媒体删除 + Bearer）后指纹由 `1736b31e358104b9` 变为

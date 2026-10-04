@@ -1,7 +1,6 @@
 // 游戏详情页：头部（海报/名称/平台/评分/时长）+ 截图轮播 + 信息区，
 // 下方 TabBar 分区：媒体网格 / 时间线 / 成就 / 评分·价格。顶部刷新按钮。
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
@@ -11,6 +10,7 @@ import '../core/prefs.dart';
 import '../models/models.dart';
 import '../providers/api_providers.dart';
 import '../utils/format.dart';
+import '../widgets/authed_image.dart';
 import '../widgets/game_card.dart';
 import '../widgets/media_tile.dart';
 import '../widgets/photo_viewer.dart';
@@ -127,7 +127,8 @@ class _GameDetailScreenState extends ConsumerState<GameDetailScreen>
         .asMap()
         .entries
         .map((MapEntry<int, String> e) {
-          final String url = api.resolve(e.value);
+          // 截图来自 `screenshots[]`（后端缓存的远端 CDN 地址）→ 走 NAS 代理，与 Web 一致。
+          final String url = api.imageSource(e.value);
           return PhotoItem(
             id: 'screenshot_${e.key}',
             displayUrl: url,
@@ -202,7 +203,7 @@ class _DetailHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final String? poster = detail.posterUrl == null ? null : api.resolve(detail.posterUrl!);
+    final String? poster = detail.posterUrl == null ? null : api.imageSource(detail.posterUrl!);
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -216,7 +217,7 @@ class _DetailHeader extends StatelessWidget {
               height: 150,
               child: poster == null
                   ? const _MiniPlaceholder()
-                  : CachedNetworkImage(
+                  : AuthedImage(
                       imageUrl: poster,
                       fit: BoxFit.cover,
                       errorWidget: (BuildContext context, String url, Object error) =>
@@ -351,7 +352,7 @@ class _ScreenshotCarouselState extends State<_ScreenshotCarousel> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: CachedNetworkImage(
+                    child: AuthedImage(
                       imageUrl: item.displayUrl,
                       fit: BoxFit.cover,
                       width: double.infinity,
@@ -513,10 +514,11 @@ class _MediaTab extends ConsumerWidget {
 
   String? _coverUrl(ApiClient api, Media m) {
     // 网格缩略图继续用 thumbnail（列表要快）；视频优先封面。
+    // imageSource：封面可能是远端 CDN 绝对地址 → 走后端 /api/media/proxy。
     if (m.type == MediaType.video && m.coverUrl != null && m.coverUrl!.isNotEmpty) {
-      return api.resolve(m.coverUrl!);
+      return api.imageSource(m.coverUrl!);
     }
-    return m.thumbnailUrl.isEmpty ? null : api.resolve(m.thumbnailUrl);
+    return m.thumbnailUrl.isEmpty ? null : api.imageSource(m.thumbnailUrl);
   }
 
   void _onTapMedia(
@@ -539,7 +541,7 @@ class _MediaTab extends ConsumerWidget {
     final List<PhotoItem> items = images
         .map((Media img) => PhotoItem(
               id: img.id,
-              displayUrl: api.resolve(img.thumbnailUrl),
+              displayUrl: api.imageSource(img.thumbnailUrl),
               originalUrl: api.mediaOriginalUrl(img.id),
               label: img.fileName,
               media: img,
@@ -645,7 +647,8 @@ class _AchievementsTab extends ConsumerWidget {
         final ThemeData theme = Theme.of(context);
         return Column(
           children: achievements.map((Achievement a) {
-            final String? icon = a.iconUrl == null ? null : api.resolve(a.iconUrl!);
+            // 成就图标是远端 CDN 地址（`https://…rawg.io/…`）→ 走 NAS 代理，手机网络才拉得动。
+            final String? icon = a.iconUrl == null ? null : api.imageSource(a.iconUrl!);
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Row(
@@ -694,7 +697,7 @@ class _AchievementIcon extends StatelessWidget {
     }
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
-      child: CachedNetworkImage(
+      child: AuthedImage(
         imageUrl: iconUrl!,
         width: size,
         height: size,

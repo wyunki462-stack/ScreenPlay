@@ -1,0 +1,88 @@
+[
+ {
+  "customOrder": 1024,
+  "id": "7b42703a-ce71-53aa-b7cf-819d153ce486",
+  "name": "007 初露锋芒",
+  "folderPath": "/media/007 初露锋芒",
+  "platform": "PC",
+  "platforms": [
+   "PC"
+  ],
+  "customPlatform": false,
+  "posterUrl": "/api/media/proxy?url=https%3A%2F%2Fmedia.rawg.io%2Fmedia%2Fgames%2F86f%2F86f2dc1b9671f25a13ff92e069b51786.jpg",
+  "posters": [
+   "/api/media/proxy?url=https%3A%2F%2Fmedia.rawg.io%2Fmedia%2Fgames%2F86f%2F86f2dc1b9671f25a13ff92e069b51786.jpg",
+   "/api/media/proxy?url=https%3A%2F%2Fshared.akamai.steamstatic.com%2Fstore_item_assets%2Fsteam%2Fapps%2F3768760%2F9f0d16a4d9a826d62cddf7f5ea25d10b4b2f45b9%2Fheader_alt_assets_3.jpg%3Ft%3D1790084095",
+   "/api/media/proxy?url=https%3A%2F%2Fmedia.rawg.io%2Fmedia%2Fscreenshots%2F09a%2F09a91ae875c2d3cc9b0d7aa73ea816bd.jpg"
+  ],
+  "posterMode": "slideshow",
+  "mediaCount": 62,
+  "durationSeconds": 811666,
+  "durationText": "9天 9小时",
+  "metacriticScore": 87,
+  "metacriticCriticCount": null,
+  "metacriticManual": true,
+  "metacriticPlatform": "PlayStation 5",
+  "metacriticSource": "metacritic",
+  "metacriticReleaseDate": "May 27, 2026",
+  "metaError": null,
+  "firstPlayedAt": "2026-07-18T15:20:16.000Z",
+  "lastPlayedAt": "2026-07-28T00:48:02.000Z"
+ },
+ {
+  "customOrder": 2048,
+  "id": "7abe547a-37d3-5c10-82ed-1a9cb7960b4b",
+  "name": "Amber Alert",
+  "folderPath": "/media/Amber Alert",
+  "platform": "PC",
+  "platforms": [
+   "PC"
+  ],
+  "customPlatform": false,
+  "posterUrl": "/api/media/proxy?url=https%3A%2F%2Fmedia.rawg.io%2Fmedia%2Fscreenshots%2F063%2F063cb0836668fdbfaa7f9bb8b5357f97.jpg",
+  "posters": [
+   "/api/media/proxy?url=https%3A%2F%2Fmedia.rawg.io%2Fmedia%2Fscreenshots%2F063%2F063cb0836668fdbfaa7f9bb8b5357f97.jpg"
+  ],
+  "posterMode": "static",
+  "mediaCount": 19,
+  "durationSeconds": 3748,
+  "durationText": "1小时 2分钟",
+  "metacriticScore": null,
+  "metacriticCriticCount": null,
+  "metacriticManual": false,
+  "metacriticPlatform": null,
+  "metacriticSource": null,
+  "metacriticReleaseDate": null,
+  "metaError": null,
+  "firstPlayedAt": "2026-05-07T13:24:39.000Z",
+  "lastPlayedAt": "2026-05-07T14:27:07.000Z"
+ },
+ {
+  "customOrder": 4096,
+  "id": "d2da594a-20cd-5622-9e69-d40050a458d8",
+  "name": "Assassin's Creed Mirage",
+  "folderPath": "/media/Assassin's Creed® Mirage",
+  "platform": "PC",
+  "platforms": [
+   "PC"
+  ],
+  "customPlatform": false,
+  "posterUrl": "/api/media/proxy?url=https%3A%2F%2Fmedia.rawg.io%2Fmedia%2Fgames%2Ffbd%2Ffbd0128013b7965904be571e75fb30c0.jpg",
+  "posters": [
+   "/api/media/proxy?url=https%3A%2F%2Fmedia.rawg.io%2Fmedia%2Fgames%2Ffbd%2Ffbd0128013b7965904be571e75fb30c0.jpg"
+  ],
+  "posterMode": "static",
+  "mediaCount": 32,
+  "durationSeconds": 585202,
+  "durationText": "6天 18小时",
+  "metacriticScore": 76,
+  "metacriticCriticCount": 99,
+  "metacriticManual": false,
+  "metacriticPlatform": null,
+  "metacriticSource": "auto",
+  "metacriticReleaseDate": null,
+  "metaError": null,
+  "firstPlayedAt": "2026-02-16T20:22:56.000Z",
+  "lastPlayedAt": "2026-02-23T14:56:18.000Z"
+ }
+]

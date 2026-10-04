@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- GENERATED FILE — 请勿手改；由 `node scripts/brand-icons.mjs` 从 web/public/favicon.svg 生成。 -->
-<!-- 前景层：白色品牌字形，落在中心 72dp 安全区内。 -->
+<!-- 主题图标单色层：同一几何，系统负责着色。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"

@@ -20,6 +20,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/api_client.dart';
 import '../core/prefs.dart';
 import '../providers/api_providers.dart';
+import '../widgets/brand_mark.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -143,7 +144,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: <Widget>[
-          Icon(Icons.lock_outline, size: 64, color: theme.colorScheme.secondary),
+          // 与 Web 登录页同一个品牌块（web/src/pages/Login.tsx:36-37）。
+          const Center(child: BrandMark(size: 64, shadow: true)),
           const SizedBox(height: 12),
           Text(
             '登录 ScreenPlay',

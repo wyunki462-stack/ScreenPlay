@@ -3,7 +3,6 @@
 // 顶栏提供「分享 / 保存到相册 / 删除」；分享与保存按 mediaQualityProvider 传清晰度，
 // 文件名用 media.fileName。严格禁止上传：只做下载到本机 + 系统分享 / 写相册。
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +14,7 @@ import '../core/media_actions.dart';
 import '../core/network_quality.dart';
 import '../core/prefs.dart';
 import '../models/models.dart';
+import 'authed_image.dart';
 import 'media_tile.dart';
 
 class VideoPlayerScreen extends ConsumerStatefulWidget {
@@ -231,7 +231,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
           children: <Widget>[
             if (_posterUrl != null && _posterUrl!.isNotEmpty)
               Positioned.fill(
-                child: CachedNetworkImage(
+                child: AuthedImage(
                   imageUrl: _posterUrl!,
                   fit: BoxFit.contain,
                   errorWidget: (BuildContext context, String url, Object error) =>

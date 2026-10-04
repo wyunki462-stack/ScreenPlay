@@ -65,9 +65,11 @@
 | 11 | **`1.3.0`**：Linux 端全量性能优化（内存 / 镜像 / 磁盘 / 依赖 / 缓存），功能、交互、数据结构与接口未变 | 12 个离线套件 / 434 条断言 + 真机前后实测对照 |
 | 12 | **`1.3.1`（仅 Windows 桌面端）**：自定义排序拖拽修复（WebView2 拖放接管）、详情页分级加载 + 骨架屏 + 图片/数据本地缓存、空相册文件夹直接空态 | `node windows/scripts/verify-desktop.mjs` 桌面自检 + Web 端类型检查 |
 | 13 | **`1.3.1`（安卓端 Flutter 客户端，Linux/Windows 服务版号仍为 `1.3.0`）**：安卓端首次可用（登录 / 两列网格 / 长按拖拽排序 / 卡片海报左右滑动 / 长按删除媒体 / 分享与存相册 / WiFi 原图策略 / 三级缓存 / 后台省电），后端新增 `DELETE /api/media/:id` 并让 `/api/auth/session`、`logout` 识别 Bearer | `flutter analyze`（0 error）+ `backend/scripts/verify/media-delete-e2e.mjs`（22 项）+ `android-auth-bearer.mjs`（19 项）+ `bash scripts/verify-suites.sh`（18 项 / 508 条断言 / 211 s）+ NAS 上 `flutter build apk --release --split-per-abi` 出包（真机交互验收待用户设备） |
+| — | **`1.3.1+2`（仅安卓端，后端 / Web / Linux 镜像 / Windows 未动）**：连 Linux 后端后**大部分海报不显示**（图片端点要凭证而 `CachedNetworkImage` 绕过拦截器 ⇒ 401；且卡片退化成远端 CDN 直链）、**点任意卡片都「加载详情失败」**（详情的 `achievements[]` 是 snake_case 而模型只读 camelCase）、**只有卡片下方文字能进详情**（轮播层的手势吸收层吃掉点击）、**图标未统一**（应用图标 + 页内品牌标记改为与 Web 同源生成）、**首页新增下拉刷新**（`POST /api/library/scan` 后全量重取列表与统计） | `flutter test`（43 项 / 1 跳过）+ 连真实 Linux 后端的 `flutter/test/live_backend_test.dart`（7/7：39 游戏全部有海报来源、详情 39/39 解析、封面带凭证 200 / 不带 401、远端 CDN 经代理 200）+ `node scripts/brand-icons.mjs --check` + `bash scripts/verify-suites.sh`（18 项 / 508 条断言 / 235 s）+ 重出三个 ABI 分包（真机交互验收待用户设备） |
 
 累计约 **22 项编号需求**的落地与回归，外加第 7～10 轮的修复项、`1.2.0` 的桌面端 / 三端图标统一、
-`1.3.0` 的性能优化、`1.3.1` 的桌面端三项修复与安卓端首个客户端（Linux 服务版号与镜像不变）。
+`1.3.0` 的性能优化、`1.3.1` 的桌面端三项修复与安卓端首个客户端（Linux 服务版号与镜像不变）、
+`1.3.1+2` 的安卓端「连 Linux 后端五项体验修复」（海报 / 详情 / 点击热区 / 图标统一 / 下拉刷新，后端未动）。
 每轮的完整验收记录（含实测输出）保留在 [`docs/VERIFY.md`](docs/VERIFY.md)。
 
 > 上表里的一次性轮次脚本（`scripts/verify-round-*.sh`、`scripts/verify-*.mjs` 等 37 个文件）
@@ -82,7 +84,10 @@
   无代理环境下会明确报「抓取失败」而不是静默返回空数据，但届时无法取到评价。
 - **验证脚本需要密钥**：仓库中**不包含任何真实 API 密钥**。缺少 `RAWG_API_KEY`
   等凭据时，依赖联网的检查组会**明确跳过并说明原因**，不会假装通过。
-- **FLAC/平台覆盖**：Flutter 客户端（`flutter/`）为早期版本，功能落后于 Web 端。
+- **客户端成熟度**：Flutter 客户端（`flutter/`，安卓端 `1.3.1+2`）与 Web 端在**图库 / 详情 / 相册 / 播放 /
+  分享 / 删除**主链路上已对齐（海报显示、详情渲染、整卡点击、图标、下拉刷新同步均与 Web 端一致）；
+  尚未覆盖的是 Web 端**详情页的 Metacritic 媒体评价面板**与**设置页的高级项**（数据源凭据、维护工具等），
+  详见 [`flutter/README.md`](flutter/README.md)。
 
 ---
 

@@ -6,6 +6,74 @@
 
 ---
 
+## [1.3.1+2] — 2026-10-04（安卓端：连 Linux 后端的五项体验修复）
+
+**只动安卓端 Flutter 客户端（`flutter/`），后端、Web、Linux 镜像、Windows 桌面端一行未改**
+（`node scripts/gen-source-hash.mjs --check` 仍是 `a0e18c54d5340a97`，137 个文件；`/api/health` 在
+Linux 端仍是 `1.3.0`）。安卓端 `versionName` 保持 `1.3.1`（三端版号一致），只把 build number 升到
+`1.3.1+2`（`versionCode` 2 / 分包后 2002），便于区分安装包。变更点全量说明见
+[`flutter/docs/ANDROID-1.3.1.md`](flutter/docs/ANDROID-1.3.1.md) §9。
+
+### 修复（用户报障 5 项，均在真实 Linux 后端上复现取证后修复）
+
+1. **连 Linux 后端后大部分海报不显示**：两个根因 —— (a) `/api/media/*`、`/api/media/proxy`、
+   `/api/posters/*` 等图片端点都要求凭证，而 `CachedNetworkImage` 走 dart:io、**不经过 Dio 拦截器**
+   ⇒ 一律 401（实测同图带凭证 `200 image/jpeg 52,927 B`、不带凭证 `401`；Windows 端 `AUTH_DISABLED=1`
+   才不暴露）；(b) 列表里的 `posters[]` 没被 App 读，卡片退化成海报接口的**远端 CDN 直链**，手机在大陆
+   网络下基本取不到。修法：新增 `imageHeaders`（Bearer + Cookie）与 `imageSource()`（远端图统一走
+   后端 `/api/media/proxy`）、`cardImageSource()`（`/preview` → `/thumbnail`，与 Web `cardFrame()` 逐字一致）、
+   `cardPosterSources()`（封面 + `game.posters` 去重，与 Web `cardPosters()` 同源同序）；新增
+   `AuthedImage` 并替换 App 内 **7 处** `CachedNetworkImage`（卡片 / 视频封面 / 相册封面 / 大图查看器 /
+   详情头部海报 / 媒体 PageView / 成就图标）；首页卡片海报改为列表直传。
+2. **点任意卡片都「加载详情失败」**：详情内嵌 `achievements[]` 是 **snake_case**，而 `Achievement.fromJson`
+   只读 `json['gameId'] as String` ⇒ `type 'Null' is not a subtype of type 'String'`，且 `_parseList` 当时
+   没有逐项容错 ⇒ 一行坏数据打挂整个 `GameDetail`（39 个游戏里 34 个点开必失败；Web 不读这个数组、
+   Windows 测试库没有成就数据，所以只有安卓端暴露）。修法：成就字段同时接受 camelCase ∪ snake_case、
+   `_parseList` 逐项 try/catch、`GameSummary` / `Poster` 去掉 `as String` 硬转。**后端 DTO 未改**。
+3. **只有卡片下方文字能进详情**：多海报轮播层上的手势吸收层把点击吃掉了（`onTap: () {}`），改为转交
+   卡片的 `onTap`。**只注册 onTap 不注册长按**，以免与自定义排序的 `LongPressDraggable` 抢手势。
+4. **应用图标与左上角图标未统一**：新增零依赖生成器 `scripts/brand-icons.mjs`（断言 `web/public/favicon.svg`
+   的品牌常量并把 SVG 路径转成 Dart `Path` / 安卓 VectorDrawable），产出安卓自适应图标的前景（品牌 Gamepad2
+   字形，替换旧的紫色三角）、背景（品牌对角渐变 #7c3aed→#06b6d4）、单色层与 `mipmap-anydpi-v26/ic_launcher.xml`；
+   App 内新增 `BrandMark`（与 Web 页眉同一套比例 20/36），用于首页 AppBar leading 与连接页 / 登录页头图。
+5. **首页新增下拉刷新（与后端全量同步）**：网格套 `RefreshIndicator` +
+   `AlwaysScrollableScrollPhysics`；触发时 `POST /api/library/scan`（与 Web「重新扫描」同一端点，后端是
+   后台任务、实测 24–26 ms 返回）→ 重取游戏列表与统计 → 清掉本地自定义顺序覆盖，失败弹「同步失败」。
+
+### 验证
+
+- `cd flutter && flutter analyze`：**0 error / 0 warning**（7 条 `deprecated_member_use` info 为既有写法）。
+- `cd flutter && flutter test`：**43 项通过 / 1 项跳过**（新增 `models_parse_test.dart` 13 例、
+  `api_client_urls_test.dart` 16 例、`brand_mark_test.dart` 10 例、`game_card_tap_test.dart` 4 例
+  —— 最后一组直接点海报区与信息行验证「整卡可点」、并断言海报区吸收层不注册长按、横向滑动不进详情；
+  跳过的是真后端用例的占位）。
+- 连真实 Linux 后端（Docker 复现环境，39 游戏 / 1917 媒体）的端到端用例 `flutter/test/live_backend_test.dart`：
+  **7/7 通过**（`--dart-define=SP_LIVE_BASE=http://127.0.0.1:3007`）—— 列表 39 个游戏全部可解析且海报来源
+  全部指向本服务端（合计 41 张 / 无海报 0 个）；**逐个游戏详情 39/39 解析成功**（其中 34 个带成就）；
+  抽检 10 张封面带凭证 `200 image/jpeg|webp`、**不带凭证 401**；远端 CDN 海报经代理 `200 image/jpeg`；
+  成就图标抽样鉴权失败 0；`POST /api/library/scan` 24–26 ms 返回。
+- `node scripts/brand-icons.mjs --check`：✓ 产物与 `web/public/favicon.svg` 一致。
+- 整仓离线全量回归 `bash scripts/verify-suites.sh`：**18 项通过 / 0 项失败 / 508 条断言**（235 s；后端与
+  Web 一行未改，与 1.3.1 首发同一批套件）。
+- 安卓包：`app-arm64-v8a-release.apk` 21,243,136 B / `app-armeabi-v7a-release.apk` 18,800,086 B /
+  `app-x86_64-release.apk` 22,427,527 B；`aapt2 dump badging` ⇒ `versionCode 2002` / `versionName 1.3.1` /
+  `minSdk 28` / `targetSdk 34`，权限集合与首发包逐条相同；`apksigner verify` ⇒ `Verifies`（v2 方案，
+  debug keystore 同上版）。真机交互验收（整卡点击手感、下拉刷新手势、launcher 图标观感、大陆网络下海报加载）
+  仍待用户设备执行。
+
+### 顺带记录（不在本轮范围、未改后端）
+
+- **服务端成就图标数据缺陷**：`GET /api/games/:id` 内嵌 `achievements[].icon_url` 有 **1409/1738（81%）**
+  是「域名+路径后又拼一个完整 URL」的双重地址（尾巴指向已下线的 `steamcdn-a.akamaihd.net`），怎么取都 502；
+  正确形式实测可用（`https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/<appid>/<hash>.jpg`
+  → `200 image/jpeg 18,633 B`）。`media[].coverUrl`（0/335 坏）与 `/posters` 的 `url`（0/536 坏）都正常，
+  缺陷只集中在成就图标，**Web 端同样显示裂图**，App 退回奖杯占位图标、不劣于 Web。建议后续在后端爬虫侧加
+  绝对 URL 守卫 + 一次性迁移归一化。
+- 合并清单里的 `READ_EXTERNAL_STORAGE`（`maxSdkVersion=28`）由插件清单合并带入，为**首发包既有**项，
+  非本轮新增（此前文档只记了主清单的 3 项权限，已在 `flutter/docs/ANDROID-1.3.1.md` 按实测补齐）。
+
+---
+
 ## [1.3.1] — 2026-10-04（安卓端 Flutter 客户端首发）
 
 **本轮新增安卓端首个客户端（`flutter/`，版号 `1.3.1`）**，并为此在后端做了**两个纯加法改动**：

@@ -5,7 +5,6 @@
 // 顶栏可手动切换并即时换 URL 重新加载；两种清晰度用 qualityCacheKey 区分为不同缓存键，
 // 都走 screenplayImageCache（内存 + 磁盘），避免来回切换时互相顶掉缓存。
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +15,7 @@ import '../core/media_actions.dart';
 import '../core/network_quality.dart';
 import '../core/prefs.dart';
 import '../models/models.dart';
+import 'authed_image.dart';
 import 'media_tile.dart';
 
 /// 查看器中的单张图片条目。
@@ -355,10 +355,9 @@ class _ZoomableImageState extends State<_ZoomableImage> {
         scaleEnabled: true,
         child: Hero(
           tag: widget.heroTag,
-          child: CachedNetworkImage(
+          child: AuthedImage(
             imageUrl: widget.imageUrl,
             cacheKey: widget.cacheKey,
-            cacheManager: screenplayImageCache,
             fit: BoxFit.contain,
             placeholder: (BuildContext context, String url) =>
                 const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF))),

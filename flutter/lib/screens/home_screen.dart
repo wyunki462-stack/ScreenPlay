@@ -8,6 +8,12 @@
 //    乐观重排，再调 reorderGamesProvider.run(...) 同步服务端；失败回滚 + 中文 SnackBar。
 //  - 低功耗：监听滚动速度写 fastScrollingProvider，只有 preloadAllowedProvider（前台且
 //    非快速滚动）为真且卡片进入邻近可见范围时才允许卡片预取海报。
+//  - 海报来源与 Web 端对齐：列表项直接带上 `api.cardPosterSources(game)`（封面 + 后端
+//    轮播集合，preview→thumbnail、远端 CDN→NAS 代理），卡片不再各自去拉 postersProvider。
+//  - 整卡可点：海报区不再吞掉点击，整张卡片任意位置都能进详情页（见 game_card.dart）。
+//  - 左上角品牌图标：AppBar leading 用 [BrandMark]（与 Web 页眉/Windows/安卓图标同源）。
+//  - 下拉刷新：RefreshIndicator 触发 `POST /api/library/scan`（与 Web 端「重新扫描」同
+//    语义的全量同步：游戏列表 / 海报 / 元数据 / 评分 / 成就），再拉一次列表与统计。
 
 import 'dart:async';
 
@@ -19,6 +25,7 @@ import '../core/app_lifecycle.dart';
 import '../models/models.dart';
 import '../providers/api_providers.dart';
 import '../utils/format.dart';
+import '../widgets/brand_mark.dart';
 import '../widgets/game_card.dart';
 import '../widgets/settings_screen.dart';
 
@@ -156,6 +163,43 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  /// 下拉刷新 —— 与 Web 端「重新扫描」同语义的全量同步。
+  ///
+  /// `POST /api/library/scan` 在后端是**后台任务**（立即返回 `{started:true}`），扫描过程会
+  /// upsert 游戏、元数据、海报、评分、成就。所以这里的顺序是：
+  ///   1. 触发扫描（同时 invalidate 列表 / 统计 / 资料库状态）；
+  ///   2. 立刻按最新数据重取列表与统计 —— 下拉手势等到「新数据到手」才收圈，
+  ///      而不是只等到「扫描已排入队列」；
+  ///   3. 若服务端改了游戏顺序（自定义排序），丢掉本地乐观顺序覆盖。
+  Future<void> _refresh() async {
+    await ref.read(scanLibraryProvider.notifier).run();
+    final AsyncValue<void> scanState = ref.read(scanLibraryProvider);
+    if (!mounted) return;
+    if (scanState.hasError) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('同步失败：${scanState.error}')),
+      );
+      return;
+    }
+
+    try {
+      await Future.wait<void>(<Future<void>>[
+        ref.refresh(gamesProvider(_filter()).future),
+        ref.refresh(statsProvider.future),
+      ]).timeout(const Duration(seconds: 15));
+    } on TimeoutException {
+      // 超时不打断下拉手势：数据到了自然会重建。
+    } catch (_) {
+      // 列表自身的错误态由网格渲染，这里不额外弹窗。
+    }
+    if (!mounted) return;
+    // 服务端顺序可能已变，本地自定义顺序覆盖作废（重新按服务端顺序渲染）。
+    setState(_clearCustomOrderOverride);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已与后端同步')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final AsyncValue<Stats> statsAsync = ref.watch(statsProvider);
@@ -165,6 +209,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        // 左上角品牌图标：与 Web 页眉品牌块、Windows 安装包图标、安卓应用图标同源
+        // （几何真源 web/public/favicon.svg，见 widgets/brand_mark.dart）。
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 12, top: 12, bottom: 12),
+          child: BrandMark(size: 32),
+        ),
+        leadingWidth: 56,
         title: const Text('ScreenPlay'),
         actions: <Widget>[
           if (_sort == 'custom')
@@ -216,7 +267,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ],
             ),
           ),
-          Expanded(child: _buildGameGrid(preloadAllowed)),
+          // 下拉刷新：与 Web 端「重新扫描」同语义的全量同步（列表 / 海报 / 元数据 / 评分 /
+          // 成就）。网格用 AlwaysScrollableScrollPhysics，内容不足一屏时也能下拉。
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: _buildGameGrid(preloadAllowed),
+            ),
+          ),
         ],
       ),
     );
@@ -298,6 +356,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               onNotification: _onScrollNotification,
               child: GridView.builder(
                 controller: _scrollController,
+                // 内容不足一屏时也要能拖动 → 下拉刷新在任何状态下都可用。
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(_kGridPadding),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: columns,
@@ -308,17 +368,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 itemCount: ordered.length,
                 itemBuilder: (BuildContext context, int index) {
                   final GameSummary game = ordered[index];
+                  // 海报来源与 Web 端逐条对齐（web/src/components/GameCard.tsx 的
+                  // cardPosters()）：封面 + 后端轮播集合，preview→thumbnail、
+                  // 远端 CDN→NAS 代理。卡片拿到列表就直接渲染，不再各自发请求。
+                  final List<String> posterUrls = api.cardPosterSources(game);
                   final String? poster =
-                      game.posterUrl == null ? null : api.resolve(game.posterUrl!);
+                      posterUrls.isEmpty ? null : posterUrls.first;
 
-                  // 可见范围 + 缓冲：只有落在「可见行 ± 1 行」内且允许预取时，
-                  // 才把卡片标记为可预取（卡片内部才会去 watch postersProvider）。
+                  // 兜底：列表没带任何海报时（老后端 / 只有 postersProvider 有数据），
+                  // 仍沿用「可见范围 + 缓冲」的按需预取。
                   final bool inPreloadWindow =
                       preloadAllowed && _inPreloadWindow(index);
 
                   final Widget card = GameCard(
                     game: game,
                     posterUrl: poster,
+                    posterUrls: posterUrls,
                     onTap: () => _openGame(game),
                     allowPosterPrefetch: inPreloadWindow,
                   );

@@ -4,7 +4,6 @@
 // 视频页三处入口行为必须一致（同样的中文说明、同样的 401 提示、同样的失效语义），
 // 放在这里统一实现，避免三处各写一遍分叉。
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,6 +12,7 @@ import '../core/app_lifecycle.dart';
 import '../core/media_actions.dart';
 import '../models/models.dart';
 import '../providers/api_providers.dart';
+import 'authed_image.dart';
 
 class MediaTile extends StatelessWidget {
   const MediaTile({
@@ -77,7 +77,7 @@ class MediaTile extends StatelessWidget {
     );
 
     if (coverUrl == null || coverUrl!.isEmpty) return fallback;
-    return CachedNetworkImage(
+    return AuthedImage(
       imageUrl: coverUrl!,
       fit: BoxFit.cover,
       placeholder: (BuildContext context, String url) => fallback,

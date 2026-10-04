@@ -1,13 +1,15 @@
-# ScreenPlay — Flutter 客户端（安卓端 `1.3.1`）
+# ScreenPlay — Flutter 客户端（安卓端 `1.3.1+2`）
 
 个人游戏媒体图库管理器的**纯客户端**：所有数据都来自后端 HTTP API（权威契约见
 [`../docs/API.md`](../docs/API.md)），本客户端**不做本地抓取或业务逻辑**，也不上传任何文件。
 
-- 版号：**`1.3.1`**（`pubspec.yaml` 的 `version: 1.3.1+1`）。Linux 服务端 / Docker 镜像 /
-  Windows 桌面端的服务版号**不随本客户端变化**（Linux 端 `/api/health` 仍是 `1.3.0`）。
+- 版号：**`1.3.1`**，`pubspec.yaml` 的 `version: 1.3.1+2`（只有 build number 递增，分包后
+  `versionCode` arm64 `2002` / v7a `1002` / x86_64 `4002`，便于与首发 `1.3.1+1` 区分）。
+  Linux 服务端 / Docker 镜像 / Windows 桌面端的服务版号**不随本客户端变化**（Linux 端 `/api/health` 仍是 `1.3.0`）。
 - 目标平台：**Android 9.0+（minSdk 28，targetSdk 34）**。Windows 桌面端由仓库根目录的
   `windows/`（Tauri v2 外壳 + Web 前端）承担，**本目录不构建 Windows Runner**。
-- 本轮（安卓端 1.3.1）的完整变更说明：见 [`docs/ANDROID-1.3.1.md`](docs/ANDROID-1.3.1.md)。
+- 变更说明：首发（安卓端 `1.3.1+1`）与修订 2（`1.3.1+2`，连 Linux 后端五项体验修复）见
+  [`docs/ANDROID-1.3.1.md`](docs/ANDROID-1.3.1.md)（修订 2 在 **§9**）。
 
 ---
 
@@ -46,13 +48,17 @@ flutter/
 │   │   ├── game_detail_screen.dart     # 详情头图 + TabBar 分区 + 相册
 │   │   └── settings_screen.dart        # 服务器地址、两个开关、清理图片缓存、退出登录
 │   ├── widgets/
-│   │   ├── game_card.dart              # 游戏卡片（海报左右滑动 / 长按拖拽排序 / 徽章）
+│   │   ├── authed_image.dart           # 带凭证的 CachedNetworkImage（Bearer + Cookie，全 App 图片唯一入口）
+│   │   ├── brand_mark.dart             # 页内品牌标记（与 Web 页眉同源的渐变方块 + 手柄字形）
+│   │   ├── brand_glyph.dart            # 品牌字形几何（由 scripts/brand-icons.mjs 生成，勿手改）
+│   │   ├── game_card.dart              # 游戏卡片（海报左右滑动 / 长按拖拽排序 / 整卡可点）
 │   │   ├── media_tile.dart             # 图片/视频网格单元 + 长按删除
 │   │   ├── photo_viewer.dart           # 大图查看（捏合缩放、预览/原图切换）
 │   │   └── video_player_screen.dart    # 全屏播放（/stream）+ 分享/保存/删除
 │   └── utils/format.dart               # 时长等格式化
 ├── android/                            # Android 原生壳（Manifest、Gradle、wrapper）
-├── docs/ANDROID-1.3.1.md               # 本轮变更说明（交付文档）
+├── docs/ANDROID-1.3.1.md               # 变更说明（交付文档）
+├── test/                               # Dart 单元 / 组件测试 + 真后端端到端用例（默认跳过）
 ├── pubspec.yaml / pubspec.lock
 ├── analysis_options.yaml
 └── README.md
@@ -64,8 +70,20 @@ flutter/
 
 - **游戏库**：默认一行 2 个卡片（宽 ≥600 三列、≥900 四列），格子比例按宽度反推；
   搜索（防抖）、平台/排序筛选（排序含「**自定义排序**」）、统计栏。
-- **卡片**：海报**左右滑动**切换（仅多张海报时挂载滑动层，避免误触）；**长按卡片**触发拖拽排序，
-  松手即乐观更新并 `PUT /api/games/order` 同步，失败回滚并提示。
+- **下拉刷新（与后端全量同步）**：首页顶部下拉 ⇒ `POST /api/library/scan`（与 Web「重新扫描」同一端点，
+  后端是后台任务、实测 24–26 ms 返回）+ 重取列表与统计 + 清掉本地自定义顺序覆盖；成功后提示「已与后端同步」，
+  失败提示「同步失败：…」且不清空列表。内容不足一屏也能下拉（`AlwaysScrollableScrollPhysics`）。
+- **图片通道**：所有图片（卡片海报、详情头图与截图、相册封面、大图、视频封面、成就图标）统一走
+  `AuthedImage` ⇒ 自动带 `Authorization: Bearer` + `Cookie: screenplay_session`；远端 CDN 图片经后端
+  `/api/media/proxy` 取回（手机直连境外 CDN 在大陆网络下不可用），卡片用 `/thumbnail`（与 Web 端
+  `cardFrame()` 同一套正则与取值），其余按清晰度取 `/preview` 或原图。
+- **品牌图标**：应用图标（自适应图标前景 / 背景 / 单色层）与页内 `BrandMark`（首页左上角、连接页 / 登录页头图）
+  都由 [`../scripts/brand-icons.mjs`](../scripts/brand-icons.mjs) 按 `web/public/favicon.svg` 生成，保证三端一致；
+  `flutter test tool/render_brand_icons.dart`（在 `flutter/` 下跑）会把两者渲染成 `docs/brand-mark-192.png` 与
+  `docs/brand-launcher-192.png`，供人工核对。
+- **卡片**：海报**左右滑动**切换（仅多张海报时挂载滑动层，避免误触）；**整卡任意位置可点**进详情
+  （海报层上的手势吸收层转交卡片的 `onTap`；只注册点击、不注册长按，以免与拖拽抢手势）；
+  **长按卡片**触发拖拽排序，松手即乐观更新并 `PUT /api/games/order` 同步，失败回滚并提示。
 - **相册**：图片/视频网格；**长按删除**（确认弹窗）；
   - 「删除同步到服务端」开启（默认）：调 `DELETE /api/media/:id` 删除服务端文件与索引；
   - 关闭：只清本机缓存并从列表本地隐藏，**不发网络请求**。
@@ -94,6 +112,9 @@ flutter/
 - `ACCESS_NETWORK_STATE`：区分 WiFi/以太网与移动数据（决定取原图还是预览图），普通权限，不弹窗。
 - `WRITE_EXTERNAL_STORAGE`（仅 Android 9 及以下）：保存到系统相册；Android 10+ 走 MediaStore，不再申请。
 - **不申请**：定位、相机、传感器、读取相册（`READ_EXTERNAL_STORAGE` / `READ_MEDIA_*`）。
+  注：`aapt2 dump badging` 实测**合并后的 APK** 里除了上面 3 项，还有插件清单合并带入的
+  `READ_EXTERNAL_STORAGE`（`maxSdkVersion=28`，仅 Android 9 及以下生效，非本端声明）与
+  `com.screenplay.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`（Android 13+ 的接收器保护）。
 - `android:usesCleartextTraffic="true"`：后端默认 `http://`（本机/局域网），保留；生产换 HTTPS 后可移除。
 - `minSdk 28`（Android 9.0）、`targetSdk 34`、`compileSdk 34`、包名 `com.screenplay.app`。
 
@@ -166,10 +187,21 @@ flutter build apk --release --split-per-abi
 ## 验证
 
 ```bash
-cd flutter && flutter analyze                                  # 期望 0 error（当前 7 条 info：riverpod 弃用提示）
-node ../backend/scripts/verify/media-delete-e2e.mjs            # 后端删除接口：22 项断言
-node ../backend/scripts/verify/android-auth-bearer.mjs         # 无 Cookie 的 Bearer 会话：19 项断言
+cd flutter
+flutter analyze                       # 期望 0 error / 0 warning（7 条 info：riverpod 2.6.1 弃用提示）
+flutter test                          # 期望 43 项通过 / 1 项跳过（跳过的是真后端用例的占位）
+node ../scripts/brand-icons.mjs --check   # 品牌图标产物 = web/public/favicon.svg（零依赖，漂移即 exit 1）
+node ../backend/scripts/verify/media-delete-e2e.mjs    # 后端删除接口：22 项断言
+node ../backend/scripts/verify/android-auth-bearer.mjs # 无 Cookie 的 Bearer 会话：19 项断言
 ```
 
-真机交互验收（拖拽排序手感、系统分享面板、保存到相册、移动数据下取预览图等）请按
-[`../docs/VERIFY.md`](../docs/VERIFY.md) 的清单执行。
+`test/` 下的用例：`models_parse_test.dart`（列表 / 详情解析、snake_case ∪ camelCase 成就、逐项容错、海报列表）、
+`api_client_urls_test.dart`（`resolve` / `imageSource` / `cardImageSource` / `cardPosterSources` / `imageHeaders`）、
+`brand_mark_test.dart`（品牌常量、字形包围盒、20/36 比例、安卓资源同源）、`game_card_tap_test.dart`
+（整卡可点：点海报区 / 信息行都进详情、吸收层不注册长按、横向滑动不进详情）、`live_backend_test.dart`
+（**真后端端到端，默认跳过**：填 `--dart-define=SP_LIVE_BASE=http://<后端>:<端口>` 才跑，覆盖「列表与详情
+全量可解析 + 海报来源齐全 + 图片凭证必需（无凭证必须 401）+ 远端图经代理可取 + 成就图标鉴权失败为 0」；
+复用 Docker 复现环境的跑法见 [`../docs/VERIFY.md`](../docs/VERIFY.md) 的 1.3.1+2 节）。
+
+真机交互验收（整卡点击手感、下拉刷新手势、launcher 图标观感、移动数据下海报加载、拖拽排序手感、
+系统分享面板、保存到相册等）请按 [`../docs/VERIFY.md`](../docs/VERIFY.md) 的清单执行。

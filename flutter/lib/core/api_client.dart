@@ -143,6 +143,22 @@ class ApiClient {
     _nonEssentialToken = CancelToken();
   }
 
+  /// 图片请求头（与业务请求同一套双通道凭证）。
+  ///
+  /// 为什么需要单独暴露：`CachedNetworkImage` / `Image.network` 直接走 dart:io 的
+  /// HTTP 客户端，**不经过上面 Dio 的拦截器**。Linux 后端默认 `AUTH_MODE=system`
+  /// （鉴权开启）时，`/api/media/*`、`/api/media/proxy`、`/api/posters/*` 等图片端点
+  /// 无凭证一律 401 —— 现象就是「连 Linux 后端后大部分海报不显示、只有彩色渐变占位」。
+  /// （Windows 桌面端 `AUTH_DISABLED=1` 无凭证放行，所以只在 Linux 后端暴露出来。）
+  Map<String, String> get imageHeaders {
+    final String? token = _authToken;
+    if (token == null || token.isEmpty) return const <String, String>{};
+    return <String, String>{
+      'Authorization': 'Bearer $token',
+      'Cookie': 'screenplay_session=$token',
+    };
+  }
+
   /// 把相对/绝对地址归一为绝对 URL（相对地址一律以当前 baseUrl 为前缀）。
   String resolve(String pathOrUrl) {
     if (pathOrUrl.isEmpty) return pathOrUrl;
@@ -150,6 +166,61 @@ class ApiClient {
       return pathOrUrl;
     }
     return '$_baseUrl${pathOrUrl.startsWith('/') ? pathOrUrl : '/$pathOrUrl'}';
+  }
+
+  /// 图片地址归一化 —— 与 Web 端走**同一条**取图路径。
+  ///
+  ///  - 相对地址（`/api/media/...`，列表 `posterUrl` / 后端已代理过的地址）
+  ///    → 拼上 baseUrl，直连本服务端；
+  ///  - 远端 CDN 绝对地址（`https://media.rawg.io/...`、`*.steamstatic.com` 等，
+  ///    来自 `GET /api/games/:id/posters`、成就图标等）
+  ///    → 改走后端 `/api/media/proxy?url=…`：后端带代理抓取 + 磁盘缓存
+  ///    （见 backend/src/media/media.controller.ts 的 `proxy()` 与
+  ///    common/http/remote-image.service.ts）。手机直连境外 CDN 在大陆网络下基本
+  ///    不可用，这正是「部分海报显示、部分不显示、与 Web 数量不一致」的另一半原因。
+  ///  - 已是本服务端地址 → 原样返回。
+  String imageSource(String pathOrUrl) {
+    if (pathOrUrl.isEmpty) return pathOrUrl;
+    if (!pathOrUrl.startsWith('http://') && !pathOrUrl.startsWith('https://')) {
+      return resolve(pathOrUrl);
+    }
+    if (pathOrUrl.startsWith(_baseUrl)) return pathOrUrl;
+    return '$_baseUrl/api/media/proxy?url=${Uri.encodeComponent(pathOrUrl)}';
+  }
+
+  /// 媒体预览图地址 → 缩略图地址（`/api/media/:id/preview` → `/api/media/:id/thumbnail`）。
+  ///
+  /// 与 Web `web/src/components/GameCard.tsx` 的 `cardFrame()` 完全一致：卡片tile 只有
+  /// ~300px 宽，`/preview` 是一张 2.5–9.8 MB 的 4K 图，`/thumbnail` 是磁盘缓存的
+  /// ~6 KB WebP，观感相同而带宽差三个数量级。只改写媒体 rendition，上传海报
+  /// （`/api/posters/:id/image`）与远端 CDN 图不动。
+  static final RegExp _mediaPreview = RegExp(r'^/api/media/([^/]+)/preview$');
+
+  String cardImageSource(String pathOrUrl) {
+    final RegExpMatch? match = _mediaPreview.firstMatch(pathOrUrl);
+    final String normalized =
+        match == null ? pathOrUrl : '/api/media/${match.group(1)}/thumbnail';
+    return imageSource(normalized);
+  }
+
+  /// 首页卡片的海报列表 —— 与 Web `cardPosters()` 逐条对齐：
+  /// 封面（`game.posterUrl`）优先，其后是后端给出的轮播集合（`game.posters`，
+  /// 判据 `in_slideshow = 1 OR is_selected = 1`），去重后全部走卡片封面档。
+  ///
+  /// 这样 App 卡片显示的张数、顺序、清晰度档位与 Web 端完全一致；返回长度 ≤ 1 时
+  /// 卡片按单张图渲染（无轮播、无指示点），与 Web 的 `PosterCarousel` 同规则。
+  List<String> cardPosterSources(GameSummary game) {
+    final List<String> raw = <String>[
+      if (game.posterUrl != null && game.posterUrl!.isNotEmpty) game.posterUrl!,
+      ...game.posters,
+    ];
+    final List<String> out = <String>[];
+    for (final String url in raw) {
+      if (url.isEmpty) continue;
+      final String source = cardImageSource(url);
+      if (!out.contains(source)) out.add(source);
+    }
+    return out;
   }
 
   /// `/api/media/:id/original`（用于「查看原图」）。

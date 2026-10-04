@@ -18,7 +18,7 @@
 | HTTP 接口 | **只增不改**：新增 `DELETE /api/media/:id`；`GET /api/auth/session`、`POST /api/auth/logout`、`POST /api/auth/password` 增加 `Authorization: Bearer` 识别，Cookie 行为原样保留（Cookie 优先）。其余端点、DTO、状态码、分页口径全未改动 |
 | 数据库 | **结构零改动**：无新表、无新列、无迁移；删除只删除既有 `media` 行并清理既有磁盘缓存文件 |
 | 既有功能 | Web 端此前**没有**删除媒体的入口，新增端点不影响既有 Web 页面；桌面端（Tauri 壳 + 同一份 Web 前端）行为不变 |
-| 版号 | 安卓端 `1.3.1`；`flutter/pubspec.yaml` `version: 1.3.1+1`（`versionCode` 1）。Linux 后端 / Docker 镜像 / 根 `package.json` 不变，`windows/package.json` 不动 |
+| 版号 | 安卓端 `1.3.1`；`flutter/pubspec.yaml` `version: 1.3.1+1`（`versionCode` 1）。Linux 后端 / Docker 镜像 / 根 `package.json` 不变，`windows/package.json` 不动。**2026-10-04 追加修订 2**：`version: 1.3.1+2`（`versionCode` 2，`versionName` 仍是 `1.3.1`），内容见 §9 |
 | 数据库兼容 | 安卓端只是消费者：Linux 容器、Windows 桌面端内置后端对同一份 SQLite 完全兼容 |
 
 ---
@@ -27,8 +27,8 @@
 
 | 交付物 | 位置 |
 | --- | --- |
-| 安卓安装包 | `flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk` 21,240,968 B（主推，现代手机）、`app-armeabi-v7a-release.apk` 18,797,918 B（老设备）、`app-x86_64-release.apk` 22,359,823 B（模拟器）；`--split-per-abi` 三个 ABI 分包，另有同内容便利副本在 `flutter/dist/`（已被 `.gitignore` 忽略，不入库） |
-| 客户端源码 | `flutter/lib/**`（20 个 Dart 文件）、`flutter/android/**`（清单、Gradle 三件套、wrapper） |
+| 安卓安装包 | 修订 2（`1.3.1+2`，2026-10-04）：`app-arm64-v8a-release.apk` **21,243,136 B**（主推，现代手机）、`app-armeabi-v7a-release.apk` **18,800,086 B**（老设备）、`app-x86_64-release.apk` **22,427,527 B**（模拟器）；`--split-per-abi` 三个 ABI 分包，另有同内容便利副本在 `flutter/dist/`（已被 `.gitignore` 忽略，不入库）。首发 `1.3.1+1` 三包为 21,240,968 / 18,797,918 / 22,359,823 B |
+| 客户端源码 | `flutter/lib/**`（20 个 Dart 文件）、`flutter/android/**`（清单、Gradle 三件套、wrapper）；修订 2 新增 `flutter/lib/widgets/{authed_image,brand_glyph,brand_mark}.dart`、`scripts/brand-icons.mjs`、`flutter/test/**`（见 §9） |
 | 后端源码 | `backend/src/media/media.controller.ts`、`backend/src/media/media.service.ts`、`backend/src/auth/auth.controller.ts` |
 | 验证脚本 | `backend/scripts/verify/media-delete-e2e.mjs`（22 项断言）、`backend/scripts/verify/android-auth-bearer.mjs`（19 项断言） |
 | 文档 | 本文件、`flutter/README.md`、`docs/API.md`（新增 `DELETE /api/media/:id` 与认证说明）、`CHANGELOG.md` |
@@ -350,3 +350,172 @@ XML 注释里**不能出现 `--`**，写说明时注意。
 4. 图片缓存上限（内存 80 MB / 磁盘 600 对象 / 30 天）在设置页只提供「清理」，未做容量可视化调节。
 5. Windows 桌面端若要支持安卓端删除服务端文件，`windows/` 需要重新打包（新的 `backend/dist` 必须进入
    `resources/backend`）——本轮不主动重发 Windows 包。
+6. **服务端成就图标数据缺陷（2026-10-04 实测发现，不属本轮 App 修复范围，未改后端）**：
+   `GET /api/games/:id` 内嵌的 `achievements[].icon_url` 里有 **1409 / 1738（81%）** 是「域名 + 路径之后
+   又拼了一个完整 URL」的双重地址，例：
+
+   ```
+   https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/3768760/https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/3768760/b3332b48b48964e7ddb245b4cfe6672b33df1c68.jpg.jpg
+   ```
+
+   尾巴指向**已下线**的 `steamcdn-a.akamaihd.net`，所以原样、取末段、补 `.jpg.jpg` 三种取法都是 502。
+   正确形式（实测可用）：`https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/3768760/b3332b48b48964e7ddb245b4cfe6672b33df1c68.jpg` → `200 image/jpeg 18,633 B`。
+   同类统计：`media[].coverUrl` **0/335** 坏、`GET /api/games/:id/posters` 的 `url` **0/536** 坏 —— 缺陷只集中在
+   成就图标（爬虫写入时拼错），**Web 端同样显示裂图**，App 会退回奖杯占位图标（不劣于 Web）。
+   建议后续：爬虫侧加绝对 URL 守卫 + 一次性迁移把 `<hash>.jpg.jpg` 归一为
+   `https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/<appid>/<hash>.jpg`。
+7. `READ_EXTERNAL_STORAGE`（`maxSdkVersion=28`）不是主清单声明的，而是插件清单合并带来的既有项（见 §7 /
+   §9.3），文档此前只记了主清单的 3 项权限。
+
+---
+
+## 9. 修订 2（`1.3.1+2`，2026-10-04）：连 Linux 后端五项体验修复
+
+用户报障（原话摘要）：连 Linux 后端后 **① 大部分海报不显示；② 点任意卡片都是「加载详情失败」；
+③ 只有卡片下方文字能进详情；④ 应用图标与左上角图标要与 Web、Windows 统一；⑤ 首页要有下拉刷新，
+触发时与后端全量同步（游戏列表 / 海报 / 元数据 / 评分）**，且要求与 Web 端体验对齐、不破坏现有功能。
+
+### 9.1 根因（均在真实 Linux 后端上复现取证）
+
+| # | 现象 | 根因 | 证据 |
+| --- | --- | --- | --- |
+| ① | 大部分海报不显示，只剩彩色渐变占位 | (a) 图片端点都要凭证，而 `CachedNetworkImage` 走 dart:io，**不经过 Dio 拦截器** ⇒ 一律 401；(b) 列表里的 `posters[]` 根本没被 App 读，卡片退化成 `postersProvider` 的**远端 CDN 直链**，手机在大陆网络下基本取不到 | 同一张封面：带凭证 `200 image/jpeg 52,927 B`，**不带凭证 `401`（81 B JSON）**；`/api/media/:id/thumbnail` 带凭证 `200 image/webp 6,018 B`、不带 `401`；`/api/media/:id/preview` 带凭证 `200 image/png 2,527,455 B`。Windows 桌面端 `AUTH_DISABLED=1` 无凭证放行，所以只在 Linux 后端暴露 |
+| ② | 点任意卡片 → 「加载详情失败」 | 详情内嵌 `achievements[]` 是 **snake_case**（`game_id` / `icon_url` / `global_percent` / `dlc_app_id`），而 `Achievement.fromJson` 只读 `json['gameId'] as String` ⇒ `type 'Null' is not a subtype of type 'String'`；当时 `_parseList` 没有逐项容错 ⇒ 一行坏数据把整个 `GameDetail` 打挂 | 39 个游戏里 **34 个**点开必失败（另 5 个没有成就数据，恰好是 Windows 端测试库的情形，所以 Windows 不复现）。Web 不读这个内嵌数组（走 `GET /api/achievements/:id` 的 camelCase），因此只有 App 暴露 |
+| ③ | 只有卡片下方文字能进详情 | 多海报轮播层上盖着一层「手势吸收层」（`GestureDetector(behavior: HitTestBehavior.opaque, onTap: () {})`），它把点击吃掉了 | `flutter/lib/widgets/game_card.dart` 里该层的 onTap 原本是空实现 |
+| ④ | App 没有品牌标识 | 安卓自适应图标的前景还是手写的紫色三角 play；首页 AppBar 只有一行 `Text('ScreenPlay')` | — |
+| ⑤ | 首页没有下拉刷新 | 网格没套 `RefreshIndicator` | — |
+
+### 9.2 修法（逐条与 Web 端对齐）
+
+**(1) 图片通道统一（①②）** —— `flutter/lib/core/api_client.dart`：
+
+- `Map<String,String> get imageHeaders`：令牌非空时同时给 `Authorization: Bearer <token>` 与
+  `Cookie: screenplay_session=<token>`（与业务请求同一套双通道凭证）。
+- `String imageSource(String)`：相对地址 → 拼 baseUrl；**远端 http(s) 且不是本服务端 → 改走后端
+  `/api/media/proxy?url=<Uri.encodeComponent>`**；本服务端地址原样。手机直连境外 CDN 大陆网络下不可用，
+  这正是「一半海报有、一半没有、与 Web 数量不一致」的另一半原因。
+- `String cardImageSource(String)`：`/api/media/:id/preview` → `/api/media/:id/thumbnail`，正则
+  `^/api/media/([^/]+)/preview$` 与 Web `web/src/components/GameCard.tsx` 的 `cardFrame()` **逐字一致**
+  （卡片只有 ~300px 宽，`/preview` 是 2.5–9.8 MB 的 4K 图，`/thumbnail` 是 ~6 KB 的磁盘缓存 WebP）。
+- `List<String> cardPosterSources(GameSummary game)`：`[posterUrl, ...game.posters]` 去重后逐条归一，与 Web
+  `cardPosters()` 同源同序。
+- 新增 `flutter/lib/widgets/authed_image.dart`：`AuthedImage extends ConsumerWidget`，把
+  `ref.watch(apiClientProvider).imageHeaders` 传给 `CachedNetworkImage.httpHeaders`（`watch` 而非 `read`，
+  登录 / 登出换令牌后自动带新凭证）。App 内 **7 处** `CachedNetworkImage` 全部换成 `AuthedImage`：
+  卡片海报、视频封面（`video_player_screen.dart`）、相册封面（`media_tile.dart`）、大图查看器
+  （`photo_viewer.dart`）、详情页头部海报、媒体 PageView、成就图标（`game_detail_screen.dart` 三处）。
+- 卡片海报改为**列表直传**：`home_screen.dart` 的 itemBuilder 现在算 `api.cardPosterSources(game)` 并用
+  `GameCard(posterUrls: …)` 传入；`postersProvider` 预取降级为「列表没带海报」时的兜底。
+  `flutter/lib/models/models.dart` 的 `GameSummary` 补上了 `posters` 字段（`GameDetail` 继承）。
+- 详情页所有图片取值点（头部海报、截图流、相册封面、`displayUrl`、成就图标）从 `api.resolve(...)` 换成
+  `api.imageSource(...)`。
+
+**(2) 详情页解析健壮化（②）** —— `flutter/lib/models/models.dart`：
+
+- `Achievement.fromJson` 同时接受 camelCase ∪ snake_case：`_asStringAny(json, ['id','external_id'])`、
+  `['gameId','game_id']`、`['iconUrl','icon_url']`、`_asDoubleAny(json, ['globalPercent','global_percent'])`。
+- `_parseList<T>` 改为**逐项 try/catch**（一行坏数据只丢那一行，不再让整个模型抛错）并返回
+  `List<T>.unmodifiable`。
+- `GameSummary.id/name`、`Poster.id/gameId/url` 去掉 `as String` 硬转，改用 `_asString(...) ?? ''`；
+  `_asInt` / `_asDouble` 容忍数字字符串（`global_percent: 12` 读成 `12.0`）。
+- 后端一行未改：`GET /api/games/:id` 的 snake_case 形状保持不变（改它会动契约与 Verify 指纹），
+  客户端两边都读即可。
+
+**(3) 整卡可点（③）** —— `flutter/lib/widgets/game_card.dart`：`_PosterSlideshow` 新增
+`required VoidCallback onTap`，手势吸收层由 `onTap: () {}` 改成 `onTap: widget.onTap`。**只注册 onTap，不注册长按**
+—— 自定义排序依赖外层的 `LongPressDraggable`，抢长按会破坏拖拽；横向拖拽仍由 `PageView` 胜出，滑动切图不受影响。
+
+**(4) 三端图标统一（④）**：
+
+- 新增零依赖生成器 **`scripts/brand-icons.mjs`**：先用字面量断言 `web/public/favicon.svg` 的品牌常量
+  （`viewBox="0 0 36 36"`、`<rect … rx="8">`、渐变 `#7c3aed → #06b6d4`、
+  `transform="translate(11.33333 11.33333) scale(0.555556)"`、白色 `stroke-width="2"` 的 Gamepad2 字形 4 线 1 路径），
+  再把 SVG path 转成 Dart `Path`（所有 `a` 弧都是圆 ⇒ 转 `arcToPoint`）与安卓 VectorDrawable。
+  `node scripts/brand-icons.mjs --check` 只比较不写入，漂移即 exit 1（与 Windows 的 `assertBrandSvg()` 同一思路）。
+- 产物：`flutter/lib/widgets/brand_glyph.dart`（纯几何 + 品牌常量）、
+  `flutter/android/app/src/main/res/drawable/ic_launcher_background.xml`（品牌对角渐变，替换原有纯色）、
+  `drawable/ic_launcher_foreground.xml`（品牌字形，**覆盖**旧的紫色三角 play）、
+  `drawable/ic_launcher_monochrome.xml`（Android 13+ 主题图标）、
+  `mipmap-anydpi-v26/ic_launcher.xml`（自适应图标改指新背景 + 单色层；`minSdk 28` 足以只用矢量图标）。
+- App 内标记 `flutter/lib/widgets/brand_mark.dart` 的 `BrandMark`：**与 Web 页眉同一套比例** —— Web 是
+  `h-9 w-9`（36px）方块里放 `h-5 w-5`（20px）的 `Gamepad2`，故 `kBrandMarkGlyphRatio = 20/36`；用于首页
+  AppBar leading（`BrandMark(size: 32)`，`leadingWidth: 56`）与连接页 / 登录页头图（`Center(child: BrandMark(size: 64, shadow: true))`）。
+  注意：**应用图标**（favicon / Windows / 安卓 launcher）用 favicon 的 36 单位几何，**页眉标记**用 20/36 —— Web 端
+  自己就是这么分工的，App 照抄同一套。详情页「没有海报」的占位仍保留通用手柄水印（换个渐变方块会叠在渐变底上）。
+
+  渲染核对（在 `flutter/` 下执行 `flutter test tool/render_brand_icons.dart`，产物覆盖写入本目录）：
+
+  ![App 内品牌标记 BrandMark（192px，字形占 20/36）](brand-mark-192.png)
+  ![应用图标几何（等同 web/public/favicon.svg）](brand-launcher-192.png)
+
+  左：App 内 `BrandMark`（首页左上角 / 连接页 / 登录页头图用的就是它）；右：**应用图标几何** ——
+  36 单位方块 + `rx=8` + 对角渐变 + `translate(11.33333 11.33333) scale(0.555556)` 的白色手柄字形，
+  与 `web/public/favicon.svg` 逐字同源（同一套常量由 `scripts/brand-icons.mjs` 生成）。
+  两张 PNG 只是把生成出来的常量画出来看一眼，**几何真源仍是 favicon**（漂移由 `--check` 拦截）。
+
+**(5) 下拉刷新全量同步（⑤）** —— `flutter/lib/screens/home_screen.dart`：
+
+- 网格外套 `RefreshIndicator(onRefresh: _refresh)`，并给 `GridView` 加
+  `physics: const AlwaysScrollableScrollPhysics()`（内容不足一屏时也能下拉）。
+- `_refresh()`：`POST /api/library/scan`（与 Web「重新扫描」同一端点、同一语义；后端是**后台任务**，
+  实测 **24–26 ms** 返回 ⇒ 不会长时间转圈）→ 重取 `gamesProvider` / `statsProvider` → 清掉本地自定义顺序覆盖
+  → 失败弹「同步失败：…」，成功弹「已与后端同步」。扫描完成后游戏列表、海报、元数据、评分都会随重取刷新；
+  详情页与媒体列表各自保有下拉刷新（`gameDetailProvider` 重取）。
+
+### 9.3 验证
+
+**静态与单元（本机 / 离线）**
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| 静态分析 | `cd flutter && flutter analyze` | **0 error / 0 warning**（7 条 `deprecated_member_use` info 为 riverpod 2.6.1 既有写法） |
+| Dart 单元测试 | `cd flutter && flutter test` | **43 通过 / 1 跳过**（跳过的是真后端用例的占位） |
+| 图标产物一致性 | `node scripts/brand-icons.mjs --check` | ✓ 与 `web/public/favicon.svg` 一致 |
+| 后端 / Web 未改 | `node scripts/gen-source-hash.mjs --check` | ✓ `a0e18c54d5340a97`（137 文件，与 1.3.1 首发相同） |
+| 整仓离线全量回归 | `bash scripts/verify-suites.sh` | 见 `docs/VERIFY.md` |
+
+新增测试文件：`flutter/test/models_parse_test.dart`（13 例：列表 / 详情夹具解析、snake_case 内嵌成就、
+逐项容错、camelCase 兼容、媒体与海报）、`flutter/test/api_client_urls_test.dart`（16 例：`resolve` /
+`imageSource` / `cardImageSource` / `cardPosterSources` / `imageHeaders`）、
+`flutter/test/brand_mark_test.dart`（10 例：品牌常量、字形包围盒、20/36 比例、安卓资源同源）、
+`flutter/test/game_card_tap_test.dart`（4 例：**③ 整卡可点** —— 点海报区与信息行都进详情、海报区吸收层
+不注册长按（长按留给拖拽排序）、横向滑动切图不触发进详情）、
+`flutter/test/live_backend_test.dart`（7 例，默认跳过，见下）。
+
+**连真实 Linux 后端（Docker 复现环境 `sp-linux-test` @ `127.0.0.1:3007`，登录 `admin`；库 = 39 游戏 / 1917 媒体）**
+
+```
+cd flutter && flutter test --dart-define=SP_LIVE_BASE=http://127.0.0.1:3007 test/live_backend_test.dart
+```
+
+| 断言 | 实测 |
+| --- | --- |
+| 列表全部可解析、每个游戏都有海报来源、且全部指向本服务端 | **39 个游戏 / 海报来源 41 张 / 无海报 0 个**，URL 全部以 `http://127.0.0.1:3007` 开头（① 数据面） |
+| 逐个游戏详情都能解析 | **39/39 成功，其中 34 个带成就**（② 修复前这 34 个必失败） |
+| 封面带凭证可取、不带凭证必须 401 | 抽检 10 张全部 `200 image/jpeg\|webp`；同一张**不带凭证 `401`**（证明图片凭证必需） |
+| 远端 CDN 海报换代理后可取 | `https://media.rawg.io/media/games/86f/86f2dc1b9671f25a13ff92e069b51786.jpg` → 代理 `200 image/jpeg`（① 另一半根因） |
+| 成就图标走 imageSource + 凭证 | 抽样：可取图 11 / 服务端数据坏 502 **13** / **鉴权失败 0**（客户端契约成立；坏数据见 §8.6） |
+| 下拉刷新数据面 | `POST /api/library/scan` **24–26 ms** 返回，之后列表与统计仍可取到全量 |
+
+**构建产物（修订 2）**
+
+| 项 | 实测 |
+| --- | --- |
+| APK | `app-arm64-v8a-release.apk` 21,243,136 B、`app-armeabi-v7a-release.apk` 18,800,086 B、`app-x86_64-release.apk` 22,427,527 B（`flutter build apk --release --split-per-abi`，141 s） |
+| 包信息 | `com.screenplay.app` / `versionCode 2002` / `versionName 1.3.1` / `sdkVersion 28` / `targetSdkVersion 34` / `compileSdkVersion 34`（`aapt2 dump badging`） |
+| 权限（与首发包逐条相同） | `INTERNET`、`ACCESS_NETWORK_STATE`、`WRITE_EXTERNAL_STORAGE`(maxSdk 28)、`com.screenplay.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`、`READ_EXTERNAL_STORAGE`(maxSdk 28，插件合并带入) |
+| 签名 | `apksigner verify` ⇒ `Verifies`；APK Signature Scheme **v2 = true**；证书 SHA-256 `9a1a94436902c1bc5f43e76ff0435c4b1da46dfff30d3e5a60f1cf8ea9597fe3`（debug keystore，与首发一致） |
+| 校验和 | SHA-256：arm64 `720d786a7321dc2e67e0e08bc6eb64bfead01c9fd5a31f488a227ee8b43fc5df` / v7a `321ec70f0d949d1b0a1779fbd1ee80522766a0bcfda4885c57d9c72b235c5fd5` / x86_64 `91adf41e8576cd68cdb531579eb3be02913e9148c5de6de2d56186bdc3874ee1`；`flutter/dist/*.apk.sha1` 记的是 SHA-1 |
+
+`versionCode` 是 Flutter 在 `--split-per-abi` 下按 ABI 附加的偏移（base 2 + v7a 1000 / arm64 2000 / x86_64 4000）。
+
+**未做的验证（仍需真机）**：NAS 上没有 Android 设备/模拟器，交互层（整卡点击手感、海报滑动与长按拖拽是否互不干扰、
+下拉刷新手势、launcher 图标在真机启动器上的观感、大陆网络下海报加载耗时）只做到代码 / 静态 / HTTP 层验证，
+建议真机按 `docs/VERIFY.md` 清单过一遍。
+
+### 9.4 明确未改的东西
+
+- 后端 / Web 一行未改（源指纹 `a0e18c54d5340a97` 不变，18 项 508 断言全量回归照跑）。
+- 未给 App 加任何新权限、未改 `minSdk` / `targetSdk`、未动签名配置。
+- 未处理 §8.6 的成就图标数据缺陷（属后端爬虫 + 数据迁移，另行安排）。
+- 详情页空海报占位、`postersProvider` 预取兜底路径、媒体清晰度策略均保持原样。

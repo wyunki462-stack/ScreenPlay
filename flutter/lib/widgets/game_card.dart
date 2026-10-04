@@ -4,23 +4,22 @@
 //  - 海报区由「单张静态图」升级为 [PageView] 多张轮播 —— 用户可左右滑动切上一张/下一张，
 //    底部叠加页码指示点。滑动由 PageView 的横向拖拽手势消费，不会误触发卡片点击（见
 //    _PosterSlideshow 内「手势吸收层」注释）。
-//  - 数据来源 postersProvider(game.id)：优先 inSlideshow 的海报，其次 isSelected/isCover，
-//    再次列表第一张；列表为空 / 加载中 / 失败 → 回退到卡片现有的单张 posterUrl，
-//    保证「无海报的游戏」外观与本改动前完全一致。
+//  - 数据来源与 Web 端一致：由列表页传入 `api.cardPosterSources(game)`（封面 + 后端
+//    `cardPosters()` 给出的轮播集合）。卡片的 postersProvider 预取只在调用方没给列表时
+//    作为兜底保留。
 //  - 低功耗：仅当 preloadAllowedProvider == true（前台且非快速滚动）时才 watch
-//    postersProvider；否则只用调用方传入的单张 posterUrl，绝不额外发起海报请求。
-//    该判断下沉到 _PosterSlideshow 这个 ConsumerStatefulWidget 中，使「快速滚动」
-//    只重建被 gate 的小子树，而不是整张卡片。
+//    postersProvider；否则只用调用方传入的列表，绝不额外发起海报请求。
+//  - 整卡可点：海报区那层「手势吸收层」现在把点击转交给卡片的 onTap（此前它会吞掉
+//    点击，导致只有下方文字区域能进详情页）。
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/api_client.dart';
 import '../core/app_lifecycle.dart';
-import '../core/image_cache.dart';
 import '../models/models.dart';
 import '../providers/api_providers.dart';
+import 'authed_image.dart';
 
 class GameCard extends StatelessWidget {
   const GameCard({
@@ -72,6 +71,8 @@ class GameCard extends StatelessWidget {
                 posterUrl: posterUrl,
                 posterUrls: posterUrls,
                 allowPosterPrefetch: allowPosterPrefetch,
+                // 整卡可点：海报区的手势吸收层把点击转交给这里（见 _PosterSlideshow）。
+                onTap: onTap,
               ),
             ),
             Padding(
@@ -124,12 +125,16 @@ class _PosterSlideshow extends ConsumerStatefulWidget {
     required this.posterUrl,
     required this.posterUrls,
     required this.allowPosterPrefetch,
+    required this.onTap,
   });
 
   final GameSummary game;
   final String? posterUrl;
   final List<String> posterUrls;
   final bool allowPosterPrefetch;
+
+  /// 卡片的进详情页回调（海报区点击转交用）。
+  final VoidCallback onTap;
 
   @override
   ConsumerState<_PosterSlideshow> createState() => _PosterSlideshowState();
@@ -182,6 +187,7 @@ class _PosterSlideshowState extends ConsumerState<_PosterSlideshow> {
   }
 
   /// 把 Poster 的相对地址拼成绝对地址；列表缩略图统一取 thumbnail 档（小、快）。
+  /// 远端 CDN 绝对地址（rawg/steamstatic）走 `imageSource` → 后端 `/api/media/proxy`。
   List<String> _resolve(List<Poster> posters) {
     final ApiClient api = ref.read(apiClientProvider);
     final List<String> urls = <String>[];
@@ -189,7 +195,7 @@ class _PosterSlideshowState extends ConsumerState<_PosterSlideshow> {
       final String? thumb = poster.thumbUrl;
       final String raw = (thumb != null && thumb.isNotEmpty) ? thumb : poster.url;
       if (raw.isEmpty) continue;
-      final String absolute = api.resolve(raw);
+      final String absolute = api.cardImageSource(raw);
       if (absolute.isNotEmpty && !urls.contains(absolute)) urls.add(absolute);
     }
     return urls;
@@ -239,13 +245,13 @@ class _PosterSlideshowState extends ConsumerState<_PosterSlideshow> {
           bottom: 6,
           child: _PageDots(count: urls.length, current: page),
         ),
-        // 手势吸收层：把落在海报区上的点击「吃掉」。
+        // 手势吸收层：把落在海报区上的点击转交给卡片自己的 onTap。
         //
-        // 为什么必须加：外层 Card > InkWell(onTap) 与内层 PageView 都注册了手势识别器。
-        // 若海报区没有自己的点击识别器，用户「点」海报（非滑动）会被外层 InkWell 命中而进
-        // 详情页，与「滑动切图、点击进详情」的预期冲突。套一个空 onTap 的 GestureDetector，
-        // 它会在手势竞技场里胜出并阻断外层 tap；横向拖拽方向不同，PageView 仍会各自胜出，
-        // 因此滑动切图不受影响。
+        // 为什么必须加这一层：外层 Card > InkWell(onTap) 与内层 PageView 都注册了手势识别器。
+        // 若海报区没有自己的点击识别器，用户「点」海报（非滑动）会在手势竞技场里被外层
+        // InkWell 命中；这里显式注册一个 onTap 反而更稳：由它独占海报区的点击并调用
+        // widget.onTap（= 进详情页），横向拖拽方向不同，PageView 仍会各自胜出，滑动切图
+        // 不受影响。
         //
         // 这里**只**注册 onTap，不注册长按：长按拖拽由外层（自定义排序模式下的）
         // LongPressDraggable 负责，若这张吸收层也抢长按，会与 LongPressDraggable 竞争同一个
@@ -253,7 +259,7 @@ class _PosterSlideshowState extends ConsumerState<_PosterSlideshow> {
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () {},
+            onTap: widget.onTap,
           ),
         ),
       ],
@@ -308,17 +314,13 @@ class _Poster extends StatelessWidget {
   Widget build(BuildContext context) {
     final Widget fallback = _GradientPlaceholder(text: name);
     if (posterUrl == null || posterUrl!.isEmpty) return fallback;
-    return CachedNetworkImage(
+    return AuthedImage(
       imageUrl: posterUrl!,
-      cacheManager: screenplayImageCache,
       cacheKey: posterUrl!,
       fit: BoxFit.cover,
       placeholder: (BuildContext context, String url) => fallback,
       errorWidget: (BuildContext context, String url, Object error) => fallback,
-      // 关闭淡入动画：快速滚动时逐帧动画叠加会拖慢帧率，且与「本地缓存优先」无关。
-      fadeInDuration: Duration.zero,
-      fadeOutDuration: Duration.zero,
-      placeholderFadeInDuration: Duration.zero,
+      // 淡入淡出由 AuthedImage 统一为 Duration.zero（快速滚动时逐帧动画会拖慢帧率）。
     );
   }
 }

@@ -9,15 +9,44 @@ DateTime? _parseUtc(dynamic value) {
   return DateTime.tryParse(value.toString())?.toUtc();
 }
 
-/// 安全读取 int?（服务端数字可能以 int/double 形式返回）。
-int? _asInt(dynamic value) => value == null ? null : (value as num).toInt();
+/// 安全读取 int?（服务端数字可能以 int/double/字符串形式返回）。
+int? _asInt(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toInt();
+  return int.tryParse(value.toString());
+}
 
 /// 安全读取 double?。
-double? _asDouble(dynamic value) =>
-    value == null ? null : (value as num).toDouble();
+double? _asDouble(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value.toString());
+}
 
-/// 安全读取 String?。
-String? _asString(dynamic value) => value as String?;
+/// 安全读取 String?（非字符串也转为字符串，不抛异常）。
+String? _asString(dynamic value) => value?.toString();
+
+/// 多键名取值 —— 同一实体在不同端点上键名不一致时使用。
+///
+/// 实例：详情响应内嵌的 `achievements[]` 用 snake_case（`game_id`、`icon_url`、
+/// `global_percent`），而 `GET /api/achievements/:id` 用 camelCase（`gameId`…）。
+/// 只认一种写法会让另一种直接把整页打挂（`type 'Null' is not a subtype of type 'String'`）。
+String? _asStringAny(Map<String, dynamic> json, List<String> keys) {
+  for (final String key in keys) {
+    final String? value = _asString(json[key]);
+    if (value != null && value.isNotEmpty) return value;
+  }
+  return null;
+}
+
+/// 多键名取 double?（见 `_asStringAny`）。
+double? _asDoubleAny(Map<String, dynamic> json, List<String> keys) {
+  for (final String key in keys) {
+    final double? value = _asDouble(json[key]);
+    if (value != null) return value;
+  }
+  return null;
+}
 
 /// 安全读取 List<String>（容忍 null → 空列表）。
 List<String> _asStringList(dynamic value) {
@@ -83,14 +112,19 @@ class GameSummary {
     required this.metacriticScore,
     required this.firstPlayedAt,
     required this.lastPlayedAt,
+    this.posters = const <String>[],
   });
 
   factory GameSummary.fromJson(Map<String, dynamic> json) {
     return GameSummary(
-      id: json['id'] as String,
-      name: json['name'] as String,
+      // 不再 `as String` 硬转：列表里只要有一行缺 id/name（脏数据、老后端字段名
+      // 不同），硬转就会抛 `type 'Null' is not a subtype of type 'String'`，
+      // 整页列表 / 详情直接白屏。缺字段的卡片顶多打不开，好过整页失败。
+      id: _asString(json['id']) ?? '',
+      name: _asString(json['name']) ?? '',
       platform: _asString(json['platform']),
       posterUrl: _asString(json['posterUrl']),
+      posters: _asStringList(json['posters']),
       mediaCount: _asInt(json['mediaCount']) ?? 0,
       durationSeconds: _asInt(json['durationSeconds']) ?? 0,
       durationText: _asString(json['durationText']) ?? '',
@@ -104,6 +138,10 @@ class GameSummary {
   final String name;
   final String? platform;
   final String? posterUrl;
+
+  /// 首页卡片轮播集合（后端 `cardPosters()`：勾选 ∪ 当前封面，封面优先）。
+  /// 与 Web `GameCard` 消费的 `game.posters` 是同一份数据、同一顺序。
+  final List<String> posters;
   final int mediaCount;
   final int durationSeconds;
   final String durationText;
@@ -125,6 +163,7 @@ class GameDetail extends GameSummary {
     required super.metacriticScore,
     required super.firstPlayedAt,
     required super.lastPlayedAt,
+    super.posters,
     required this.folderName,
     required this.folderPath,
     required this.aliases,
@@ -160,6 +199,7 @@ class GameDetail extends GameSummary {
       metacriticScore: base.metacriticScore,
       firstPlayedAt: base.firstPlayedAt,
       lastPlayedAt: base.lastPlayedAt,
+      posters: base.posters,
       folderName: json['folderName'] as String? ?? '',
       folderPath: json['folderPath'] as String? ?? '',
       aliases: _asStringList(json['aliases']),
@@ -204,15 +244,26 @@ class GameDetail extends GameSummary {
 }
 
 /// 通用的「对象数组」解析辅助。
+///
+/// 逐项容错：单条记录字段畸形时**跳过该条**，而不是让整个模型解析失败。
+/// （2026-10 事故：详情响应内嵌的 `achievements[]` 是 snake_case，
+/// `Achievement.fromJson` 抛 `type 'Null' is not a subtype of type 'String'`，
+/// 导致 `gameDetailProvider` 每个游戏都报错、详情页显示「加载详情失败」。）
 List<T> _parseList<T>(
   dynamic value,
   T Function(Map<String, dynamic>) fromJson,
 ) {
   if (value is! List) return const [];
-  return value
-      .whereType<Map>()
-      .map((dynamic e) => fromJson(Map<String, dynamic>.from(e as Map)))
-      .toList(growable: false);
+  final List<T> parsed = <T>[];
+  for (final dynamic item in value) {
+    if (item is! Map) continue;
+    try {
+      parsed.add(fromJson(Map<String, dynamic>.from(item)));
+    } catch (_) {
+      continue; // 坏数据只丢这一条，不污染整页。
+    }
+  }
+  return List<T>.unmodifiable(parsed);
 }
 
 /// `Media` —— 单个媒体文件。
@@ -297,12 +348,15 @@ class Achievement {
 
   factory Achievement.fromJson(Map<String, dynamic> json) {
     return Achievement(
-      id: json['id'] as String,
-      gameId: json['gameId'] as String,
-      name: json['name'] as String? ?? '',
+      id: _asStringAny(json, <String>['id', 'external_id']) ?? '',
+      // 详情端点内嵌数组是 snake_case（`game_id`），
+      // 独立端点 `GET /api/achievements/:id` 是 camelCase（`gameId`）——两种都认。
+      gameId: _asStringAny(json, <String>['gameId', 'game_id']) ?? '',
+      name: _asStringAny(json, <String>['name']) ?? '',
       description: _asString(json['description']),
-      iconUrl: _asString(json['iconUrl']),
-      globalPercent: _asDouble(json['globalPercent']),
+      iconUrl: _asStringAny(json, <String>['iconUrl', 'icon_url']),
+      globalPercent:
+          _asDoubleAny(json, <String>['globalPercent', 'global_percent']),
     );
   }
 
@@ -479,9 +533,11 @@ class Poster {
 
   factory Poster.fromJson(Map<String, dynamic> json) {
     return Poster(
-      id: json['id'] as String,
-      gameId: json['gameId'] as String,
-      url: json['url'] as String? ?? '',
+      // 与 GameSummary / Achievement 同样的原则：不做 `as String` 硬转，
+      // 一行脏数据不该让整个海报列表（乃至设置页）崩掉。
+      id: _asString(json['id']) ?? '',
+      gameId: _asString(json['gameId']) ?? '',
+      url: _asString(json['url']) ?? '',
       thumbUrl: _asString(json['thumbUrl']),
       source: _asString(json['source']) ?? 'upload',
       mediaId: _asString(json['mediaId']),

@@ -1,0 +1,93 @@
+[
+ {
+  "id": "a1618b9f-4763-5016-91e2-64e46d480dc5",
+  "gameId": "7b42703a-ce71-53aa-b7cf-819d153ce486",
+  "url": "https://media.rawg.io/media/games/86f/86f2dc1b9671f25a13ff92e069b51786.jpg",
+  "thumbUrl": "https://media.rawg.io/media/games/86f/86f2dc1b9671f25a13ff92e069b51786.jpg",
+  "source": "scraped",
+  "mediaId": null,
+  "isSelected": true,
+  "isCover": true,
+  "inSlideshow": true,
+  "sortOrder": 8,
+  "createdAt": "2026-09-30T06:57:22.187Z"
+ },
+ {
+  "id": "5cb00f76-ebb2-5fd7-8a6b-15c4ee82981d",
+  "gameId": "7b42703a-ce71-53aa-b7cf-819d153ce486",
+  "url": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3768760/9f0d16a4d9a826d62cddf7f5ea25d10b4b2f45b9/header_alt_assets_3.jpg?t=1790084095",
+  "thumbUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3768760/9f0d16a4d9a826d62cddf7f5ea25d10b4b2f45b9/header_alt_assets_3.jpg?t=1790084095",
+  "source": "scraped",
+  "mediaId": null,
+  "isSelected": false,
+  "isCover": false,
+  "inSlideshow": true,
+  "sortOrder": 9,
+  "createdAt": "2026-09-30T06:58:13.286Z"
+ },
+ {
+  "id": "ad0b6eb0-3d5f-514c-b3da-eadf4dff78c8",
+  "gameId": "7b42703a-ce71-53aa-b7cf-819d153ce486",
+  "url": "https://media.rawg.io/media/screenshots/09a/09a91ae875c2d3cc9b0d7aa73ea816bd.jpg",
+  "thumbUrl": "https://media.rawg.io/media/screenshots/09a/09a91ae875c2d3cc9b0d7aa73ea816bd.jpg",
+  "source": "scraped",
+  "mediaId": null,
+  "isSelected": false,
+  "isCover": false,
+  "inSlideshow": true,
+  "sortOrder": 10,
+  "createdAt": "2026-10-01T08:31:35.101Z"
+ },
+ {
+  "id": "b2e45e07-89aa-53e0-8105-9eeb0730cd7a",
+  "gameId": "7b42703a-ce71-53aa-b7cf-819d153ce486",
+  "url": "https://media.rawg.io/media/screenshots/234/234ec23a3478d26f066a65cf9910ec1f.jpg",
+  "thumbUrl": "https://media.rawg.io/media/screenshots/234/234ec23a3478d26f066a65cf9910ec1f.jpg",
+  "source": "scraped",
+  "mediaId": null,
+  "isSelected": false,
+  "isCover": false,
+  "inSlideshow": false,
+  "sortOrder": 11,
+  "createdAt": "2026-10-01T08:31:35.105Z"
+ },
+ {
+  "id": "96e94c57-c0ec-5626-b8d2-7161a9cc1fba",
+  "gameId": "7b42703a-ce71-53aa-b7cf-819d153ce486",
+  "url": "https://media.rawg.io/media/screenshots/21f/21f4b318f2611d8d23dc3cbb1c3be746.jpg",
+  "thumbUrl": "https://media.rawg.io/media/screenshots/21f/21f4b318f2611d8d23dc3cbb1c3be746.jpg",
+  "source": "scraped",
+  "mediaId": null,
+  "isSelected": false,
+  "isCover": false,
+  "inSlideshow": false,
+  "sortOrder": 12,
+  "createdAt": "2026-10-01T08:31:35.105Z"
+ },
+ {
+  "id": "8097dc6f-0159-5077-886c-9524b3613e31",
+  "gameId": "7b42703a-ce71-53aa-b7cf-819d153ce486",
+  "url": "https://media.rawg.io/media/screenshots/897/897d1301c75982af1489b193c8b08a1d.jpg",
+  "thumbUrl": "https://media.rawg.io/media/screenshots/897/897d1301c75982af1489b193c8b08a1d.jpg",
+  "source": "scraped",
+  "mediaId": null,
+  "isSelected": false,
+  "isCover": false,
+  "inSlideshow": false,
+  "sortOrder": 13,
+  "createdAt": "2026-10-01T08:31:35.105Z"
+ },
+ {
+  "id": "ce5131c5-c2b5-52b0-b8a8-cedb4b1a219e",
+  "gameId": "7b42703a-ce71-53aa-b7cf-819d153ce486",
+  "url": "https://media.rawg.io/media/screenshots/490/490ccae2dcd56af896bda49422bdf5c0.jpg",
+  "thumbUrl": "https://media.rawg.io/media/screenshots/490/490ccae2dcd56af896bda49422bdf5c0.jpg",
+  "source": "scraped",
+  "mediaId": null,
+  "isSelected": false,
+  "isCover": false,
+  "inSlideshow": false,
+  "sortOrder": 14,
+  "createdAt": "2026-10-01T08:31:35.106Z"
+ }
+]
