@@ -1,15 +1,18 @@
-# ScreenPlay — Flutter 客户端（安卓端 `1.3.1+2`）
+# ScreenPlay — Flutter 客户端（安卓端 `1.3.2+3`）
 
 个人游戏媒体图库管理器的**纯客户端**：所有数据都来自后端 HTTP API（权威契约见
 [`../docs/API.md`](../docs/API.md)），本客户端**不做本地抓取或业务逻辑**，也不上传任何文件。
 
-- 版号：**`1.3.1`**，`pubspec.yaml` 的 `version: 1.3.1+2`（只有 build number 递增，分包后
-  `versionCode` arm64 `2002` / v7a `1002` / x86_64 `4002`，便于与首发 `1.3.1+1` 区分）。
-  Linux 服务端 / Docker 镜像 / Windows 桌面端的服务版号**不随本客户端变化**（Linux 端 `/api/health` 仍是 `1.3.0`）。
+- 版号：**`1.3.2`**，`pubspec.yaml` 的 `version: 1.3.2+3`（`1.3.1+1` → `1.3.1+2` → 本轮 `1.3.2+3`；
+  分包后 `versionCode` arm64 `2003` / v7a `1003` / x86_64 `4003`，`versionName` 用与后端同一发布版号 `1.3.2`）。
+  Linux 服务端 / Docker 镜像的服务版号**不随本客户端变化**（Linux 端 `/api/health` 为 `1.3.2`），
+  Windows 桌面端仍是 `1.3.1`。
 - 目标平台：**Android 9.0+（minSdk 28，targetSdk 34）**。Windows 桌面端由仓库根目录的
   `windows/`（Tauri v2 外壳 + Web 前端）承担，**本目录不构建 Windows Runner**。
 - 变更说明：首发（安卓端 `1.3.1+1`）与修订 2（`1.3.1+2`，连 Linux 后端五项体验修复）见
-  [`docs/ANDROID-1.3.1.md`](docs/ANDROID-1.3.1.md)（修订 2 在 **§9**）。
+  [`docs/ANDROID-1.3.1.md`](docs/ANDROID-1.3.1.md)（修订 2 在 **§9**）；本轮 `1.3.2+3`（卡片海报区 16:9、
+  自定义拖拽排序「松手即生效并持久化」、卡片轮播与 Web / Linux 端同步 + 左右滑动切图）见
+  [`docs/ANDROID-1.3.2.md`](docs/ANDROID-1.3.2.md)。
 
 ---
 
@@ -57,7 +60,8 @@ flutter/
 │   │   └── video_player_screen.dart    # 全屏播放（/stream）+ 分享/保存/删除
 │   └── utils/format.dart               # 时长等格式化
 ├── android/                            # Android 原生壳（Manifest、Gradle、wrapper）
-├── docs/ANDROID-1.3.1.md               # 变更说明（交付文档）
+├── docs/ANDROID-1.3.1.md               # 变更说明（1.3.1 首发 + 1.3.1+2 修订）
+├── docs/ANDROID-1.3.2.md               # 变更说明（1.3.2+3：卡片比例 / 拖拽排序 / 轮播同步）
 ├── test/                               # Dart 单元 / 组件测试 + 真后端端到端用例（默认跳过）
 ├── pubspec.yaml / pubspec.lock
 ├── analysis_options.yaml
@@ -188,8 +192,8 @@ flutter build apk --release --split-per-abi
 
 ```bash
 cd flutter
-flutter analyze                       # 期望 0 error / 0 warning（7 条 info：riverpod 2.6.1 弃用提示）
-flutter test                          # 期望 43 项通过 / 1 项跳过（跳过的是真后端用例的占位）
+flutter analyze                       # 期望 0 error / 0 warning（8 条既有 info：7 条 riverpod 弃用提示 + 1 条 tool/ 下 prefer_const_constructors）
+flutter test                          # 期望 52 项通过 / 1 项跳过（跳过的是真后端用例的占位）
 node ../scripts/brand-icons.mjs --check   # 品牌图标产物 = web/public/favicon.svg（零依赖，漂移即 exit 1）
 node ../backend/scripts/verify/media-delete-e2e.mjs    # 后端删除接口：22 项断言
 node ../backend/scripts/verify/android-auth-bearer.mjs # 无 Cookie 的 Bearer 会话：19 项断言
@@ -198,7 +202,10 @@ node ../backend/scripts/verify/android-auth-bearer.mjs # 无 Cookie 的 Bearer �
 `test/` 下的用例：`models_parse_test.dart`（列表 / 详情解析、snake_case ∪ camelCase 成就、逐项容错、海报列表）、
 `api_client_urls_test.dart`（`resolve` / `imageSource` / `cardImageSource` / `cardPosterSources` / `imageHeaders`）、
 `brand_mark_test.dart`（品牌常量、字形包围盒、20/36 比例、安卓资源同源）、`game_card_tap_test.dart`
-（整卡可点：点海报区 / 信息行都进详情、吸收层不注册长按、横向滑动不进详情）、`live_backend_test.dart`
+（整卡可点：点海报区 / 信息行都进详情、吸收层不注册长按、横向滑动不进详情）、`home_reorder_test.dart`
+（自定义排序拖拽：落点在卡片内立即乐观重排并提交 Web 端同款 `afterId` / `beforeId`、落点在两行间隙照样生效、
+服务端顺序回来不回弹）、`game_card_carousel_test.dart`（轮播：static 无 `PageView`、slideshow 左右滑动、
+3500 ms 自动翻页、手动切图后静默 2 个间隔、点海报区仍进详情、海报区 16:9）、`live_backend_test.dart`
 （**真后端端到端，默认跳过**：填 `--dart-define=SP_LIVE_BASE=http://<后端>:<端口>` 才跑，覆盖「列表与详情
 全量可解析 + 海报来源齐全 + 图片凭证必需（无凭证必须 401）+ 远端图经代理可取 + 成就图标鉴权失败为 0」；
 复用 Docker 复现环境的跑法见 [`../docs/VERIFY.md`](../docs/VERIFY.md) 的 1.3.1+2 节）。

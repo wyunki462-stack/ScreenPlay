@@ -6,16 +6,19 @@
 
 ---
 
-## [1.3.2] — 2026-10-04（服务端：Steam 成就图标 URL 归一化 + 存量数据一次性修复）
+## [1.3.2] — 2026-10-04（服务端：Steam 成就图标 URL 归一化 + 存量数据一次性修复；安卓端 `1.3.2+3`：卡片比例 / 拖拽排序 / 轮播同步三项交互修复）
 
 **只动后端（`backend/src`）**：源码指纹由 `1.3.1+2` 的 `a0e18c54d5340a97` 变为
 **`521c4985d95f713c`**（仍是 137 个文件，`node scripts/gen-source-hash.mjs --check` 可复核；指纹只覆盖
 `backend/src` + `web/src`，与版号改动无关）。版号按发版惯例三处同步 `1.3.0` → **`1.3.2`**（根 / `backend` /
 `web` 的 `package.json`）：`scripts/docker-build.sh` 读根 `package.json` 注入镜像的 `BUILD_VERSION`，
 由 `backend/src/app.controller.ts` 的 `/api/health` 回显 ⇒ **重建镜像后 `/api/health` 报 `1.3.2`**，
-一条 curl 即可确认部署的是这一版。Web / 安卓前端一行未改，**安卓端无需重打包**（缺陷在服务端数据，
-App 取图与奖杯占位逻辑不变），`1.3.1+2` 的三个分包继续有效。Windows 桌面端内置的是旧 `backend/dist`，
-若要一并带上本修复需在 Windows 机重新打包（届时版号同样可为 `1.3.2`）。
+一条 curl 即可确认部署的是这一版。**Web 前端一行未改**；安卓端这次要重新打包，但**不是因为图标修复**
+（缺陷在服务端数据，App 取图与奖杯占位逻辑不变），而是同日修掉了三项交互缺陷 ⇒ 版号 `1.3.1+2` →
+**`1.3.2+3`**（`versionCode` 3 / `versionName` 1.3.2，与后端同一发布版号），三个分包重新构建
+（详见下方「安卓端（`1.3.2+3`）」一节）；`1.3.1+2` 的旧包除这三项交互外行为完全相同。
+Windows 桌面端内置的是旧 `backend/dist`，若要一并带上服务端修复需在 Windows 机重新打包
+（届时版号同样可为 `1.3.2`）。
 
 ### 修复：Steam 成就图标 81% 是「双重 URL」，怎么取都 502
 
@@ -37,6 +40,58 @@ App 取图与奖杯占位逻辑不变），`1.3.1+2` 的三个分包继续有效
 3. **纯函数抽到叶子模块**：新逻辑在 `backend/src/common/image-url.ts`
    （`steamIconFileStem` / `steamAchievementIconUrl` / `normalizeSteamAchievementIconUrl`），
    数据库层直接 import，不引入 database → metadata 反向依赖。
+
+### 安卓端（`1.3.2+3`）：卡片比例、拖拽排序、卡片轮播三项交互修复
+
+只动 `flutter/**`（3 个源码文件 + 2 个新测试文件），`backend/src` 与 `web/src` **一行未改**。版号
+`flutter/pubspec.yaml` `1.3.1+2` → **`1.3.2+3`**（`versionCode` 3 / `versionName` 1.3.2），三个分包重建。
+
+1. **卡片比例统一 16:9（原来被拉成长条）**：`flutter/lib/screens/home_screen.dart` 的 `_childAspectRatioFor`
+   按「海报 2:3」估算格子高度（`cellHeight = cellWidth * 1.5 + infoHeight`，结果夹在 `0.40–0.62`），
+   而卡片里**根本没有 `AspectRatio`**，于是海报被拉伸成竖长条。现改为由海报区反推：
+   `posterHeight = cellWidth / GameCard.posterAspectRatio`（新增 `GameCard.posterAspectRatio = 16 / 9`，
+   与 Web 端 `web/src/components/GameCard.tsx:157` 的 `aspect-video` 同规格）、
+   `cellHeight = posterHeight + infoHeight`、夹取范围 `0.55 ~ 16/9`（上限永不触发）。实测 360dp / 2 列 ≈ 0.97、
+   600dp / 3 列 ≈ 1.03、1000dp / 4 列 ≈ 1.11。横版海报铺满、竖版海报由 `BoxFit.cover` 居中裁切
+   （与 Web 端 `object-cover object-center` 同语义，**不拉伸**），海报区视觉规格与 Web 端一致。
+   另给每张卡片加了 `key: ValueKey<String>(game.id)`，排序变化时卡片状态不会跟错游戏。
+2. **自定义拖拽排序「能拖但松手不生效」**：1.3.1 的 `_buildDraggableCell` 在 `onWillAcceptWithDetails`
+   里做 `context.findRenderObject() as RenderBox?` —— itemBuilder 的 `BuildContext` 属于 `GridView` 的
+   sliver 元素，拿到的是 `RenderSliverGrid`，强转直接抛
+   `type 'RenderSliverGrid' is not a subtype of type 'RenderBox?'`。异常发生在手势回调里
+   （`_DragTargetState.didEnter` → `_DragAvatar.updateDrag`），**指针一进入任何卡片就抛** ⇒ DragTarget
+   进不了 entered 态、`_activeTarget` 恒为 `null` ⇒ 松手既不重排、也不显示插入指示条。修复三处：
+   - 落点改由**网格几何**反推（`_cellRectFor` / `_dropCellFrom`：按 `_cellWidth`、`_cellHeight`、
+     `_kGridSpacing`、`_scrollOffset` 换算出「第几列、第几行、格内左半还是右半」），不再碰 per-item 的
+     `BuildContext`（网格自己的 `_gridKey` 强转是安全的）；
+   - `onAcceptWithDetails` 以「被接受的那个 DragTarget 自己的下标」为准，不再读易失的 `_hoverIndex`；
+   - 新增 `onDragUpdate` 记录指针真实坐标，`onDragEnd` 在落点没命中任何 `DragTarget` 时（两格之间 12px
+     间隙、网格 16px 留白、落回自身）按「指针落在哪一格」兜底提交 —— 与 Web 端由网格层
+     `onDragOver` + `preventDefault` 兜住空隙落点是同一语义（`web/src/pages/Home.tsx:307-314`）。
+
+   落点语义与 Web 端逐字对齐：`afterId` = 结果里排在拖动卡**上方**的邻居、`beforeId` = **下方**的邻居
+   （`PUT /api/games/order`，`backend/src/games/games.service.ts:1492-1542`；两者传反会得到 500）。
+   另外把乐观顺序的退休时机从「`PUT` 一返回就清」改成「服务端返回的 id 序列追平本地才清」
+   （`_sameIdOrder`）：`invalidate(gamesProvider)` 之后 provider 会先用旧数据渲染一帧，清早了会看到卡片
+   先弹回原位、下一帧再跳到新位的回弹闪动。
+3. **卡片轮播与 Web / Linux 端同步，并可左右滑动切图**：
+   - **数据同步**：模型层此前**完全不解析** `posterMode`（只有测试夹具里有这个字段）⇒ 无论 Linux / Web 端
+     怎么设「首页卡片轮播」开关，手机端都只显示静态封面。现 `GameSummary` 增加
+     `posterMode`（缺省 `'static'`）与 `slideshowEnabled => posterMode == 'slideshow'`；首页在
+     「回到前台」、「下拉刷新」、「切页返回」以及停留期间的 30 秒静默轮询（仅在应用前台、非快速滚动、
+     首页是当前路由时才发请求）都会重取列表，Linux / Web 端的设置**实时生效**。
+   - **交互实现**：`slideshow` 且海报 ≥ 2 张时建 `PageView`，**左右滑动即切上一张 / 下一张**（左右回环，
+     与 Web 端箭头 `(i + delta + count) % count` 同语义）；每 3500 ms 自动翻页（同
+     `web/src/lib/hooks.ts:38-57` 的间隔）；手动切图后静默约 2 个间隔再恢复自动翻页（同 Web 端
+     `resumeAt.current = Date.now() + intervalMs * 2`）；左上角常显「当前张 / 总张数」计数徽章；
+     手指按住期间不翻页、卡片滚出屏幕不翻页、离屏不挂定时器。
+   - 1.3.1 的滑动其实是**死的**：海报区最上层那层
+     `Positioned.fill(GestureDetector(behavior: HitTestBehavior.opaque))` 会终止命中测试，`PageView`
+     收不到指针事件（该层在 1.3.1 未经真机验证）。该层已删除，整卡点击继续由外层 `Card > InkWell(onTap)`
+     承担（点海报区仍进详情，已有测试保护）。同时删掉了底部圆点（对齐 Web 首页卡的 `showDots={false}`）。
+   - **与 Web 端的一处有意差异**：计数徽章只在「`slideshow` 且海报 ≥ 2 张」时显示，而 Web 端对 static
+     多海报卡也显示计数（`PosterCarousel.tsx:165-170`）。触屏没有箭头、没有悬停，一个翻不动也点不动的
+     计数器看起来像 bug，故手机端不显示。
 
 ### 迁移安全（已在**生产库副本**上预演）
 
@@ -77,6 +132,26 @@ App 取图与奖杯占位逻辑不变），`1.3.1+2` 的三个分包继续有效
   **二次启动同一个已修库：应用日志无 `Repaired …` 行**（幂等）。
 - 端到端取证：经 `sp-linux-test` 容器 `/api/media/proxy`，规范地址 `200 image/jpeg 3,542 B`（64×64 JPEG，
   `file` 确认），同一成就的坏地址 `502 text/html; charset=utf-8`。
+- **安卓端本轮回归（`1.3.2+3`，离线全量）**：`flutter analyze` **0 error / 0 warning**（余下 8 条 info 为仓库
+  既有：7 条 riverpod `deprecated_member_use` + 1 条 `tool/render_brand_icons.dart` 的
+  `prefer_const_constructors`，本轮未新增）；`flutter test` **52 项通过 / 1 项跳过 / 0 失败**
+  （`1.3.1+2` 为 43 通过 + 1 跳过，本轮新增 9 条：`flutter/test/home_reorder_test.dart` 3 条 +
+  `flutter/test/game_card_carousel_test.dart` 6 条）。新增用例覆盖：落点在卡片内即乐观重排且提交的
+  `afterId` / `beforeId` 与 Web 端邻居语义一致、**落点在两行间隙也照样提交**（修复前静默失效的现场，
+  也就是用户报的那个现象）、服务端顺序回来后卡片不回弹、static 模式没有 `PageView`、
+  slideshow 可左右滑动、3500 ms 自动翻页、手动切图后静默 2 个间隔、海报区 16:9、点海报区仍进详情。
+- `bash scripts/verify-suites.sh`：**19 项通过 / 0 项失败**（290 s；本轮只动 `flutter/`，后端与 Web 套件
+  集合不变）。
+- `node scripts/gen-source-hash.mjs --check`：✓ **`521c4985d95f713c`**（137 个文件，**未变** —— 指纹只覆盖
+  `backend/src` + `web/src`，与安卓端改动无关）。
+- 三个分包（`flutter/dist/`）：`app-arm64-v8a-release.apk` 21,243,136 B / `app-armeabi-v7a-release.apk`
+  18,816,470 B / `app-x86_64-release.apk` 22,427,527 B；SHA-1 依次
+  `e4d0629206b0b981a7fcd82a7c4b9d3e0e168b4b` / `662580dfac8170a12bdc2c2ac3f47f5e95d7fb1d` /
+  `53c329fdfdb1b51f848caf36d1ed2fbdbe2fdf7a`（旁边同名 `.sha1` 存的就是这个值）；
+  `aapt2 dump badging` ⇒ `versionName 1.3.2`、`versionCode 2003 / 1003 / 4003`（ABI 前缀 + 3）、
+  `minSdk 28` / `targetSdk 34`；`apksigner verify` ⇒ 退出码 0（仍是 debug keystore，证书 SHA-256
+  `9a1a9443…597fe3`，与上版同一把）。真机交互验收（拖拽手感、轮播左右滑动、卡片 16:9 观感）待用户设备执行，
+  清单见 `flutter/docs/ANDROID-1.3.2.md` 与 `docs/VERIFY.md`。
 
 ---
 
@@ -144,7 +219,8 @@ Linux 端仍是 `1.3.0`）。安卓端 `versionName` 保持 `1.3.1`（三端版�
   缺陷只集中在成就图标，**Web 端同样显示裂图**，App 退回奖杯占位图标、不劣于 Web。建议后续在后端爬虫侧加
   绝对 URL 守卫 + 一次性迁移归一化。
   > **已于同日 [`1.3.2`] 修复**（抓取守卫 + 启动期一次性迁移，见本文档顶部）：源指纹 `521c4985d95f713c`，
-  > 生产库副本预演修好 1409 行、行数与 PSN 数据不变；安卓端无需重打包。
+  > 生产库副本预演修好 1409 行、行数与 PSN 数据不变；**图标这个缺陷本身不需要动 App**（重打包是为同日修掉的
+  > 三项交互，见顶部「安卓端（`1.3.2+3`）」一节）。
 - 合并清单里的 `READ_EXTERNAL_STORAGE`（`maxSdkVersion=28`）由插件清单合并带入，为**首发包既有**项，
   非本轮新增（此前文档只记了主清单的 3 项权限，已在 `flutter/docs/ANDROID-1.3.1.md` 按实测补齐）。
 

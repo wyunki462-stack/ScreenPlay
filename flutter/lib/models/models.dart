@@ -113,6 +113,7 @@ class GameSummary {
     required this.firstPlayedAt,
     required this.lastPlayedAt,
     this.posters = const <String>[],
+    this.posterMode = 'static',
   });
 
   factory GameSummary.fromJson(Map<String, dynamic> json) {
@@ -125,6 +126,7 @@ class GameSummary {
       platform: _asString(json['platform']),
       posterUrl: _asString(json['posterUrl']),
       posters: _asStringList(json['posters']),
+      posterMode: _asString(json['posterMode']) ?? 'static',
       mediaCount: _asInt(json['mediaCount']) ?? 0,
       durationSeconds: _asInt(json['durationSeconds']) ?? 0,
       durationText: _asString(json['durationText']) ?? '',
@@ -142,6 +144,17 @@ class GameSummary {
   /// 首页卡片轮播集合（后端 `cardPosters()`：勾选 ∪ 当前封面，封面优先）。
   /// 与 Web `GameCard` 消费的 `game.posters` 是同一份数据、同一顺序。
   final List<String> posters;
+
+  /// 卡片轮播开关（后端 `poster_mode`：`slideshow` = 开启 / `static` = 关闭）。
+  ///
+  /// 与 Web `GameCard` 消费的 `game.posterMode` 同源（web/src/components/GameCard.tsx:162
+  /// `mode={game.posterMode ?? "static"}`）——Linux/Web 端改开关，移动端下次取列表即
+  /// 同步生效，卡片的表现（是否自动轮播 + 是否可翻页）随之切换。
+  final String posterMode;
+
+  /// 是否开启自动轮播：Web 端判定 `game.posterMode === "slideshow"`。
+  bool get slideshowEnabled => posterMode == 'slideshow';
+
   final int mediaCount;
   final int durationSeconds;
   final String durationText;
@@ -164,6 +177,7 @@ class GameDetail extends GameSummary {
     required super.firstPlayedAt,
     required super.lastPlayedAt,
     super.posters,
+    super.posterMode,
     required this.folderName,
     required this.folderPath,
     required this.aliases,
@@ -200,6 +214,7 @@ class GameDetail extends GameSummary {
       firstPlayedAt: base.firstPlayedAt,
       lastPlayedAt: base.lastPlayedAt,
       posters: base.posters,
+      posterMode: base.posterMode,
       folderName: json['folderName'] as String? ?? '',
       folderPath: json['folderPath'] as String? ?? '',
       aliases: _asStringList(json['aliases']),

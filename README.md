@@ -67,12 +67,15 @@
 | 13 | **`1.3.1`（安卓端 Flutter 客户端，Linux/Windows 服务版号仍为 `1.3.0`）**：安卓端首次可用（登录 / 两列网格 / 长按拖拽排序 / 卡片海报左右滑动 / 长按删除媒体 / 分享与存相册 / WiFi 原图策略 / 三级缓存 / 后台省电），后端新增 `DELETE /api/media/:id` 并让 `/api/auth/session`、`logout` 识别 Bearer | `flutter analyze`（0 error）+ `backend/scripts/verify/media-delete-e2e.mjs`（22 项）+ `android-auth-bearer.mjs`（19 项）+ `bash scripts/verify-suites.sh`（18 项 / 508 条断言 / 211 s）+ NAS 上 `flutter build apk --release --split-per-abi` 出包（真机交互验收待用户设备） |
 | — | **`1.3.1+2`（仅安卓端，后端 / Web / Linux 镜像 / Windows 未动）**：连 Linux 后端后**大部分海报不显示**（图片端点要凭证而 `CachedNetworkImage` 绕过拦截器 ⇒ 401；且卡片退化成远端 CDN 直链）、**点任意卡片都「加载详情失败」**（详情的 `achievements[]` 是 snake_case 而模型只读 camelCase）、**只有卡片下方文字能进详情**（轮播层的手势吸收层吃掉点击）、**图标未统一**（应用图标 + 页内品牌标记改为与 Web 同源生成）、**首页新增下拉刷新**（`POST /api/library/scan` 后全量重取列表与统计） | `flutter test`（43 项 / 1 跳过）+ 连真实 Linux 后端的 `flutter/test/live_backend_test.dart`（7/7：39 游戏全部有海报来源、详情 39/39 解析、封面带凭证 200 / 不带 401、远端 CDN 经代理 200）+ `node scripts/brand-icons.mjs --check` + `bash scripts/verify-suites.sh`（18 项 / 508 条断言 / 235 s）+ 重出三个 ABI 分包（真机交互验收待用户设备） |
 
-| — | **`1.3.2`（仅服务端，Web / 安卓 / Windows 前端未动；版号三处同步 `1.3.2`）**：Steam 成就图标 81%（1409 / 1738）落库成「域名 + 路径后又拼一个完整 URL」或指向**已下线**的 `steamcdn-a.akamaihd.net` ⇒ 怎么取都 502（Web 端详情页长期裂图、安卓端退回奖杯占位） | 修法：抓取侧绝对 URL 守卫（`steamAchievementIconUrl`）+ 启动期一次性归一化迁移（`repairNestedSteamIconUrls`，只改两种可判定坏形状、幂等） | `backend/scripts/verify/achievement-icon-url.mjs`（36 项）+ `bash scripts/verify-suites.sh`（19 项 / 544 条断言 / 260 s）+ 源指纹 `521c4985d95f713c`（137 文件）+ 生产库副本预演（修好 1409 行、总行数 1738 与 PSN 329 条不变、`integrity_check` ok）+ 经代理端到端（规范值 `200 image/jpeg 3,542 B` / 坏值 `502`）+ 版号 `1.3.0` → **`1.3.2`**（根 / `backend` / `web` 三处 `package.json`，重建镜像后 `/api/health` 报 `1.3.2`） |
+| — | **`1.3.2`（只动服务端 `backend/src`；Web / Windows 前端未动；同日的安卓端重打包见下一行；版号三处同步 `1.3.2`）**：Steam 成就图标 81%（1409 / 1738）落库成「域名 + 路径后又拼一个完整 URL」或指向**已下线**的 `steamcdn-a.akamaihd.net` ⇒ 怎么取都 502（Web 端详情页长期裂图、安卓端退回奖杯占位） | 修法：抓取侧绝对 URL 守卫（`steamAchievementIconUrl`）+ 启动期一次性归一化迁移（`repairNestedSteamIconUrls`，只改两种可判定坏形状、幂等） | `backend/scripts/verify/achievement-icon-url.mjs`（36 项）+ `bash scripts/verify-suites.sh`（19 项 / 544 条断言 / 260 s）+ 源指纹 `521c4985d95f713c`（137 文件）+ 生产库副本预演（修好 1409 行、总行数 1738 与 PSN 329 条不变、`integrity_check` ok）+ 经代理端到端（规范值 `200 image/jpeg 3,542 B` / 坏值 `502`）+ 版号 `1.3.0` → **`1.3.2`**（根 / `backend` / `web` 三处 `package.json`，重建镜像后 `/api/health` 报 `1.3.2`） |
+| — | **`1.3.2+3`（仅安卓端；后端 / Web / Linux 镜像 / Windows 未动，源码指纹不变）**：三项交互缺陷 —— **①卡片被拉成长条**（卡片里根本没有 `AspectRatio`，海报高度由「2:3 假设」的格子高度反推）⇒ 改为海报区 16:9（与 Web 端 `aspect-video` 同规格，横版铺满、竖版居中裁切不拉伸）；**②自定义拖拽排序「能拖、松手不生效」**（`onWillAcceptWithDetails` 对 itemBuilder 的 `BuildContext` 强转 `RenderBox?`，实际拿到 `RenderSliverGrid` 直接抛异常 ⇒ 指针一进入卡片就抛、拖放目标永不激活）⇒ 改为网格几何反推落点 + `onAcceptWithDetails` 用被接受者自己的下标 + `onDragEnd` 对两格间隙 / 网格留白 / 落回自身兜底；**③卡片轮播不同步、滑动还是死的**（模型层不解析 `posterMode`；海报区最上层 opaque `GestureDetector` 吃掉指针事件）⇒ 补 `posterMode` 解析 + 前台恢复 / 返回首页 / 下拉刷新 / 30 秒轮询同步 + `PageView` 左右滑动切图 + 3500 ms 自动翻页 + `n/总数` 徽章 | `flutter analyze`（0 error / 0 warning）+ `flutter test`（52 项通过 / 1 跳过；新增 9 条：拖拽 3 + 轮播 6）+ `bash scripts/verify-suites.sh`（19 项 / 0 失败）+ 源指纹 `521c4985d95f713c` 未变 + 重出三个 ABI 分包（`versionName 1.3.2` / `versionCode 2003·1003·4003`；真机交互验收待用户设备） |
 
 累计约 **22 项编号需求**的落地与回归，外加第 7～10 轮的修复项、`1.2.0` 的桌面端 / 三端图标统一、
 `1.3.0` 的性能优化、`1.3.1` 的桌面端三项修复与安卓端首个客户端（Linux 服务版号与镜像不变）、
 `1.3.1+2` 的安卓端「连 Linux 后端五项体验修复」（海报 / 详情 / 点击热区 / 图标统一 / 下拉刷新，后端未动）、
-`1.3.2` 的服务端 Steam 成就图标 URL 归一化（爬虫守卫 + 存量一次性迁移，前端三端一行未改，版号三处同步为 `1.3.2`）。
+`1.3.2` 的服务端 Steam 成就图标 URL 归一化（爬虫守卫 + 存量一次性迁移，Web / Windows 前端一行未改，版号三处同步为 `1.3.2`）、
+同日安卓端 `1.3.2+3` 的三项交互修复（卡片 16:9 对齐 Web、自定义拖拽排序松手即生效并持久化、
+卡片轮播与 Web / Linux 端同步且支持左右滑动，后端一行未改）。
 每轮的完整验收记录（含实测输出）保留在 [`docs/VERIFY.md`](docs/VERIFY.md)。
 
 > 上表里的一次性轮次脚本（`scripts/verify-round-*.sh`、`scripts/verify-*.mjs` 等 37 个文件）
@@ -87,8 +90,9 @@
   无代理环境下会明确报「抓取失败」而不是静默返回空数据，但届时无法取到评价。
 - **验证脚本需要密钥**：仓库中**不包含任何真实 API 密钥**。缺少 `RAWG_API_KEY`
   等凭据时，依赖联网的检查组会**明确跳过并说明原因**，不会假装通过。
-- **客户端成熟度**：Flutter 客户端（`flutter/`，安卓端 `1.3.1+2`）与 Web 端在**图库 / 详情 / 相册 / 播放 /
-  分享 / 删除**主链路上已对齐（海报显示、详情渲染、整卡点击、图标、下拉刷新同步均与 Web 端一致）；
+- **客户端成熟度**：Flutter 客户端（`flutter/`，安卓端 `1.3.2+3`）与 Web 端在**图库 / 详情 / 相册 / 播放 /
+  分享 / 删除**主链路上已对齐（海报显示、卡片 16:9 比例、详情渲染、整卡点击、图标、下拉刷新同步、
+  自定义排序拖拽、卡片轮播与左右滑动均与 Web 端一致）；
   尚未覆盖的是 Web 端**详情页的 Metacritic 媒体评价面板**与**设置页的高级项**（数据源凭据、维护工具等），
   详见 [`flutter/README.md`](flutter/README.md)。
 

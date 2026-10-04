@@ -28,7 +28,12 @@ node backend/scripts/verify/sqlite-vacuum.mjs            # 可选启动期 VACUU
 node scripts/verify-docker-layers.mjs                    # Dockerfile 分层自查（33 项；纯静态解析，不需要 docker）
 
 # 安卓端（离线；需要 flutter + 已就绪的 pub 缓存，未纳入 verify-suites.sh 清单）
-cd flutter && flutter analyze && flutter test --no-pub    # 期望 0 error / 0 warning；43 项通过 / 1 项跳过
+cd flutter && flutter analyze && flutter test --no-pub    # 期望 0 error / 0 warning（8 条既有 info）；52 项通过 / 1 项跳过
+#   1.3.2+3 新增 9 条：test/home_reorder_test.dart（3 条：卡片内落点 / 两行间隙落点 / 服务端顺序回来不回弹）
+#                      test/game_card_carousel_test.dart（6 条：static 无 PageView / 左右滑动 / 3500ms 自动翻页 /
+#                      手动切图后静默 2 个间隔 / 点海报区仍进详情 / 海报区 16:9）
+#   本机 Flutter 3.24.5 在 /tmp/sp-android：先 source /tmp/sp-android/env.sh 再跑 flutter，否则报
+#   "Flutter failed to write to a file at ...tool_state"
 cd .. && node scripts/brand-icons.mjs --check            # 品牌图标产物 = web/public/favicon.svg（零依赖，漂移即 exit 1）
 
 # 或者一键跑完上面 A 段全部（2 个类型检查 + 14 套件 + 产物自查 + Dockerfile 分层自查）
@@ -3205,3 +3210,55 @@ curl -s http://127.0.0.1:3001/api/health | python3 -m json.tool \
 `hero-rotation-all-official`、`card-carousel-vs-hero-carousel`、`card-arrows-need-slideshow-mode`、
 `password-change-api`、`password-change-ui`。旧的 `poster-rotation-all-games` /
 `poster-rotation-cover-only` 已退役。
+
+---
+
+# 验收报告 · 安卓端 1.3.2+3（卡片比例 · 拖拽排序 · 卡片轮播）
+
+## 0. 结论速览
+
+| 项 | 结论 |
+| --- | --- |
+| ① 卡片 16:9 | 卡片里**根本没有 `AspectRatio`**，海报高度由「2:3 假设」的格子高度（`cellWidth × 1.5 + infoHeight`）倒推 ⇒ 被拉成长条。现改为由海报区反推格子高度（`cellWidth / (16/9)`），海报区是真 `AspectRatio`；横版铺满、竖版 `BoxFit.cover` 居中裁切 |
+| ② 拖拽排序 | 真凶：itemBuilder 的 `BuildContext` 属于 GridView 的 sliver，`findRenderObject() as RenderBox?` 抛 `type 'RenderSliverGrid' is not a subtype of type 'RenderBox?'`，异常发生在 `_DragTargetState.didEnter` 里 ⇒ **指针一进入卡片就抛**、`DragTarget` 永不 entered、`_activeTarget` 恒 null ⇒ 松手毫无反应。改为「网格几何反推落点 + `onAcceptWithDetails` 用被接受者自己的下标 + `onDragEnd` 对空隙兜底」 |
+| ③ 轮播 | 模型层原来**不解析** `posterMode`（手机端永远是静态封面）；海报区最上层的 opaque `GestureDetector` 终止命中测试，`PageView` 收不到指针（滑动是死的）。现补 `posterMode`、前台恢复/返回首页/下拉刷新/30 秒轮询同步、`PageView` 左右滑动、3500 ms 自动翻页、`n/总数` 徽章 |
+| 数据一致性 | 排序（`PUT /api/games/order` 的 `custom_order`）与轮播状态（`posterMode`）都在服务端，手机端只读同一份 DTO ⇒ Web / Linux 端一改，手机端回前台或下拉刷新即一致，重启不丢 |
+| 全量回归 | `flutter analyze` 0 error / 0 warning；`flutter test` **52 通过 / 1 跳过 / 0 失败**；`bash scripts/verify-suites.sh` **19 项通过 / 0 失败**；源码指纹 `521c4985d95f713c`（137 文件）**未变**（后端与 Web 一行未改） |
+
+## 1. 自动化（离线，可复现）
+
+```bash
+cd flutter && source /tmp/sp-android/env.sh && flutter analyze && flutter test --no-pub
+cd .. && bash scripts/verify-suites.sh && node scripts/gen-source-hash.mjs --check
+```
+
+与本轮直接相关的 9 条用例（`1.3.1+2` 为 43 + 1，现 52 + 1）：
+
+- `flutter/test/home_reorder_test.dart`（固定 6 张卡 `游戏A…游戏F`，测试面板 1000×1600 ⇒ 4 列、`idealCellWidth = 233`）：
+  1. `_dragTo(_cardRect('游戏C').center + Offset(12, 0))` → 乐观顺序里 `A.left > C.left`、`api` 只收到一次
+     `{gameId:'g1', afterId:'g3', beforeId:'g4'}`、最终 `[g2,g3,g1,g4,g5,g6]`（服务端顺序回来后**不回弹**）；
+  2. 落点 `Offset(_cardRect('游戏A').center.dx + 20, _cardRect('游戏A').bottom + 6)`（**两行之间的 12px 间隙**）
+     → 仍提交 `{gameId:'g6', afterId:'g1', beforeId:'g2'}` 且顺序变 `[g1,g6,g2,g3,g4,g5]`（**修复前静默失效的现场**）；
+  3. `tester.getSize(find.byType(AspectRatio).first)` 长宽比 = 16:9。
+- `flutter/test/game_card_carousel_test.dart`：static 模式无 `PageView`、无 `1/3` 计数；slideshow 下
+  `dragFrom(海报中心, Offset(-260, 0))` → `PageView.controller.page ≈ 1` 且徽章变 `2/3`；
+  `pump(3600) + pump(400)` → 自动翻到 `2/3`，再 `pump(3500) + pump(400)` → `3/3`；
+  手动切图后两个间隔内不再自动翻页；轻点海报区仍触发整卡 `onTap`；海报区 16:9。
+
+## 2. 手工确认（脚本测不到的真机交互）
+
+1. **比例**：首页各屏宽下卡片都是 16:9；竖版海报居中裁切、不拉伸；观感与 Web 端一致。
+2. **拖拽**：切「自定义排序」→ 长按拖动，拖动中有插入指示条；**松手立即生效**；**杀掉 App 重开顺序仍在**；
+   在 Web 端刷新首页能看到同一套顺序（反向亦然）。
+3. **轮播同步**：Web / Linux 端给某游戏开「首页卡片轮播」并勾选 ≥ 2 张海报 → 手机端回到前台或下拉刷新后，
+   该卡片开始每 3.5 秒自动翻页；关掉开关 → 回到单张静态封面。
+4. **轮播交互**：在开启轮播的卡片上左右滑动切上一张 / 下一张（左右回环）；手动操作后约 7 秒内不自动翻页；
+   滑动不会误触发进详情，轻点海报区仍能进详情。
+5. **不回归**：下拉刷新、平台 / 排序切换、海报鉴权加载（不裂图）、详情页成就图标正常。
+
+## 3. 与 Web 端的一处有意差异（不是缺陷）
+
+计数徽章手机端只在 `slideshow && 海报 ≥ 2 张` 时显示；Web 端对 static 多海报卡也显示 `{i+1}/{count}`
+（`PosterCarousel.tsx:165-170`）。触屏既没有箭头也没有悬停，一个翻不动也点不动的计数器看起来像 bug，
+故手机端不显示。若要求完全对齐，把 `flutter/lib/widgets/game_card.dart` 里 `Stack` 中计数徽章的条件
+由 `slideshow` 改成 `urls.length > 1` 即可。

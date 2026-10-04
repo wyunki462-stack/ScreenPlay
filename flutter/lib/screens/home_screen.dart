@@ -93,6 +93,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   int? _hoverIndex;
   bool _hoverRightHalf = false;
 
+  /// 拖拽过程中指针的**真实全局坐标**（LongPressDraggable.onDragUpdate 记录）。
+  ///
+  /// 为什么需要：拖拽框架只在「松手点命中某个 DragTarget 矩形」时才回调
+  /// onAcceptWithDetails。两格之间的 12px 间隙、网格四周 16px 留白、以及正好落回卡片自身
+  /// （自身会被 onWillAccept 拒绝）都会让 `_activeTarget` 为 null ⇒ onAcceptWithDetails 根本
+  /// 不触发 ⇒ 用户看到的就是「卡片能拖动、松手后位置不更新」。有指针坐标才能在 onDragEnd
+  /// 里按「离手指最近的一格」兜底（Web 端靠网格层 onDragOver + preventDefault 接受空隙落点）。
+  Offset? _lastPointerGlobal;
+
+  /// 本次拖拽是否已由某个 DragTarget 提交过（避免 onAccept 与 onDragEnd 重复提交）。
+  bool _dropHandled = false;
+
+  /// 网格（GridView）key + 最近一次布局的格子尺寸：把全局坐标换算成格子下标。
+  final GlobalKey _gridKey = GlobalKey();
+  double _cellWidth = 0;
+  double _cellHeight = 0;
+
   // ---- 网格几何（由 LayoutBuilder 记录，供可见范围预取计算） --------------------
   /// 每行的高度步进 = 格子高 + 行间距（用于把滚动偏移换算成行号）。
   double _rowExtent = 0;
@@ -106,12 +123,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _lastScrollElapsedMicros = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _syncTimer = Timer.periodic(_kSyncInterval, (_) => _syncFromServer());
+  }
+
+  @override
   void dispose() {
     _debounce?.cancel();
     _fastScrollReset?.cancel();
+    _syncTimer?.cancel();
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// 首页停留期间的静默同步间隔。
+  ///
+  /// 需求③「Linux/Web 端设置的卡片轮播状态，移动端实时同步生效」：后端 posterMode /
+  /// 「加入幻灯片」一改，首页停留时最迟 30 秒内换上新状态（下拉刷新、切页返回时另有即时
+  /// 刷新）。只在「前台 + 非快速滚动 + 首页仍是当前路由」时才真的发请求，避免后台轮询。
+  static const Duration _kSyncInterval = Duration(seconds: 30);
+  Timer? _syncTimer;
+
+  /// 静默重取列表与统计（不做任何 loading 态切换，失败就保持原样）。
+  void _syncFromServer() {
+    if (!mounted) return;
+    if (!ref.read(preloadAllowedProvider)) return;
+    final ModalRoute<Object?>? route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return;
+    ref.invalidate(gamesProvider);
+    ref.invalidate(statsProvider);
   }
 
   void _onSearchChanged(String value) {
@@ -317,6 +359,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildGameGrid(bool preloadAllowed) {
+    // 应用回到前台时静默同步一次：Linux/Web 端刚改的卡片轮播状态立刻可见（需求③）。
+    ref.listen<bool>(isForegroundProvider, (bool? previous, bool next) {
+      if (next && previous != true) _syncFromServer();
+    });
     final AsyncValue<List<GameSummary>> gamesAsync = ref.watch(gamesProvider(_filter()));
     return gamesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF))),
@@ -328,7 +374,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         if (games.isEmpty) {
           return const Center(child: Text('暂无游戏，点击右上角同步图标开始扫描。'));
         }
-        // 乐观本地覆盖顺序优先（拖拽后立刻生效）；服务端回来并清空覆盖后自然回到它。
+        // 乐观本地覆盖顺序优先（拖拽后立刻生效）；服务端顺序追平本地后自然交还。
+        //
+        // 注意：不能在 PUT 返回的那一刻就清掉覆盖 —— invalidate 之后 provider 还会先用
+        // **旧数据**渲染一帧（AsyncValue 的 skipLoadingOnRefresh 行为），清早了用户会看到
+        // 卡片先弹回原位、下一帧再跳到新位（回弹闪动）。这里改成「服务端 id 序列 == 本地
+        // 覆盖」时才退休。
+        final List<GameSummary>? override = _customOrder;
+        if (override != null && _sameIdOrder(override, games)) {
+          _customOrder = null; // 仅赋值、不 setState：本次渲染本来就用服务端顺序
+        }
         final List<GameSummary> ordered = _applyCustomOrder(games);
         // 拖拽落点/指示条一律以「本次渲染顺序」为坐标系，避免与服务端新顺序错位。
         _renderedOrder = ordered;
@@ -351,10 +406,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             final double cellHeight = idealCellWidth / aspectRatio;
             _rowExtent = cellHeight + _kGridSpacing;
             _viewportHeight = constraints.maxHeight;
+            // 供拖拽兜底落点把全局坐标换算成格子下标（见 _dropCellFrom）。
+            _cellWidth = idealCellWidth;
+            _cellHeight = cellHeight;
 
             return NotificationListener<ScrollNotification>(
               onNotification: _onScrollNotification,
               child: GridView.builder(
+                key: _gridKey,
                 controller: _scrollController,
                 // 内容不足一屏时也要能拖动 → 下拉刷新在任何状态下都可用。
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -381,6 +440,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       preloadAllowed && _inPreloadWindow(index);
 
                   final Widget card = GameCard(
+                    // 绑死「游戏 ↔ 卡片状态」：排序变化后同一格子的 State 不会带着
+                    // 上一款游戏的海报页/动画状态复用（ValueKey 不会跨父级冲突）。
+                    key: ValueKey<String>(game.id),
                     game: game,
                     posterUrl: poster,
                     posterUrls: posterUrls,
@@ -419,25 +481,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   /// childAspectRatio = 格子宽 / 格子高。
   ///
-  /// 格子高 = 海报高 + 信息行高；海报固定 2:3 ⇒ 海报高 = 海报宽 × 1.5；
-  /// 海报宽 ≈ 格子宽（Card 只留水平 margin，不影响高度）。
+  /// 格子高 = 海报高 + 信息行高；海报固定 16:9（[GameCard.posterAspectRatio]，与 Web 端
+  /// 卡片的 `aspect-video` 一致）⇒ 海报高 = 海报宽 × 9/16。
+  /// 1.3.1 按竖版 2:3 估（海报高 = 海报宽 × 1.5），宽屏/竖屏下都会算出「长条」格子，
+  /// 与 Web 端观感不一致 —— 这是用户报障①的根因。
   /// 信息行 = 标题最多 2 行 + 6 间距 + 底部行 + 上下 padding。
   /// 用当前 [TextScaler] 估算字号，末尾再留 6 逻辑像素余量；最后夹在
   /// [_kMinAspectRatio, _kMaxAspectRatio]：
-  ///  - 下限 0.40：极端窄屏（如 320dp 且 2 列，cell≈139）不让格子再扁，宁可海报收缩；
-  ///  - 上限 0.62：宽屏下不让卡片被拉得过高，保持接近原观感（原来是 0.56）。
+  ///  - 下限 0.55：极端窄屏 + 大字号时不让格子比「海报 + 信息行」更矮（逼海报收缩）；
+  ///  - 上限 = 16:9：格子永远不会比海报自身更扁，纯粹兜底（正常永远不触发，
+  ///    所以不会把海报压到变形）。
   static double _childAspectRatioFor(BuildContext context, double cellWidth) {
     final TextScaler scaler = MediaQuery.textScalerOf(context);
     final double scale = scaler.scale(14) / 14;
     final double titleLine = 15.0 * 1.2 * scale; // titleSmall 约 14~15
     final double bodyLine = 12.0 * 1.1 * scale; // bodySmall 约 12
     final double infoHeight = 8 + titleLine * 2 + 6 + bodyLine + 10 + 6; // 8/10 padding + 6 余量
-    final double cellHeight = cellWidth * 1.5 + infoHeight;
+    final double posterHeight = cellWidth / GameCard.posterAspectRatio;
+    final double cellHeight = posterHeight + infoHeight;
     return (cellWidth / cellHeight).clamp(_kMinAspectRatio, _kMaxAspectRatio);
   }
 
-  static const double _kMinAspectRatio = 0.40;
-  static const double _kMaxAspectRatio = 0.62;
+  static const double _kMinAspectRatio = 0.55;
+  static const double _kMaxAspectRatio = GameCard.posterAspectRatio;
 
   /// 第 [index] 个格子是否落在预取窗口内。
   ///
@@ -524,6 +590,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return merged;
   }
 
+  /// 两个列表的游戏 id 序列是否完全一致（判断服务端是否已追平本地乐观顺序）。
+  static bool _sameIdOrder(List<GameSummary> a, List<GameSummary> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+    }
+    return true;
+  }
+
   /// 计算「逻辑插入下标」：拖拽项从原位置移除后，应插到列表的哪个下标。
   ///
   /// why：命中格子的下标是**移除前**的坐标系。若拖拽项在命中格之前（draggedIndex < target），
@@ -560,6 +635,64 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  /// 第 [index] 格在屏幕上的矩形（由网格几何反推，**不走 per-item 的 BuildContext**）。
+  ///
+  /// 为什么不用 `context.findRenderObject()`：itemBuilder 的 context 属于 GridView 的
+  /// sliver 元素，`findRenderObject()` 拿到的是 `RenderSliverGrid`，`as RenderBox?` 会抛
+  /// `type 'RenderSliverGrid' is not a subtype of type 'RenderBox?'`。1.3.1 的
+  /// `onWillAcceptWithDetails` 正是这么写的 ⇒ 指针一进入任何卡片就在手势回调里抛异常 ⇒
+  /// DragTarget 永远进不了 entered 状态、`_activeTarget` 一直为 null ⇒ 松手既不重排也没有
+  /// 插入指示条。这是报障②「卡片可拖动、松手后位置不更新」的真根因。
+  Rect? _cellRectFor(int index) {
+    final RenderBox? grid = _gridKey.currentContext?.findRenderObject() as RenderBox?;
+    if (grid == null || !grid.hasSize) return null;
+    if (_columns <= 0 || _cellWidth <= 0 || _cellHeight <= 0) return null;
+    final int row = index ~/ _columns;
+    final int column = index % _columns;
+    final Offset topLeft = grid.localToGlobal(Offset(
+      _kGridPadding + column * (_cellWidth + _kGridSpacing),
+      _kGridPadding + row * (_cellHeight + _kGridSpacing) - _scrollOffset,
+    ));
+    return topLeft & Size(_cellWidth, _cellHeight);
+  }
+
+  /// 指针落在第 [index] 格的左半还是右半（决定插到该格之前还是之后）。
+  ///
+  /// 优先用 onDragUpdate 记录的**真实指针坐标**：DragTargetDetails.offset 是「跟手卡片的
+  /// 左上角」（= 指针 - 拖拽锚点），手指抓在卡片左边缘时会明显偏左，肉眼看着在右半却算成左半。
+  bool _rightHalfOfCell(int index, Offset fallback) {
+    final Rect? cell = _cellRectFor(index);
+    if (cell == null) return false;
+    final Offset point = _lastPointerGlobal ?? fallback;
+    return point.dx > cell.center.dx;
+  }
+
+  /// 全局坐标 → 「网格里的哪一格 + 左半还是右半」；落在网格矩形外返回 null。
+  ///
+  /// 这是落点判定的兜底通道（见 _lastPointerGlobal 注释）：把格子之间的 12px 间隙、
+  /// 网格四周 16px 留白都折算到「离手指最近的那一格」，语义与 Web 端网格层
+  /// onDragOver + preventDefault 接受空隙落点一致（web/src/pages/Home.tsx:307-314）。
+  ({int index, bool rightHalf})? _dropCellFrom(Offset global) {
+    final RenderBox? grid = _gridKey.currentContext?.findRenderObject() as RenderBox?;
+    if (grid == null || !grid.hasSize || _columns <= 0) return null;
+    if (_cellWidth <= 0 || _cellHeight <= 0) return null;
+    final int count = _renderedOrder.length;
+    if (count <= 0) return null;
+    final Offset local = grid.globalToLocal(global);
+    if (!(Offset.zero & grid.size).contains(local)) return null;
+
+    // 内容坐标系：扣掉 GridView 的 padding，再加回滚动偏移（单元格按行/列等距排布）。
+    final double contentX = local.dx - _kGridPadding;
+    final double contentY = local.dy - _kGridPadding + _scrollOffset;
+    final double pitchX = _cellWidth + _kGridSpacing;
+    final double pitchY = _cellHeight + _kGridSpacing;
+    final int column = (contentX / pitchX).floor().clamp(0, _columns - 1);
+    final int row = (contentY / pitchY).floor();
+    final int index = (row * _columns + column).clamp(0, count - 1);
+    final double offsetInColumn = contentX - column * pitchX;
+    return (index: index, rightHalf: offsetInColumn > _cellWidth / 2);
+  }
+
   Widget _buildDraggableCell({
     required BuildContext context,
     required Widget card,
@@ -574,15 +707,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       // 命中判定：只接受「不是自己」的拖拽项。
       onWillAcceptWithDetails: (DragTargetDetails<String> details) {
         if (details.data == game.id) return false;
-        final RenderBox? box = context.findRenderObject() as RenderBox?;
-        bool rightHalf = false;
-        if (box != null && box.hasSize) {
-          final Offset local = box.globalToLocal(details.offset);
-          rightHalf = local.dx > box.size.width / 2;
-        }
         setState(() {
           _hoverIndex = index;
-          _hoverRightHalf = rightHalf;
+          _hoverRightHalf = _rightHalfOfCell(index, details.offset);
         });
         return true;
       },
@@ -590,11 +717,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         if (_hoverIndex == index) setState(() => _hoverIndex = null);
       },
       onAcceptWithDetails: (DragTargetDetails<String> details) {
-        final int? hover = _hoverIndex;
-        final bool rightHalf = _hoverRightHalf;
+        // 落点以「被接受的这个 DragTarget 自己的下标」为准，不再读 _hoverIndex：
+        // 悬停态可能已被一次 onLeave 清空（手指还没抬、状态已是 null），
+        // 那是「松手后位置不更新」的另一条触发路径。
+        final bool rightHalf = _rightHalfOfCell(index, details.offset);
+        _dropHandled = true;
         setState(() => _hoverIndex = null);
-        if (hover == null) return;
-        _onReorder(gameId: details.data, hoverIndex: hover, rightHalf: rightHalf);
+        _onReorder(gameId: details.data, hoverIndex: index, rightHalf: rightHalf);
       },
       builder: (BuildContext context, List<String?> candidate, List<dynamic> rejected) {
         final Widget content = Stack(
@@ -626,15 +755,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           onDragStarted: () {
             setState(() {
               _draggedIndex = index;
+              _dropHandled = false;
+              _lastPointerGlobal = null;
               // 清掉本地覆盖：让命中坐标系回到「服务端顺序 = 当前渲染顺序」，与 _onReorder 的基线一致。
               _clearCustomOrderOverride();
             });
           },
+          // 记录指针真实坐标（兜底落点判定用）。
+          onDragUpdate: (DragUpdateDetails details) {
+            _lastPointerGlobal = details.globalPosition;
+          },
           onDragEnd: (DraggableDetails details) {
+            final bool handled = _dropHandled;
+            final Offset? pointer = _lastPointerGlobal;
+            _dropHandled = false;
+            _lastPointerGlobal = null;
             setState(() {
               _draggedIndex = null;
               _hoverIndex = null;
             });
+            if (handled || pointer == null) return;
+            // 兜底：松手点没命中任何 DragTarget（格子间隙 / 网格留白 / 落回自身卡片）。
+            // 按「离手指最近的一格」重排，否则这一整次拖拽会被静默丢弃。
+            final ({int index, bool rightHalf})? cell = _dropCellFrom(pointer);
+            if (cell == null) return;
+            if (cell.index < _renderedOrder.length &&
+                _renderedOrder[cell.index].id == game.id) {
+              return; // 落回自己 → 不动
+            }
+            _onReorder(
+              gameId: game.id,
+              hoverIndex: cell.index,
+              rightHalf: cell.rightHalf,
+            );
           },
           onDraggableCanceled: (Velocity velocity, Offset offset) {
             if (!mounted) return;
@@ -702,9 +855,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             beforeId: belowId,
             afterId: aboveId,
           );
-      // 成功后 provider 层已失效 gamesProvider；清空覆盖让服务端顺序接管。
+      // 成功后**不清**本地覆盖：provider 层已失效 gamesProvider，但要等新数据真的到了、
+      // 且 id 序列与本地一致时，_buildGameGrid 才会把覆盖退休（否则会看到回弹闪动）。
       if (!mounted) return;
-      setState(_clearCustomOrderOverride);
     } catch (_) {
       // 失败：回滚到拖拽前的本地快照，并用中文提示用户。
       if (!mounted) return;

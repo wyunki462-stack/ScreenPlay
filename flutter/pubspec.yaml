@@ -1,10 +1,13 @@
-# ScreenPlay Flutter 客户端 —— 安卓端 1.3.1
-# 本次（1.3.1）为安卓端补齐「核心 / 基础设施层」：本地偏好、网络类型判断、
-# 图片三级缓存、媒体分享/保存/删除、前后台降级、会话凭证（Bearer + Cookie 双通道）。
+# ScreenPlay Flutter 客户端 —— 安卓端 1.3.2
+# 1.3.1 为安卓端补齐「核心 / 基础设施层」：本地偏好、网络类型判断、图片三级缓存、
+# 媒体分享/保存/删除、前后台降级、会话凭证（Bearer + Cookie 双通道）。
+# 1.3.2+3（versionCode 3）修三项交互：①卡片海报区 16:9，与 Web 端 `aspect-video` 一致；
+# ②自定义拖拽排序「松手即生效」并持久化；③卡片轮播与 Web / Linux 端同步、支持左右滑动切图。
+# 详见 flutter/docs/ANDROID-1.3.2.md。
 name: screenplay
 description: "ScreenPlay — 个人游戏媒体图库管理器（Flutter 客户端）。纯客户端：所有数据来自后端 HTTP API。"
 publish_to: 'none'
-version: 1.3.1+2
+version: 1.3.2+3
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

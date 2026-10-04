@@ -1,16 +1,24 @@
-// 游戏卡片：海报轮播（左右滑动）+ 名称 + 时长 + 颜色编码的 Metacritic 徽章。
+// 游戏卡片：海报区（16:9，可在 slideshow 模式下左右滑动/自动轮播）+ 名称 + 时长 +
+// 颜色编码的 Metacritic 徽章。
 //
-// 1.3.1 变化（安卓端）：
-//  - 海报区由「单张静态图」升级为 [PageView] 多张轮播 —— 用户可左右滑动切上一张/下一张，
-//    底部叠加页码指示点。滑动由 PageView 的横向拖拽手势消费，不会误触发卡片点击（见
-//    _PosterSlideshow 内「手势吸收层」注释）。
+// 1.3.2 变化（安卓端，与 Web 端逻辑对齐）：
+//  - 海报区固定 16:9（[GameCard.posterAspectRatio]，等同 Web 端卡片的 `aspect-video`）：
+//    横版海报完整入画、竖版海报居中裁切，不再是原先按 2:3 假设拉出来的长条。
+//  - 轮播开关来自后端 `posterMode`（[GameSummary.slideshowEnabled]），与 Web 端
+//    `mode={game.posterMode ?? "static"}` 同源：只有 slideshow 才建可滑动的 [PageView]
+//    并自动翻页；static 只显示封面（Linux/Web 端一改，移动端刷新即生效）。
+//  - 自动翻页 3500ms（= Web 端 useRotationTimer 默认值），按住时暂停、手动切图后静默
+//    2 个间隔；左上角显示 `n/总数` 计数徽章（= Web 端首页卡片，不显示圆点指示器）。
+//  - 删掉了 1.3.1 的「手势吸收层」：那层 `HitTestBehavior.opaque` 的 GestureDetector 是
+//    Stack 最上层，会终止命中测试 ⇒ PageView 永远收不到指针事件、左右滑动切图其实是死的。
+//    整卡点击改由外层 Card > InkWell 承担（见 _PosterSlideshow.build 注释）。
 //  - 数据来源与 Web 端一致：由列表页传入 `api.cardPosterSources(game)`（封面 + 后端
 //    `cardPosters()` 给出的轮播集合）。卡片的 postersProvider 预取只在调用方没给列表时
 //    作为兜底保留。
 //  - 低功耗：仅当 preloadAllowedProvider == true（前台且非快速滚动）时才 watch
-//    postersProvider；否则只用调用方传入的列表，绝不额外发起海报请求。
-//  - 整卡可点：海报区那层「手势吸收层」现在把点击转交给卡片的 onTap（此前它会吞掉
-//    点击，导致只有下方文字区域能进详情页）。
+//    postersProvider；自动翻页用单次链式定时器，离屏/暂停/退后台就不再续期。
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -43,6 +51,12 @@ class GameCard extends StatelessWidget {
   /// 是否允许该卡片发起海报请求（前台且非快速滚动、且在可见预取窗口内时为 true）。
   final bool allowPosterPrefetch;
 
+  /// 海报区宽高比：16:9（与 Web 端卡片海报区的 `aspect-video` 一致）。
+  ///
+  /// 横版海报正好铺满；竖版海报按 BoxFit.cover 居中裁切，不拉伸变形。
+  /// 网格的 childAspectRatio 由 home_screen 按这个比例反推（见 _childAspectRatioFor）。
+  static const double posterAspectRatio = 16 / 9;
+
   /// Metacritic 评分颜色：≥75 绿 / 50~74 黄 / <50 红。
   static Color metacriticColor(int score) {
     if (score >= 75) return const Color(0xFF6CCF59);
@@ -63,16 +77,18 @@ class GameCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            // 海报区：优先跟随格子高度（Flexible），比例由 AspectRatio 维持 2:3；
+            // 海报区：优先跟随格子高度（Flexible），比例固定 16:9（= Web 端 aspect-video）。
             // 万一格子比「海报 + 信息行」的下限还矮，海报收缩而不是底部文字溢出。
             Flexible(
-              child: _PosterSlideshow(
-                game: game,
-                posterUrl: posterUrl,
-                posterUrls: posterUrls,
-                allowPosterPrefetch: allowPosterPrefetch,
-                // 整卡可点：海报区的手势吸收层把点击转交给这里（见 _PosterSlideshow）。
-                onTap: onTap,
+              child: AspectRatio(
+                aspectRatio: posterAspectRatio,
+                child: _PosterSlideshow(
+                  game: game,
+                  posterUrl: posterUrl,
+                  posterUrls: posterUrls,
+                  allowPosterPrefetch: allowPosterPrefetch,
+                  onTap: onTap,
+                ),
               ),
             ),
             Padding(
@@ -141,23 +157,141 @@ class _PosterSlideshow extends ConsumerStatefulWidget {
 }
 
 class _PosterSlideshowState extends ConsumerState<_PosterSlideshow> {
+  /// 自动翻页间隔：与 Web 端 useRotationTimer 默认值一致
+  /// （web/src/lib/hooks.ts:38-57，intervalMs = 3500）。
+  static const Duration _kRotationInterval = Duration(milliseconds: 3500);
+
+  /// 手动切图后要跳过的自动翻页次数。
+  ///
+  /// 与 Web 端一致：手动切换时 `resumeAt = Date.now() + intervalMs * 2`
+  /// （web/src/components/PosterCarousel.tsx:87），即静默约 2 个间隔后恢复自动轮播。
+  /// 这里刻意用「跳过 N 次 tick」而不是记绝对时间戳：`DateTime.now()` 取真实墙钟，
+  /// widget test 的假时钟推进不会让它前进，绝对时间戳会让静默期在测试里永不结束
+  /// （也会在设备休眠/唤醒后行为古怪）。
+  static const int _kManualSkipTicks = 1;
+
+  /// 单次翻页动画时长。
+  static const Duration _kAdvanceDuration = Duration(milliseconds: 320);
+
   final PageController _controller = PageController();
   int _page = 0;
 
+  /// 当前渲染出的海报张数（build 里记录，供定时器判定）。
+  int _count = 0;
+
+  /// 自动翻页定时器：**单次链式**而非 periodic —— 离屏、暂停、退后台时不再续期，
+  /// 避免列表里每张轮播卡都挂着长跑定时器（低功耗优先）。
+  Timer? _timer;
+
+  /// 手指是否还按在海报区上（按住不翻页；与 Web 端 hover 暂停同义）。
+  bool _pressed = false;
+
+  /// 手动切图后还需跳过几次自动翻页（0 = 恢复正常轮播）。
+  int _skipTicks = 0;
+
+  /// 是否正由自动轮播驱动翻页（用于区分「手动滑动」与「自动翻页」）。
+  bool _advancing = false;
+
+  /// 屏幕矩形（build 里缓存，定时器回调里不查 MediaQuery）。
+  Rect _viewport = Rect.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _schedule();
+  }
+
   @override
   void dispose() {
+    _timer?.cancel();
+    _timer = null;
     _controller.dispose();
     super.dispose();
   }
 
-  /// 海报列表刷新后，若当前页已越界（例如张数变少），把页码夹回合法范围，
-  /// 避免指示点显示到不存在的页。
+  /// 海报列表 / 轮播状态刷新后：
+  ///  - 轮播被关掉（posterMode 变回 static）或海报集合变了 → 停表并回到第 1 张；
+  ///  - 仍轮播 → 续一次定时器，页码夹回合法范围。
   @override
   void didUpdateWidget(covariant _PosterSlideshow oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final bool setChanged = oldWidget.game.posterMode != widget.game.posterMode ||
+        oldWidget.posterUrls.join('|') != widget.posterUrls.join('|');
+    if (setChanged) {
+      _timer?.cancel();
+      _timer = null;
+      _skipTicks = 0;
+      _page = 0;
+      if (_controller.hasClients) _controller.jumpToPage(0);
+      _schedule();
+      return;
+    }
     if (!_controller.hasClients) return;
     final int page = _controller.page?.round() ?? _page;
     if (page != _page) setState(() => _page = page);
+  }
+
+  /// 现在是否应该轮播：slideshow 模式 + 至少两张海报 + 前台且非快速滚动。
+  bool get _shouldRotate =>
+      widget.game.slideshowEnabled && _count > 1 && ref.read(preloadAllowedProvider);
+
+  /// 排一次自动翻页。不带 [delay] 且已有定时器在跑时不重置倒计时。
+  void _schedule([Duration? delay]) {
+    if (!mounted) return;
+    if (_timer != null && delay == null) return;
+    _timer?.cancel();
+    _timer = null;
+    if (!_shouldRotate) return; // 不轮播就不挂定时器（零额外唤醒）
+    _timer = Timer(delay ?? _kRotationInterval, _onTick);
+  }
+
+  void _onTick() {
+    _timer = null;
+    if (!mounted || !_shouldRotate) return;
+    if (_pressed) {
+      _schedule(); // 手指按住：只续期，不翻页
+      return;
+    }
+    if (_skipTicks > 0) {
+      _skipTicks--; // 手动切图后的静默期：这一拍不翻页
+      _schedule();
+      return;
+    }
+    if (!_isOnScreen()) {
+      _schedule(); // 卡片滚出屏幕：只续期，不做无用动画
+      return;
+    }
+    _advance();
+  }
+
+  /// 自动翻到下一张（到尾则回到第 1 张，与 Web 端 `(i + 1) % count` 一致）。
+  Future<void> _advance() async {
+    if (!mounted) return;
+    final int count = _count;
+    if (count <= 1 || !_controller.hasClients) {
+      _schedule();
+      return;
+    }
+    final int next = (_page + 1) % count;
+    _advancing = true;
+    try {
+      await _controller.animateToPage(
+        next,
+        duration: _kAdvanceDuration,
+        curve: Curves.easeOut,
+      );
+    } finally {
+      _advancing = false;
+    }
+    _schedule();
+  }
+
+  /// 卡片是否与屏幕相交（屏幕外不做翻页动画）。
+  bool _isOnScreen() {
+    final RenderObject? object = context.findRenderObject();
+    if (object is! RenderBox || !object.attached || !object.hasSize) return false;
+    final Rect self = object.localToGlobal(Offset.zero) & object.size;
+    return self.overlaps(_viewport);
   }
 
   /// 海报优先级（需求语义，不可随意调换）：
@@ -203,6 +337,9 @@ class _PosterSlideshowState extends ConsumerState<_PosterSlideshow> {
 
   @override
   Widget build(BuildContext context) {
+    // 屏幕矩形缓存给定时器用（定时器回调里不查 MediaQuery）。
+    _viewport = Offset.zero & MediaQuery.sizeOf(context);
+
     // 调用方（列表）已预先解析好海报时才直接用；否则仅当允许预取时自己去拉。
     final bool mayWatch = widget.posterUrls.isEmpty && widget.allowPosterPrefetch &&
         ref.watch(preloadAllowedProvider);
@@ -216,9 +353,17 @@ class _PosterSlideshowState extends ConsumerState<_PosterSlideshow> {
     final List<String> urls = widget.posterUrls.isNotEmpty
         ? widget.posterUrls
         : (postersAsync?.valueOrNull != null ? _resolve(postersAsync!.valueOrNull!) : const <String>[]);
+    _count = urls.length;
 
-    if (urls.length <= 1) {
-      // 无轮播内容：外观与改动前完全一致（单张图 + 渐变占位兜底）。
+    // 轮播开关来自后端 posterMode（与 Web 端 `mode={game.posterMode ?? "static"}` 同源）：
+    // 只有 slideshow 才建可滑动的 PageView + 自动翻页；static 只显示封面。
+    final bool slideshow = widget.game.slideshowEnabled && urls.length > 1;
+
+    // 保证「该轮播时总有一个待触发的定时器」；已在跑的倒计时不重置。
+    if (_timer == null && _shouldRotate) _schedule();
+
+    if (!slideshow) {
+      // 静态卡片（或轮播关掉 / 只有一张）：外观与单图时完全一致（封面 + 渐变兜底）。
       return _Poster(
         posterUrl: urls.isNotEmpty ? urls.first : widget.posterUrl,
         name: widget.game.name,
@@ -229,71 +374,61 @@ class _PosterSlideshowState extends ConsumerState<_PosterSlideshow> {
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        PageView.builder(
-          controller: _controller,
-          itemCount: urls.length,
-          onPageChanged: (int index) => setState(() => _page = index),
-          itemBuilder: (BuildContext context, int index) => _Poster(
-            posterUrl: urls[index],
-            name: widget.game.name,
+        // 按住即暂停自动翻页（= Web 端 hover 暂停）；Listener 只旁观、不参与手势竞技场，
+        // 所以左右滑动照旧交给 PageView。
+        //
+        // 这里**不能**再放 1.3.1 那层 `HitTestBehavior.opaque` 的 GestureDetector：它是
+        // Stack 的最上层且 opaque ⇒ 命中测试到此终止 ⇒ PageView 收不到指针事件，滑动切图
+        // 实际是死的。整卡点击由外层 Card > InkWell(onTap) 兜住（Tap 与 PageView 的横向
+        // Drag 在手势竞技场里按方向区分，互不打架）。
+        Listener(
+          onPointerDown: (_) => _pressed = true,
+          onPointerUp: (_) => _pressed = false,
+          onPointerCancel: (_) => _pressed = false,
+          child: PageView.builder(
+            controller: _controller,
+            itemCount: urls.length,
+            onPageChanged: (int index) {
+              if (!mounted) return;
+              setState(() => _page = index);
+              if (_advancing) return; // 自动翻页已自带节奏，不再叠加静默期
+              // 手动切图 → 静默 2 个间隔后恢复自动翻页（Web: resumeAt = now + interval*2），
+              // 并把倒计时从这一刻重新计起（用户刚翻到的那张至少能看满一个间隔）。
+              _skipTicks = _kManualSkipTicks;
+              _timer?.cancel();
+              _timer = null;
+              _schedule();
+            },
+            itemBuilder: (BuildContext context, int index) => _Poster(
+              posterUrl: urls[index],
+              name: widget.game.name,
+            ),
           ),
         ),
-        // 页码指示点（选中高亮）。
+        // 计数徽章：左上角 `当前张/总张`（与 Web 端首页卡片的 PosterCarousel 计数一致，
+        // Web 首页卡片 showDots=false ⇒ 这里也不放圆点指示器）。
         Positioned(
-          left: 0,
-          right: 0,
-          bottom: 6,
-          child: _PageDots(count: urls.length, current: page),
-        ),
-        // 手势吸收层：把落在海报区上的点击转交给卡片自己的 onTap。
-        //
-        // 为什么必须加这一层：外层 Card > InkWell(onTap) 与内层 PageView 都注册了手势识别器。
-        // 若海报区没有自己的点击识别器，用户「点」海报（非滑动）会在手势竞技场里被外层
-        // InkWell 命中；这里显式注册一个 onTap 反而更稳：由它独占海报区的点击并调用
-        // widget.onTap（= 进详情页），横向拖拽方向不同，PageView 仍会各自胜出，滑动切图
-        // 不受影响。
-        //
-        // 这里**只**注册 onTap，不注册长按：长按拖拽由外层（自定义排序模式下的）
-        // LongPressDraggable 负责，若这张吸收层也抢长按，会与 LongPressDraggable 竞争同一个
-        // 长按手势、导致拖拽时灵时不灵。
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onTap,
+          left: 6,
+          top: 6,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0x99000000),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              child: Text(
+                '${page + 1}/${urls.length}',
+                style: const TextStyle(
+                  color: Color(0xE6FFFFFF),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 页码指示点：小圆点，当前页高亮放大。
-class _PageDots extends StatelessWidget {
-  const _PageDots({required this.count, required this.current});
-
-  final int count;
-  final int current;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List<Widget>.generate(count, (int index) {
-        final bool active = index == current;
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          margin: const EdgeInsets.symmetric(horizontal: 3),
-          width: active ? 16 : 6,
-          height: 6,
-          decoration: BoxDecoration(
-            color: active ? const Color(0xFF00E5FF) : const Color(0x99FFFFFF),
-            borderRadius: BorderRadius.circular(3),
-            boxShadow: const <BoxShadow>[
-              BoxShadow(color: Color(0x66000000), blurRadius: 2),
-            ],
-          ),
-        );
-      }),
     );
   }
 }
