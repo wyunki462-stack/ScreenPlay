@@ -74,7 +74,8 @@ const USAGE_TXT = `ScreenPlay Windows 免安装版（浏览器窗口模式）
   2. 双击 ScreenPlay.cmd；
   3. 第一次启动会等几秒（后端要建数据库、扫描媒体库），随后会弹出一个
      没有地址栏的窗口，那就是 ScreenPlay 本体；
-  4. 关闭该窗口即退出，后端子进程会被一起回收。
+  4. 第一次打开会引导你创建一个账户（见「三、登录与局域网访问」）；
+  5. 关闭该窗口即退出，后端子进程会被一起回收。
 
   若系统提示缺少 WebView2：本方案用的是 Edge/Chrome 的 --app 模式，
   只要装过 Edge（Win10/11 自带）即可，无需额外安装。
@@ -84,16 +85,30 @@ const USAGE_TXT = `ScreenPlay Windows 免安装版（浏览器窗口模式）
   想改到别的盘（例如 D:\\ScreenPlay-data）：在本目录新建 config.json，写
       { "dataDir": "D:\\\\ScreenPlay-data" }
   可选键（与 Tauri 安装版的 config.json 键名一致）：
-      "port": 3000            固定端口（不写则由系统分配空闲端口）
-      "auth": "off"           登录开关：off（默认，直接进入界面）/ local（本机账户）/ system
+      "port": 3000            固定端口（不写则由系统自动探测空闲端口）
+      "host": "0.0.0.0"       监听地址：默认整个局域网可访问（1.3.2 起）；写 "127.0.0.1" 则仅本机
+      "firewall": "auto"      防火墙：auto（默认，首次启动自动放行，弹一次管理员授权）/
+                              off（程序完全不碰防火墙）
+      "auth": "local"         登录开关：local（默认，本机账户，首次在网页上创建）/ system（系统账户）/
+                              off（关闭登录，**只有 host 为 127.0.0.1 时才允许**）
+      "allowSetup": true      true（默认）= 首次打开网页时创建账户；false = 启动时生成随机管理员
+                              密码并写入 <数据目录>\\初始密码.txt
       "mediaDirs": ["D:\\\\Games\\\\shots", "E:\\\\PS5"]   媒体根目录（不写则用 <数据目录>\\media）
-      "adminPassword": "..."  仅 auth=local 时可用，指定管理员密码（不写则首次启动随机生成并打印）
+      "adminPassword": "..."  仅 auth=local 且 allowSetup=false 时可用，指定管理员密码
 
-三、登录
-  默认关闭登录（auth=off，即 AUTH_DISABLED=1）。想开启：把 config.json 里的
-  "auth" 改成 "local"（旧写法 "authDisabled": false 也认）后再启动。
-  首次启动会生成随机管理员密码，**在启动窗口里打印一次**，同时写入
-  <数据目录>\\launcher.log；登录后请立即修改密码。
+三、登录与局域网访问
+  1.3.2 起默认「对局域网开放 + 需要登录」（host=0.0.0.0、auth=local）。
+  · 本机：双击后弹出的窗口即是（内部走 127.0.0.1，同样要登录）。
+  · 局域网设备：用同一网段的手机/平板浏览器打开启动窗口里打印的
+    http://<本机局域网 IP>:<端口>/ 。
+  · **第一次打开网页时会引导创建一个账户**（用户名 + 至少 8 位密码），之后用它登录。
+    想改用随机密码：把 config.json 的 "allowSetup" 改成 false，密码在首次启动时写入
+    <数据目录>\\初始密码.txt，并在启动窗口里打印一次。
+  · 想关掉登录：必须同时把 "host" 改成 "127.0.0.1" —— 对局域网开放时鉴权不允许关闭
+    （启动器会自动把 "auth": "off" 提升为 "local"，避免媒体库对整栋楼裸奔）。
+  · 第一次启动会请求一次管理员授权（UAC），用于添加入站防火墙规则 ScreenPlay（TCP 3210-3309），
+    点「是」之后局域网设备才能连上；点「否」也不影响启动，只是系统会再弹一次它自己的
+    「允许访问」对话框。已有该规则、或不想让程序碰防火墙，就把 "firewall" 设成 "off"。
 
 四、媒体库
   启动后进入「设置 → 媒体库」添加你的截图/视频根目录即可（与 Web 端完全一致）。
@@ -152,7 +167,7 @@ function main() {
   fs.writeFileSync(path.join(STAGE, 'ScreenPlay.cmd'), fs.readFileSync(path.join(LAUNCHER, 'ScreenPlay.cmd')));
   fs.writeFileSync(path.join(STAGE, '使用说明.txt'), `\ufeff${USAGE_TXT.replace(/\n/g, '\r\n')}`);
   fs.writeFileSync(path.join(STAGE, 'config.example.json'),
-    `${JSON.stringify({ dataDir: 'D:\\\\ScreenPlay-data', port: 3000, auth: 'off', mediaDirs: ['D:\\\\Games\\\\shots'] }, null, 2)}\n`);
+    `${JSON.stringify({ dataDir: 'D:\\ScreenPlay-data', port: 3000, host: '0.0.0.0', firewall: 'auto', auth: 'local', allowSetup: true, mediaDirs: ['D:\\Games\\shots'] }, null, 2)}\n`);
   // 注意：config.example.json 只是样例，launcher 读的是同目录的 config.json
   //（包根 config.json 优先，其次 <数据目录>\\config.json；两个都不存在就全用默认）
 
