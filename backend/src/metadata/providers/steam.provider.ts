@@ -15,16 +15,35 @@ import { HttpService } from '../../common/http/http.service';
 import { steamAchievementIconUrl } from '../../common/image-url';
 import { GameRecognizerService } from '../../library/game-recognizer.service';
 import { SettingsService } from '../../settings/settings.service';
-import { MetadataProvider, MetadataFragment, ProviderMatch, AchievementData } from '../provider.interface';
+import { MetadataProvider, MetadataFragment, ProviderMatch, ProviderFetchOptions, AchievementData } from '../provider.interface';
 import { titleQueryVariants } from './metacritic-aliases';
 import type { AchievementCandidate } from '../../trophies/trophy-source.interface';
 
-const STORE_SEARCH = 'https://store.steampowered.com/api/storesearch/';
-const APP_DETAILS = 'https://store.steampowered.com/api/appdetails';
-const SCHEMA = 'https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/';
-const GLOBAL_PCT = 'https://api.steampowered.com/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/';
+/**
+ * Base URLs, overridable so the achievement pipeline can be verified offline
+ * against a local stub — the same reasoning as `HLTB_BASE_URL` /
+ * `METACRITIC_BASE_URL` (and `STEAM_IMAGE_HOSTS`). The two hosts must stay
+ * separate origins: the rate limiter buckets by origin, so pointing both at one
+ * stub would merge their queues and hide the real concurrency.
+ */
+const STORE_ORIGIN = (process.env.STEAM_STORE_BASE_URL || 'https://store.steampowered.com').replace(
+  /\/+$/,
+  '',
+);
+const API_ORIGIN = (process.env.STEAM_API_BASE_URL || 'https://api.steampowered.com').replace(
+  /\/+$/,
+  '',
+);
+const STORE_SEARCH = `${STORE_ORIGIN}/api/storesearch/`;
+const APP_DETAILS = `${STORE_ORIGIN}/api/appdetails`;
+const SCHEMA = `${API_ORIGIN}/ISteamUserStats/GetSchemaForGame/v2/`;
+const GLOBAL_PCT = `${API_ORIGIN}/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/`;
 /** Cap on add-on schemas fetched per refresh (see fetchAchievements). */
 const MAX_DLC_APPS = 12;
+/** Bounded pool width for the per-DLC schema/percentage calls. */
+const DLC_CONCURRENCY = 3;
+/** In-flight single-flight key (provider-scoped, see `fetchAchievements`). */
+type AchievementResult = { achievements: AchievementData[]; error: string | null };
 
 interface StoreSearchItem {
   /**
@@ -90,12 +109,47 @@ interface AppDetails {
   dlc?: number[];
 }
 
+/**
+ * Bounded-concurrency map that preserves input order — the same shape as the
+ * helper in `library.service.ts`. Kept local so no new dependency is needed, and
+ * order-preserving so DLC `sortOrder` cannot shuffle between runs.
+ */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let index = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 @Injectable()
 export class SteamProvider implements MetadataProvider {
   readonly name = 'steam' as const;
   readonly cacheTtlSeconds: number; // achievements tier (15d)
 
   private readonly logger = new Logger(SteamProvider.name);
+
+  /**
+   * In-flight achievement scrapes, keyed `steam:<appid>`.
+   *
+   * The same target is reachable from three independent entry points — the bulk
+   * sweep, opening/refreshing a detail page, and the 「刷新成就」 button — and
+   * nothing stopped them from scraping the same appid at the same time. The rate
+   * limiter only spaced those calls out; it never deduplicated them. Concurrent
+   * callers now share one Promise (and one set of requests). Keyed by appid
+   * because that, not the local game id, is what makes two scrapes "the same
+   * target" for this provider.
+   */
+  private readonly inFlight = new Map<string, Promise<AchievementResult>>();
 
   constructor(
     private readonly config: ConfigService<AppConfig, true>,
@@ -185,7 +239,7 @@ export class SteamProvider implements MetadataProvider {
     }));
   }
 
-  async fetch(match: ProviderMatch): Promise<MetadataFragment> {
+  async fetch(match: ProviderMatch, options?: ProviderFetchOptions): Promise<MetadataFragment> {
     const appid = match.externalId;
     const fragment: MetadataFragment = {};
 
@@ -204,10 +258,38 @@ export class SteamProvider implements MetadataProvider {
       fragment.price = this.toPrice(details);
     }
 
+    if (options?.skipAchievements) {
+      // Achievements-tier TTL hit: leave `achievements` and `achievementsError`
+      // OFF the fragment. `MetadataService.persist()` only rewrites the
+      // achievements table/status when a fragment carries one of them, so the
+      // rows and verdict from the previous scrape survive untouched and the two
+      // schema/percentage calls per appid are skipped entirely.
+      return fragment;
+    }
+
     const ach = await this.fetchAchievements(appid, details?.dlc ?? []);
     fragment.achievements = ach.achievements;
     if (ach.error) fragment.achievementsError = ach.error;
     return fragment;
+  }
+
+  /**
+   * In-flight single-flight wrapper (see `inFlight`). Two concurrent scrapes of
+   * the same appid share one Promise and one set of HTTP requests; the entry is
+   * dropped as soon as that Promise settles so a later refresh is never stale.
+   */
+  private fetchAchievements(appid: string, dlcAppIds: number[]): Promise<AchievementResult> {
+    const key = `${this.name}:${appid}`;
+    const running = this.inFlight.get(key);
+    if (running) {
+      this.logger.log(`Steam achievements for ${appid}: reusing the in-flight scrape`);
+      return running;
+    }
+    const promise = this.fetchAchievementsUncached(appid, dlcAppIds).finally(() => {
+      this.inFlight.delete(key);
+    });
+    this.inFlight.set(key, promise);
+    return promise;
   }
 
   /**
@@ -224,10 +306,10 @@ export class SteamProvider implements MetadataProvider {
    *     own schema) were never fetched. They are now fetched per DLC and tagged so
    *     the UI can group them.
    */
-  private async fetchAchievements(
+  private async fetchAchievementsUncached(
     appid: string,
     dlcAppIds: number[],
-  ): Promise<{ achievements: AchievementData[]; error: string | null }> {
+  ): Promise<AchievementResult> {
     if (!this.apiKey) {
       return {
         achievements: [],
@@ -235,32 +317,49 @@ export class SteamProvider implements MetadataProvider {
       };
     }
 
-    const base = await this.fetchSchema(appid);
+    // The schema and the global unlock percentages are independent requests on the
+    // same origin, so ask for both at once instead of paying one round trip after
+    // the other. (On a schema failure the percentage result is discarded — that
+    // only costs one extra request on the error path.)
+    const [base, pctMap] = await Promise.all([
+      this.fetchSchema(appid),
+      this.fetchGlobalPercentages(appid),
+    ]);
     if (base.error) return { achievements: [], error: base.error };
 
-    // Global unlock percentages (separate endpoint, no per-achievement call).
-    const pctMap = await this.fetchGlobalPercentages(appid);
     const achievements: AchievementData[] = [
       ...this.toAchievements(base.raw, pctMap, appid, null, null, 0),
     ];
 
     // DLC: each add-on answers for its own appid. Capped so a game with hundreds
     // of add-ons (train simulators) cannot turn one refresh into hundreds of calls.
+    //
+    // Bounded pool instead of the previous serial loop: every add-on needs a schema
+    // AND a percentage call, and the per-origin limiter serializes those anyway, so
+    // waiting for one add-on to finish before starting the next merely left the
+    // queue idle. `mapLimit` preserves input order, keeping `sortOrder` stable.
     const dlcIds = dlcAppIds.slice(0, MAX_DLC_APPS);
     const dlcFailures: string[] = [];
-    let order = achievements.length;
-    for (const dlcId of dlcIds) {
+    const dlcResults = await mapLimit(dlcIds, DLC_CONCURRENCY, async (dlcId) => {
       const dlc = await this.fetchSchema(String(dlcId));
-      if (dlc.error) {
-        dlcFailures.push(`${dlcId}: ${dlc.error}`);
-        continue;
-      }
+      if (dlc.error) return { dlcId, error: dlc.error, rows: [] as AchievementData[] };
       // `gameName` comes free with the schema, so no extra appdetails call.
       const dlcName = dlc.gameName || `DLC ${dlcId}`;
       const dlcPct = await this.fetchGlobalPercentages(String(dlcId));
-      const rows = this.toAchievements(dlc.raw, dlcPct, String(dlcId), String(dlcId), dlcName, order);
-      order += rows.length;
-      achievements.push(...rows);
+      return {
+        dlcId,
+        error: null,
+        rows: this.toAchievements(dlc.raw, dlcPct, String(dlcId), String(dlcId), dlcName, 0),
+      };
+    });
+    let order = achievements.length;
+    for (const result of dlcResults) {
+      if (result.error) {
+        dlcFailures.push(`${result.dlcId}: ${result.error}`);
+        continue;
+      }
+      for (const row of result.rows) row.sortOrder = order++;
+      achievements.push(...result.rows);
     }
 
     // A partial DLC failure must not read as a total failure, but it must not be

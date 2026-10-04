@@ -164,7 +164,7 @@ function firewallPorts(wantPort) {
 /** 与 Rust 壳 `firewall.rs::write_script` 语义相同：先 New-NetFirewallRule，老系统退回 netsh。 */
 function firewallScript(ports) {
   return [
-    '# ScreenPlay 1.3.2 — 免安装启动器首次运行时自动生成；管理员 PowerShell 可直接重跑本文件。',
+    '# ScreenPlay — 免安装启动器首次运行时自动生成；管理员 PowerShell 可直接重跑本文件。',
     "$ErrorActionPreference = 'Stop'",
     `$name = '${FW_RULE}'`,
     `$ports = '${ports}'`,

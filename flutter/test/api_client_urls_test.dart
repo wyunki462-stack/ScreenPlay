@@ -33,6 +33,24 @@ void main() {
           'https://media.rawg.io/a.jpg');
       expect(api.resolve(''), '');
     });
+
+    test('路径段里的中文 / 空格被 percent-encode', () {
+      // 修复前直接拼字符串，含中文/空格的文件路径会让 ExoPlayer 拿到非法 URL。
+      expect(
+        api.resolve('/api/media/中文 文件/stream'),
+        '$_base/api/media/%E4%B8%AD%E6%96%87%20%E6%96%87%E4%BB%B6/stream',
+      );
+    });
+
+    test('query 原样透传（不二次编码 url= / & 等参数）', () {
+      // 用 Uri.encodeFull 会二次编码已 encode 过的 url=，破坏后端代理取图。
+      expect(
+        api.resolve('/api/media/proxy?url=https%3A%2F%2Fmedia.rawg.io%2Fa.jpg'),
+        '$_base/api/media/proxy?url=https%3A%2F%2Fmedia.rawg.io%2Fa.jpg',
+      );
+      expect(api.resolve('/api/games?filter=all&page=1'),
+          '$_base/api/games?filter=all&page=1');
+    });
   });
 
   group('imageSource（远端图走后端代理）', () {

@@ -39,6 +39,16 @@ final FutureProviderFamily<List<Achievement>, String> achievementsProvider =
       ref.watch(apiClientProvider).achievements(gameId),
 );
 
+/// 游戏媒体评价（按 gameId 分族）。
+///
+/// 后端 `GET /api/games/:id/media-reviews` 返回 `{ reviews, summary }`；详情页「评分」
+/// tab 内的媒体评价区块消费它（Web 端由 `MediaReviewsPanel` 消费同一契约）。
+final FutureProviderFamily<MediaReviewsResult, String> mediaReviewsProvider =
+    FutureProvider.family<MediaReviewsResult, String>(
+  (Ref ref, String gameId) =>
+      ref.watch(apiClientProvider).mediaReviews(gameId),
+);
+
 /// 全局统计。
 final FutureProvider<Stats> statsProvider = FutureProvider<Stats>(
   (FutureProviderRef<Stats> ref) => ref.watch(apiClientProvider).stats(),
@@ -77,13 +87,34 @@ class RefreshGameNotifier extends AsyncNotifier<void> {
   @override
   Future<void> build() async {}
 
-  /// 强制刷新给定游戏；完成后刷新该游戏详情。
+  /// 强制刷新给定游戏；完成后刷新该游戏详情、媒体、成就与媒体评价。
+  ///
+  /// 覆盖面对齐后端能力：除了 `POST /api/games/:id/refresh`（元数据），
+  /// 还调用 `POST /api/games/:id/achievements/refresh` 与
+  /// `POST /api/games/:id/media-reviews/refresh` 两个独立端点，并 invalidate
+  /// 媒体列表（媒体无独立刷新端点，invalidate 后重新拉取）。
+  /// 两个附加端点用 try/catch 包成「尽力而为」：数据源不可达或平台不支持时
+  /// 不应把整次刷新显示成失败（元数据其实已刷新成功）。
   Future<void> run(String gameId, {List<String>? providers}) async {
     state = const AsyncLoading<void>();
     state = await AsyncValue.guard<void>(() async {
-      await ref.read(apiClientProvider).refreshGame(gameId, providers: providers);
+      final ApiClient api = ref.read(apiClientProvider);
+      await api.refreshGame(gameId, providers: providers);
+      try {
+        await api.refreshAchievements(gameId);
+      } catch (_) {
+        // 尽力而为：失败不影响主刷新结果。
+      }
+      try {
+        await api.refreshMediaReviews(gameId);
+      } catch (_) {
+        // 尽力而为：失败不影响主刷新结果。
+      }
       ref.invalidate(gameDetailProvider(gameId));
       ref.invalidate(gamesProvider);
+      ref.invalidate(gameMediaProvider(gameId));
+      ref.invalidate(achievementsProvider(gameId));
+      ref.invalidate(mediaReviewsProvider(gameId));
     });
   }
 }

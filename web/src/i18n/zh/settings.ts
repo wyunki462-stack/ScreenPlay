@@ -117,4 +117,18 @@ export const settingsZh: Record<string, string> = {
   "library.enable": "启用此媒体库（停用后不会参与扫描）",
   "library.saveHint": "保存后立即重新扫描，无需重启容器",
   "library.saveAndScan": "保存并扫描",
+
+  // 路径可视化浏览弹窗（「浏览…」按钮）
+  "library.browse.open": "浏览…",
+  "library.browse.title": "选择媒体库文件夹",
+  "library.browse.hint": "只显示文件夹；可逐级进入，或直接选择当前文件夹。路径需在允许范围内。",
+  "library.browse.up": "上级目录",
+  "library.browse.roots": "快捷入口",
+  "library.browse.enter": "进入",
+  "library.browse.current": "当前目录",
+  "library.browse.selected": "已选：{path}",
+  "library.browse.select": "选择此文件夹",
+  "library.browse.loading": "正在加载…",
+  "library.browse.empty": "此文件夹没有子文件夹",
+  "library.browse.failed": "无法加载目录",
 };

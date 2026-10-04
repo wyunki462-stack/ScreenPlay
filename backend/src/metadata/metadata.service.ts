@@ -25,6 +25,7 @@ import {
   MetadataFragment,
   AchievementData,
   ProviderMatch,
+  ProviderFetchOptions,
   RatingData,
 } from './provider.interface';
 import {
@@ -71,6 +72,18 @@ interface GameRow {
   ratings?: string | null;
   /** Read to detect a game that still has no completion time. */
   main_story_hours?: number | null;
+}
+
+/**
+ * How a full refresh should treat the achievements tier.
+ *
+ * `force` (the default everywhere) re-scrapes unconditionally — the historical
+ * behaviour of every refresh path. `ttl` reuses the 15-day freshness already
+ * recorded in `games.last_achievements_refresh`, which the scan and single-game
+ * paths have always honoured; only the bulk path used to bypass it.
+ */
+export interface RefreshOptions {
+  achievements?: 'ttl' | 'force';
 }
 
 @Injectable()
@@ -220,9 +233,19 @@ export class MetadataService {
     return true;
   }
 
-  async refreshGame(gameId: string, only?: MetadataProviderName[]): Promise<void> {
+  async refreshGame(
+    gameId: string,
+    only?: MetadataProviderName[],
+    options?: RefreshOptions,
+  ): Promise<void> {
     const game = this.db.get<GameRow>('SELECT * FROM games WHERE id = ?', [gameId]);
     if (!game) return;
+    // Achievements tier: `ttl` accepts the stored rows while
+    // `last_achievements_refresh` is younger than the tier TTL; `force` (default)
+    // re-scrapes unconditionally. A TTL hit skips the Steam achievement calls and
+    // leaves the achievements table/status alone (see `ProviderFetchOptions`).
+    const reuseAchievements =
+      options?.achievements === 'ttl' && this.achievementsAreFresh(gameId);
     // Rating integrity: remember a good Metascore so a refresh that comes back
     // empty (provider down, proxy flaky, page changed) cannot silently lose it.
     // Reported symptom: refresh or manual match makes the score badge vanish.
@@ -237,7 +260,11 @@ export class MetadataService {
         if (only && !only.includes(provider.name)) return;
         attempted += 1;
         try {
-          const fragment = await this.fetchProvider(provider, game, true);
+          const fragment = await this.fetchProvider(provider, game, true, {
+            // Only the Steam provider carries achievements today; the other
+            // providers have no achievement scrape to skip.
+            skipAchievements: reuseAchievements && provider.name === 'steam',
+          });
           if (fragment.canonicalName) canonicalNames[provider.name] = fragment.canonicalName;
           // Persist incrementally per provider so partial successes survive.
           this.persist(game, fragment);
@@ -264,7 +291,10 @@ export class MetadataService {
     // Same refresh also pulls console trophies. A PlayStation game has no Steam
     // entry at all, which is why achievement scraping used to look "broken" for
     // exactly the games the user cared about.
-    await this.syncAchievements(gameId, true);
+    //
+    // `force` follows the achievements option: a TTL hit must not force the trophy
+    // pass either, or the savings would be undone by psnine traffic.
+    await this.syncAchievements(gameId, !reuseAchievements, reuseAchievements);
 
     // Record a per-game failure so the gallery can badge it (cleared on success).
     if (attempted > 0 && failures === attempted) {
@@ -402,9 +432,18 @@ export class MetadataService {
     this.trophies.clearForGame(gameId);
   }
 
-  async refreshAchievements(gameId: string): Promise<void> {
+  async refreshAchievements(
+    gameId: string,
+    options?: { respectTtl?: boolean },
+  ): Promise<void> {
     const game = this.db.get<GameRow>('SELECT * FROM games WHERE id = ?', [gameId]);
     if (!game) return;
+
+    // A bulk sweep told to honour the achievements tier stops here while the stored
+    // rows are fresh: no Steam calls, no psnine, and — importantly — no status
+    // rewrite, since nothing re-derives the verdict. A user-triggered
+    // 「刷新成就」 leaves `respectTtl` unset and therefore still forces.
+    if (options?.respectTtl && this.achievementsAreFresh(gameId)) return;
 
     // 1. Steam (only when the game is actually bound to an appid).
     let steamVerdict: { status: string; error: string | null } | null = null;
@@ -477,6 +516,38 @@ export class MetadataService {
       : { status: list.length ? 'ok' : 'empty', error: null };
   }
 
+  /**
+   * Whether the achievements tier may be REUSED for this game.
+   *
+   * Same TTL the trophy path applies (`trophies.service.ts`), tightened by one
+   * condition: the verdict itself must be settled. `setAchievementStatus` runs
+   * unconditionally — including for a failed scrape — so a timestamp-only check
+   * would park a game that failed once in "failed" for the whole 15 days, and
+   * 「刷新全部」 could never repair it. Reuse therefore requires:
+   *
+   *   last_achievements_refresh within the TTL  AND  achievements_status ∈ {ok, empty}
+   *
+   * `ok` means rows were stored; `empty` means the source answered and genuinely
+   * had nothing (re-scraping those every sweep would be pure waste). Everything
+   * else — `failed`, `unsupported`, NULL — is re-attempted, which is also how a
+   * game that later gains a Steam binding gets picked up.
+   *
+   * Read straight from the row rather than from a cached game object, because
+   * `persist()` may have just written it.
+   */
+  private achievementsAreFresh(gameId: string): boolean {
+    const row = this.db.get<{
+      last_achievements_refresh: number | null;
+      achievements_status: string | null;
+    }>('SELECT last_achievements_refresh, achievements_status FROM games WHERE id = ?', [gameId]);
+    const refreshedAt = row?.last_achievements_refresh;
+    if (refreshedAt == null) return false;
+    const status = row?.achievements_status;
+    if (status !== 'ok' && status !== 'empty') return false;
+    const ttlMs = this.config.get('cacheTtlAchievementsSeconds', { infer: true }) * 1000;
+    return Date.now() - refreshedAt < ttlMs;
+  }
+
   /** Write the achievement scrape state for one game. */
   private setAchievementStatus(gameId: string, status: string, error: string | null): void {
     this.db.run(
@@ -493,11 +564,15 @@ export class MetadataService {
    * concerns), but it must also never be silent — `TrophiesService` records the
    * reason in `games.achievements_error` and this logs it.
    */
-  private async syncAchievements(gameId: string, force: boolean): Promise<void> {
+  private async syncAchievements(
+    gameId: string,
+    force: boolean,
+    respectTtl = false,
+  ): Promise<void> {
     if (this.targets.has(gameId)) {
       // A hand-picked target drives the whole path (Steam or trophies, whichever
       // the user chose), so full scrapes and single-game refreshes both reuse it.
-      await this.refreshAchievements(gameId);
+      await this.refreshAchievements(gameId, { respectTtl });
       return;
     }
     await this.syncTrophies(gameId, force);
@@ -706,6 +781,7 @@ export class MetadataService {
     provider: MetadataProvider,
     game: GameRow,
     force: boolean,
+    options?: ProviderFetchOptions,
   ): Promise<MetadataFragment> {
     // 1. Resolve a match (manual binding → cache → search).
     const binding = this.getBinding(game.id, provider.name);
@@ -752,7 +828,7 @@ export class MetadataService {
     if (cached) {
       fragment = cached.data;
     } else {
-      fragment = await provider.fetch(match);
+      fragment = await provider.fetch(match, options);
       if (this.isCacheableFragment(provider, fragment)) {
         this.cache.set(fetchKey, provider.name, fragment, provider.cacheTtlSeconds);
       }

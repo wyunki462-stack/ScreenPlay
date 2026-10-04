@@ -196,5 +196,21 @@ export interface MetadataProvider {
   sourceUrl?(match: { externalId: string }): string | null;
 
   /** Fetch the full metadata fragment for a located match. */
-  fetch(match: ProviderMatch): Promise<MetadataFragment>;
+  fetch(match: ProviderMatch, options?: ProviderFetchOptions): Promise<MetadataFragment>;
+}
+
+/**
+ * Optional per-call switches for `fetch()`. Providers that have nothing to skip
+ * simply ignore the argument, so this stays backward compatible.
+ */
+export interface ProviderFetchOptions {
+  /**
+   * Skip this provider's achievement/trophy scrape and return metadata only.
+   *
+   * Used by the bulk refresh to honour the achievements tier's 15-day TTL: the
+   * caller has already established that the stored rows are fresh, and a fragment
+   * without `achievements`/`achievementsError` makes `persist()` leave the
+   * achievements table and its status untouched.
+   */
+  skipAchievements?: boolean;
 }

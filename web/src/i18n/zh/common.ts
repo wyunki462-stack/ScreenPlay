@@ -45,6 +45,8 @@ export const commonZh: Record<string, string> = {
   "login.hintSystem": "使用 NAS 本地系统账户验证，密码仅在本机校验，不会上传到任何云端。",
   "login.hintLocal": "未检测到 NAS 用户库，当前使用本地账户。",
   "login.footer": "ScreenPlay · 数据全部保存在本机",
+  "login.showPassword": "显示密码",
+  "login.hidePassword": "隐藏密码",
 
   "setup.title": "创建本地账户",
   "setup.intro": "这台服务器还没有账户。先创建一个本地账户；创建后即可在 设置 → 媒体库 里添加游戏目录，其它设备（含安卓端）也用这个账户登录。",

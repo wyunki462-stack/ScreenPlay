@@ -26,19 +26,21 @@ node backend/scripts/verify/media-delete-e2e.mjs         # DELETE /api/media/:id
 node backend/scripts/verify/android-auth-bearer.mjs      # 会话端点接受 Authorization: Bearer（19 项，安卓端 1.3.1）
 node backend/scripts/verify/sqlite-vacuum.mjs            # 可选启动期 VACUUM（12 项；默认关，MAINTENANCE_VACUUM=1 才走）
 node backend/scripts/verify/achievement-icon-url.mjs     # Steam 成就图标 URL 归一化（36 项，服务端 1.3.2）
+node backend/scripts/verify/steam-achievements-bench.mjs --mode=after --n=30 --delay=250 --ttl-check --assert-ttl  # 成就抓取基准（离线双桩，端口 4522/4610/4611；服务端 1.3.3）
 node backend/scripts/verify/auth-setup.mjs               # 首次启动创建账户 AUTH_ALLOW_SETUP + POST /api/auth/setup（26 项，桌面端 1.3.2）
 node scripts/verify-docker-layers.mjs                    # Dockerfile 分层自查（33 项；纯静态解析，不需要 docker）
 
 # 安卓端（离线；需要 flutter + 已就绪的 pub 缓存，未纳入 verify-suites.sh 清单）
-cd flutter && flutter analyze && flutter test --no-pub    # 期望 0 error / 0 warning（8 条既有 info）；52 项通过 / 1 项跳过
+cd flutter && flutter analyze && flutter test --no-pub    # 期望 0 error / 0 warning（8 条既有 info）；58 项通过 / 1 项跳过
 #   1.3.2+3 新增 9 条：test/home_reorder_test.dart（3 条：卡片内落点 / 两行间隙落点 / 服务端顺序回来不回弹）
 #                      test/game_card_carousel_test.dart（6 条：static 无 PageView / 左右滑动 / 3500ms 自动翻页 /
 #                      手动切图后静默 2 个间隔 / 点海报区仍进详情 / 海报区 16:9）
 #   本机 Flutter 3.24.5 在 /tmp/sp-android：先 source /tmp/sp-android/env.sh 再跑 flutter，否则报
 #   "Flutter failed to write to a file at ...tool_state"
 cd .. && node scripts/brand-icons.mjs --check            # 品牌图标产物 = web/public/favicon.svg（零依赖，漂移即 exit 1）
+node scripts/gen-source-hash.mjs --check                 # 当前源码指纹：期望 ✓ d8e826c489fd756b（138 文件）
 
-# 或者一键跑完上面 A 段全部（2 个类型检查 + 16 套件 + 产物自查 + Dockerfile 分层自查 = 20 项）
+# 或者一键跑完上面 A 段全部（2 个类型检查 + 17 套件 + 产物自查 + Dockerfile 分层自查 = 21 项）
 bash scripts/verify-suites.sh                            # 可选：bash scripts/verify-suites.sh 输出文件.txt
 
 # C. Windows 桌面端产物自检（不需要 Rust；先准备产物）
@@ -47,9 +49,9 @@ node windows/scripts/gen-icons.mjs                       # 按品牌几何重建
 node windows/scripts/verify-icons.mjs                    # 图标像素自检（32 项）
 node windows/scripts/prepare-frontend.mjs                # 由 web/dist-desktop 生成 resources/web
 node windows/scripts/prepare-backend.mjs                 # 由 backend/dist 生成 resources/backend（verify-lan 需要）
-node windows/scripts/verify-desktop.mjs                  # 桌面产物自检（80 项，含品牌图标小节与 1.3.2 默认行为断言）
-node windows/scripts/verify-desktop.mjs --smoke          # 同上 + 真拉一次壳与后端（--smoke，共 91 项；需要 resources/ 就绪）
-node windows/scripts/verify-lan.mjs                      # 局域网 + 首次创号端到端（20 项，1.3.2；真拉免安装启动器）
+node windows/scripts/verify-desktop.mjs                  # 桌面产物自检（82 项，含品牌图标小节与 1.3.2 默认行为断言、含 1.3.3 眼睛按钮与改密替身删除断言）
+node windows/scripts/verify-desktop.mjs --smoke          # 同上 + 真拉一次壳与后端（--smoke，共 93 项；需要 resources/ 就绪）
+node windows/scripts/verify-lan.mjs                      # 局域网 + 首次创号端到端（20 项，1.3.3；真拉免安装启动器）
 
 # B. 已部署实例上的运行时自检（需要容器在跑；PORT 默认 3001）
 cd <仓库根目录>
@@ -70,6 +72,56 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 > 下文的具体命令与数字作为**历史记录**保留，复现入口以上面 A/B 两段为准。
 
 ---
+
+## 1.3.3 服务端：成就抓取提速（Steam 专用限流 + 单游戏内并行 + 去重 + 批量复用 15 天 TTL）
+
+范围：`backend/src/**`（`config/configuration.ts`、`common/http/http.service.ts`、
+`metadata/providers/steam.provider.ts`、`metadata/provider.interface.ts`、`metadata/metadata.service.ts`、
+`games/games.service.ts`、`games/games.controller.ts`）、新增
+`backend/scripts/verify/steam-stub.mjs` 与 `backend/scripts/verify/steam-achievements-bench.mjs`、
+`docs/perf/achievements-{before,after}.txt`。**对外接口只新增一个可选 query**：
+`POST /api/games/refresh-all?achievements=force`（不传 = 默认 `ttl`）；既有的响应字段一律未改。
+
+### 新增环境变量
+
+| 变量 | 默认值 | 含义 |
+| --- | --- | --- |
+| `CRAWLER_MIN_INTERVAL_STEAM_MS` | `350` | 只对 `store.steampowered.com` 与 `api.steampowered.com` 生效的请求间隔（≈2.9 req/s 每 origin）。仍是「同一个 origin 同时只发一个请求」，只是不再 1.2s 才放行一个。全局 `CRAWLER_MIN_INTERVAL_MS` 默认仍是 `1200`，其它数据源节奏不变。设 `0` ⇒ 关闭该覆盖（回落到全局值）；设 `1200` ⇒ 完全回到改动前的节奏 |
+| `STEAM_STORE_BASE_URL` | `https://store.steampowered.com` | 覆盖商店域基址（离线桩服 / 自建代理），与 `HLTB_BASE_URL` / `METACRITIC_BASE_URL` 同一模式 |
+| `STEAM_API_BASE_URL` | `https://api.steampowered.com` | 覆盖成就接口域基址 |
+
+### 行为变更（唯一一条，需明确知会）
+
+`POST /api/games/refresh-all` 的**成就阶段**从「无条件重抓」改为「默认复用 15 天内且上次成功的成就数据」：
+
+- 复用条件（比 console 奖杯路径更严格）：`last_achievements_refresh` 非空、在
+  `CACHE_TTL_ACHIEVEMENTS_SECONDS`（默认 15 天）内、**且** `achievements_status IN ('ok','empty')`；
+- `failed` / `unsupported` / 空状态即使时间戳新鲜也会重试（否则一次失败会让该游戏 15 天内再也补不回来）；
+- 元数据（海报 / 简介 / 价格 / 时长）仍照旧强刷，不受影响；
+- 需要旧行为时用 `POST /api/games/refresh-all?achievements=force`；单游戏的「刷新元数据」与
+  「刷新成就」按钮仍是强制刷新。
+- 理由：15 天 TTL 此前只在 `enrichGame`（扫描 / 详情懒加载）路径生效，批量刷新与详情页强刷把它绕过了；
+  「刷新全部」是最常被点的按钮，每次都对全库重抓成就既慢、又对 Steam 不礼貌。
+
+### 验证
+
+```bash
+npm run build
+node backend/scripts/verify/steam-achievements-bench.mjs --mode=before --n=30 --delay=250 --ttl-check --assert-ttl
+node backend/scripts/verify/steam-achievements-bench.mjs --mode=after  --n=30 --delay=250 --ttl-check --assert-ttl
+npx tsc --noEmit -p backend/tsconfig.json
+```
+
+离线双桩（store 4610 / api 4611，每请求 250ms 延迟）+ 隔离后端 4522；`before` 用改动前的口径
+（`?achievements=force` + Steam 间隔 1200ms），`after` 用新默认（`ttl` + 350ms）。产物全文见
+`docs/perf/achievements-before.txt` / `docs/perf/achievements-after.txt`。
+
+| 场景（N=30，每请求 250ms） | 改动前 | 改动后 | 变化 |
+| --- | --- | --- | --- |
+| sweep1 首次全量抓取 | 72139ms / 90 请求 | 21801ms / 90 请求 | **3.31×** |
+| sweep2 已有库再点「刷新全部」 | 71868ms / 90 请求（成就 60） | 16989ms / 30 请求（成就 0） | **4.23×**，成就请求 60 → 0 |
+| 单游戏 p50（store 首请求 → api 末请求） | 8867ms | 2173ms | **4.08×** |
+| TTL 断言（失败且新鲜必重抓 / ok 且新鲜必跳过） | pass=false（force 口径，预期） | pass=true，api_reqs=2 | — |
 
 ## 1.3.2 桌面端：默认局域网访问 + 防火墙默认放行 + 首次启动在网页创建账户
 
@@ -404,8 +456,8 @@ unzip -l windows/dist/ScreenPlay_1.3.1_x64-portable.zip | tail -3   # 期望 114
 ```
 
 > 本节数字是 `1.3.1`（Windows 桌面端）发布时的现场值：当时 `verify-desktop.mjs` 是 **57 项**、
-> 源码指纹 `1736b31e358104b9`。当前（`1.3.2` 桌面端轮次）为 **80 项 / `--smoke` 91 项**、
-> 指纹 `f9864755a02c7576`，见本文顶部「1.3.2 桌面端」一节。
+> 源码指纹 `1736b31e358104b9`。当前（`1.3.3` 轮次）为 **82 项 / `--smoke` 93 项**、
+> 指纹 `d8e826c489fd756b`，见本文顶部「1.3.3」一节。
 
 产物口径（2026-10-03 本机 NAS 交叉编译 + 打包）：
 

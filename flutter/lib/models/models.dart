@@ -623,3 +623,143 @@ class GameFilter {
     return query;
   }
 }
+
+/// `MediaReview` —— 单条媒体评价（`GET /api/games/:id/media-reviews` 的 `reviews[]`）。
+///
+/// 与后端 `backend/src/games/media-reviews.service.ts` 的 `MediaReviewRow` 同名映射；
+/// 也与 Web `web/src/types.ts` 的 `MediaReview` 逐字段对齐。
+class MediaReview {
+  const MediaReview({
+    required this.id,
+    required this.gameId,
+    required this.source,
+    required this.outlet,
+    required this.score,
+    required this.verdict,
+    required this.text,
+    required this.url,
+    required this.author,
+    required this.platform,
+    required this.publishedAt,
+    required this.fetchedAt,
+  });
+
+  factory MediaReview.fromJson(Map<String, dynamic> json) {
+    return MediaReview(
+      id: _asString(json['id']) ?? '',
+      gameId: _asStringAny(json, <String>['gameId', 'game_id']) ?? '',
+      source: _asString(json['source']),
+      // 媒体名可能落在 outlet；个别数据源只有 source，兜底让列表不致出现空白行。
+      outlet: _asStringAny(json, <String>['outlet', 'source']),
+      score: _asDouble(json['score']),
+      verdict: _asString(json['verdict']),
+      text: _asString(json['text']),
+      url: _asString(json['url']),
+      author: _asString(json['author']),
+      platform: _asString(json['platform']),
+      publishedAt: _asString(json['publishedAt']),
+      fetchedAt: _asInt(json['fetchedAt']),
+    );
+  }
+
+  final String id;
+  final String gameId;
+  final String? source;
+  final String? outlet;
+
+  /// 媒体评分（0–100 或 0–10 等，数据源各异，原样展示）。
+  final double? score;
+  final String? verdict;
+  final String? text;
+  final String? url;
+  final String? author;
+  final String? platform;
+  final String? publishedAt;
+
+  /// 抓取时间（Unix 毫秒）。
+  final int? fetchedAt;
+
+  DateTime? get fetchedAtTime =>
+      fetchedAt == null ? null : DateTime.fromMillisecondsSinceEpoch(fetchedAt!);
+
+  /// 分数文本：整数不带小数点（90 而非 90.0），小数保留一位。
+  String get scoreText {
+    final double? value = score;
+    if (value == null) return '';
+    return value % 1 == 0 ? value.toInt().toString() : value.toStringAsFixed(1);
+  }
+}
+
+/// `MediaReviewsSummary` —— 媒体评价抓取摘要（`summary` 字段）。
+///
+/// `status` 取值与后端一致：`ok` / `empty` / `failed` / `unsupported`，从未抓取过为 null。
+class MediaReviewsSummary {
+  const MediaReviewsSummary({
+    required this.status,
+    required this.error,
+    required this.fetchedAt,
+    required this.sourceUrl,
+    required this.count,
+  });
+
+  factory MediaReviewsSummary.fromJson(Map<String, dynamic> json) {
+    return MediaReviewsSummary(
+      status: _asString(json['status']),
+      error: _asString(json['error']),
+      fetchedAt: _asInt(json['fetchedAt']),
+      sourceUrl: _asString(json['sourceUrl']),
+      count: _asInt(json['count']) ?? 0,
+    );
+  }
+
+  /// 从未抓取过（游戏早于该功能上线）。
+  static const MediaReviewsSummary neverFetched = MediaReviewsSummary(
+    status: null,
+    error: null,
+    fetchedAt: null,
+    sourceUrl: null,
+    count: 0,
+  );
+
+  final String? status;
+  final String? error;
+  final int? fetchedAt;
+  final String? sourceUrl;
+  final int count;
+
+  DateTime? get fetchedAtTime =>
+      fetchedAt == null ? null : DateTime.fromMillisecondsSinceEpoch(fetchedAt!);
+}
+
+/// `GET /api/games/:id/media-reviews` 的完整返回体（`{ reviews, summary }`）。
+class MediaReviewsResult {
+  const MediaReviewsResult({required this.reviews, required this.summary});
+
+  static const MediaReviewsResult empty = MediaReviewsResult(
+    reviews: <MediaReview>[],
+    summary: MediaReviewsSummary.neverFetched,
+  );
+
+  final List<MediaReview> reviews;
+  final MediaReviewsSummary summary;
+
+  /// 有评分的条目数（用于决定是否展示综合分）。
+  bool get hasScores => reviews.any((MediaReview r) => r.score != null);
+
+  /// 综合分 = 所有有分数条目的算术平均；无分数返回 null。
+  double? get averageScore {
+    final List<double> scores = reviews
+        .map((MediaReview r) => r.score)
+        .whereType<double>()
+        .toList(growable: false);
+    if (scores.isEmpty) return null;
+    return scores.reduce((double a, double b) => a + b) / scores.length;
+  }
+
+  /// 综合分文本（整数不带小数点）。
+  String get averageScoreText {
+    final double? value = averageScore;
+    if (value == null) return '';
+    return value % 1 == 0 ? value.toInt().toString() : value.toStringAsFixed(1);
+  }
+}

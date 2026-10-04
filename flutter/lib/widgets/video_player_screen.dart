@@ -32,6 +32,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   String? _posterUrl;
   Object? _error;
 
+  /// 给用户看的中文错误说明（区分鉴权/网络失败与格式不支持），与 [_error] 原始异常分开。
+  String? _errorText;
+
   /// 分享/保存/删除进行中：禁用按钮避免重复点击。
   bool _busy = false;
 
@@ -55,15 +58,27 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
         ? api.resolve(widget.media.thumbnailUrl)
         : api.resolve(widget.media.coverUrl!);
 
-    final VideoPlayerController controller =
-        VideoPlayerController.networkUrl(Uri.parse(streamUrl));
+    final VideoPlayerController controller = VideoPlayerController.networkUrl(
+      Uri.parse(streamUrl),
+      // `/api/media/:id/stream` 不在 auth.guard 的 PUBLIC_PATHS 内，必须带会话凭证，
+      // 否则 ExoPlayer 收到 401 会报 `VideoError ... error 10: Source error`。
+      // 复用与图片相同的 header（Authorization: Bearer + Cookie: screenplay_session）。
+      httpHeaders: api.imageHeaders,
+    );
     _videoController = controller;
 
     try {
       await controller.initialize();
     } on Object catch (e) {
-      // 初始化失败：仅记录错误以便展示；控制器统一交由 dispose 释放，避免二次释放。
-      if (mounted) setState(() => _error = e);
+      // 初始化失败：进一步探测流地址，区分「鉴权/网络失败」与「格式不支持」。
+      final String message = await _describePlaybackError(api, streamUrl);
+      // 控制器统一交由 dispose 释放，避免二次释放。
+      if (mounted) {
+        setState(() {
+          _error = e;
+          _errorText = message;
+        });
+      }
       return;
     }
 
@@ -84,6 +99,50 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       ),
     );
     setState(() {});
+  }
+
+  /// 后端 streaming.service.ts 只为 .mp4/.webm/.mkv 分配视频 MIME，
+  /// 其余扩展名一律 `application/octet-stream`，ExoPlayer 无法解码。
+  static const Set<String> _supportedVideoExts = <String>{'mp4', 'webm', 'mkv'};
+
+  static String _extensionOf(String name) {
+    final String path = name.split('?').first.split('#').first;
+    final int slash = path.lastIndexOf('/');
+    final String base = slash >= 0 ? path.substring(slash + 1) : path;
+    final int dot = base.lastIndexOf('.');
+    if (dot < 0 || dot == base.length - 1) return '';
+    return base.substring(dot + 1).toLowerCase();
+  }
+
+  /// 把播放器初始化失败细分为中文提示：先看扩展名是否为后端不支持的容器格式，
+  /// 否则探测流地址（带凭证）以区分未登录 / 网络不通 / 文件缺失 / 服务器错误。
+  /// 探测可达但仍无法解码时，提示格式（编码）不受支持 —— 不伪造支持、不做端上转码。
+  Future<String> _describePlaybackError(ApiClient api, String streamUrl) async {
+    final String ext = _extensionOf(
+      widget.media.fileName.isNotEmpty ? widget.media.fileName : streamUrl,
+    );
+    if (ext.isNotEmpty && !_supportedVideoExts.contains(ext)) {
+      return '该视频格式（.$ext）不受支持：播放器仅支持 MP4 / WebM / MKV，请先转码再播放。';
+    }
+
+    final StreamProbeStatus status;
+    try {
+      status = await api.probeStream(streamUrl);
+    } on Object {
+      return '视频加载失败：无法连接服务器，请检查网络或后端服务是否可用。';
+    }
+    switch (status) {
+      case StreamProbeStatus.unauthorized:
+        return '视频加载失败：需要登录或登录已过期，请重新登录后再试。';
+      case StreamProbeStatus.notFound:
+        return '视频加载失败：服务器上找不到该文件，可能已被删除或移动。';
+      case StreamProbeStatus.network:
+        return '视频加载失败：无法连接服务器，请检查网络或后端服务是否可用。';
+      case StreamProbeStatus.serverError:
+        return '视频加载失败：服务器返回错误，请稍后重试。';
+      case StreamProbeStatus.reachable:
+        return '服务器可访问，但播放器无法解码该视频（可能是不受支持的编码格式，仅支持 MP4 / WebM / MKV）。';
+    }
   }
 
   /// 分享/保存用的地址：original → stream（完整可播放文件），preview → /preview。
@@ -207,7 +266,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
             children: <Widget>[
               const Icon(Icons.error_outline, color: Color(0xFFFC6255), size: 48),
               const SizedBox(height: 12),
-              const Text('视频加载失败，请确认后端可访问该媒体文件。', textAlign: TextAlign.center),
+              Text(
+                _errorText ?? '视频加载失败，请确认后端可访问该媒体文件。',
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: 4),
               Text(
                 _error.toString(),

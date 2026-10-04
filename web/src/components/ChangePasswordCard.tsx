@@ -43,11 +43,11 @@ export interface ChangePasswordCardProps {
  * file, which this app cannot write, and with auth disabled there is nothing to
  * protect. Both cases show an explanation instead of a dead form.
  *
- * Desktop builds replace this whole module with
- * `ChangePasswordCard.desktop-stub.tsx` (see `web/src/lib/platform.ts`): the
- * single-machine install has no login screen and its password is managed by the
- * launcher, so neither the card, nor this code, nor its text ships in that
- * artifact.
+ * Ships in every target since 1.3.3. The desktop build used to swap this module
+ * for an empty stub (`ChangePasswordCard.desktop-stub.tsx`), which is gone: a
+ * single-machine install can run a local account too — `config.json` default
+ * `auth: "local"` with the account created in the Web UI — and then changing the
+ * password from the settings page is exactly what the user wants.
  */
 export default function ChangePasswordCard({ session }: ChangePasswordCardProps) {
   // The card owns its strings (`ChangePasswordCard.i18n.ts`) so that a build

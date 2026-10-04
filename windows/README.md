@@ -74,8 +74,8 @@ node scripts/make-webapp-bundle.mjs   # → dist/ScreenPlay_1.0.0_x64-webapp.zip
 
 ```bash
 cd <项目>/windows
-node scripts/verify-desktop.mjs            # 资源完整性 + 体积清单 + 禁带开发依赖 + 品牌图标像素自检 + 1.3.2 默认行为断言（80 项）
-node scripts/verify-desktop.mjs --smoke    # 再用本机 node 真启动打包后的后端跑一遍接口（共 91 项）
+node scripts/verify-desktop.mjs            # 资源完整性 + 体积清单 + 禁带开发依赖 + 品牌图标像素自检 + 1.3.2 默认行为断言（82 项）
+node scripts/verify-desktop.mjs --smoke    # 再用本机 node 真启动打包后的后端跑一遍接口（共 93 项）
 node scripts/verify-desktop.mjs --exe      # 校验 dist 里的 exe / zip 产物
 node scripts/verify-lan.mjs                # 局域网 + 首次创号端到端（20 项；需先跑 prepare-backend.mjs）
 ```
@@ -197,10 +197,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build-windows.ps1
 1. **同一份 Web 源码**：桌面端用**桌面模式**构建产物 `web/dist-desktop`（`npm run build:web:desktop`
    = `vite build --mode desktop`），`scripts/prepare-frontend.mjs` 再对它做**构建后处理**（剥离移动端媒体查询、
    把 Plyr 控件图标从 CDN 改成随包的本地图标），产出的仍是同一个前端应用；源码 `web/` 不为桌面端分叉。
-   桌面模式与 Web 端只有一处构建期差异：把「修改密码」卡片模块换成空实现（`windows/DESIGN.md` §6、
-   `windows/docs/PARITY.md` 差异 ⑦）—— 桌面端默认由用户**首次打开网页时自己创建账户**
+   1.3.3 起桌面模式与 Web/Linux 使用**完全同一套界面**：原先「把「修改密码」卡片模块换成空实现」的构建期差异
+   已删除（`windows/DESIGN.md` §6、`windows/docs/PARITY.md` 差异 ⑦）—— `--mode desktop` 现在只决定输出目录
+   `web/dist-desktop`。桌面端默认 `auth: "local"`，且由用户**首次打开网页时自己创建账户**
    （`config.json` 的 `allowSetup: true`；只有显式关掉它才会退回「生成随机密码写到 `<DATA_DIR>\初始密码.txt`」），
-   所以界面上不需要「修改密码」入口。
+   所以设置页同样需要（也提供）「修改密码」入口。
 2. **同一套后端**：直接把 `backend/` 编译产物 + Windows 版生产依赖打进 `resources/`，
    由外壳用它自带的 `node.exe` 启动；`backend/` 源码不动。
 3. **同源托管**：后端本来就托管 Web 产物，前端的 API 出口是相对路径 `/api`
@@ -213,7 +214,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build-windows.ps1
 [`docs/PARITY.md`](docs/PARITY.md)。
 
 外壳只在**启动时**用环境变量替代两个默认行为（可改回来，代码没有分支）：
-`AUTH_MODE` 默认关闭（本机单人应用，想开就在 `config.json` 里改 `"auth": "local"` 或 `"system"`）、
+`AUTH_MODE` 默认 `local`（1.3.2 起默认对局域网开放，因此必须登录；只有 `host` 是仅本机时才允许 `"auth": "off"`，也可在 `config.json` 里改 `"local"` / `"system"`）、
 `MAINTENANCE_ON_BOOT=0`（启动更快，扫描从设置页手动触发）。
 
 ---

@@ -34,6 +34,18 @@ export class LibraryRootsController {
     return this.roots.check(path ?? '');
   }
 
+  /**
+   * Read-only directory listing for the "浏览…" folder picker.
+   *
+   * Lists one level of subdirectories inside an allow-listed root. Never throws:
+   * an invalid / disallowed / unreadable path comes back as `{ ok: false, message }`
+   * so the dialog can show a state instead of a generic request failure.
+   */
+  @Get('browse')
+  browse(@Query('path') path: string): Promise<object> {
+    return this.roots.browse(path ?? '');
+  }
+
   /** Add a root. Optionally trigger a scan right away. */
   @Post()
   async add(

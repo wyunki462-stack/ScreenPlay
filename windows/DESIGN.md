@@ -26,7 +26,7 @@
 - `backend/src/auth/auth.guard.ts:29` 非 `/api/` 路径放行
 
 前端唯一 API 出口是同源相对路径 `/api`（`web/src/api/client.ts:3,23`），媒体 URL 全部由后端 JSON 下发。**因此：只要窗口指向 `http://127.0.0.1:<port>`，前端源码一行都不用改。**
-（唯一的按平台差异是构建期模块替换：桌面模式把「修改密码」卡片换成空实现，见 §6 —— 源码不分叉，见差异 ⑦。）
+（1.3.3 起桌面端与 Web/Linux 使用完全同一套界面：原先那次「把「修改密码」卡片换成空实现」的构建期模块替换已删除，`--mode desktop` 现在只决定输出目录 `web/dist-desktop`，见 §6 —— 源码不分叉，见差异 ⑦。）
 
 ```
 Tauri 进程 (ScreenPlay.exe)
@@ -137,16 +137,16 @@ Windows 生产依赖安装方式（不要动仓库的 node_modules）：
 在 **副本** 上做构建后处理，**绝不改 `web/` 源码**（保证 Web 端产物字节不变）：
 
 1. 在 `web/` 执行**桌面模式**构建（`npm --prefix web run build:desktop` = `vite build --mode desktop`，产物 `web/dist-desktop`），复制到 `src-tauri/resources/web/`。
-   桌面模式只做一件事：把「修改密码」卡片模块（`web/src/components/ChangePasswordCard.tsx`）在打包时换成空实现
-   `ChangePasswordCard.desktop-stub.tsx`（由 `web/vite.config.ts` 的 `resolve.alias` + `web/.env.desktop` 的
-   `VITE_SCREENPLAY_TARGET=desktop` 决定，源码见 `web/src/lib/platform.ts`）。桌面端默认由用户**首次打开网页时
-   自己创建账户**（`config.json` 的 `allowSetup: true` → 后端 `POST /api/auth/setup` + 登录页的「创建账户」表单），
-   界面上不需要改密入口；只有把 `allowSetup` 显式改成 `false` 时，才退回「首启生成随机密码并写在
+   `web/.env.desktop` 的 `VITE_SCREENPLAY_TARGET=desktop`（源码 `web/src/lib/platform.ts` 暴露为 `IS_DESKTOP_TARGET`）
+   现在**只决定输出目录**（`web/dist-desktop`），不再替换任何模块：桌面端与 Web/Linux 是同一套界面，设置页同样含「修改密码」卡片。
+   桌面端默认由用户**首次打开网页时自己创建账户**（`config.json` 的 `allowSetup: true` → 后端 `POST /api/auth/setup` + 登录页的「创建账户」表单），
+   且默认 `auth: "local"`；正因为要能改自己的密码，1.3.3 起取消了改密卡片的构建期裁剪（见 PARITY 差异 ⑦）。
+   只有把 `allowSetup` 显式改成 `false` 时，才退回「首启生成随机密码并写在
    `<DATA_DIR>/初始密码.txt`」。Web/Linux 构建（`web/dist`）不受影响，改密功能照旧（后端 `POST /api/auth/password` 两端共用，不动；`AUTH_ALLOW_SETUP` 默认关，Linux/Docker 行为不变）。
 2. 精简：删除 `@media (max-width: …)` / `@media (max-width: …) and …` 整块（桌面窗口固定，移动端断点无意义）；其余 CSS 原样保留（视觉 1:1）。
 3. 离线化：把产物中 `https://cdn.plyr.io/3.8.4/plyr.svg` 替换为相对路径 `assets/plyr.svg`，并把本地 svg（从 npm `plyr` 包或内联生成）放进 `web/assets/`。
-4. 校验：`web/index.html` 存在且引用 `/assets/*.js`、`/assets/*.css`；产物体内 `cdn.plyr.io`、`change-password`、
-   `settings.password.` 命中数必须为 0（脚本里的 `FORBIDDEN` 列表）；打印前后体积对比。
+4. 校验：`web/index.html` 存在且引用 `/assets/*.js`、`/assets/*.css`；产物体内 `cdn.plyr.io` 命中数必须为 0
+   （脚本里的 `FORBIDDEN` 列表 1.3.3 起只剩 `cdn.plyr.io` 一项）；打印前后体积对比。
 
 ## 7. `config.json`（壳的配置，位置见 §8）
 
@@ -189,7 +189,7 @@ Windows 生产依赖安装方式（不要动仓库的 node_modules）：
 ## 10. 硬约束
 
 - 不改 `backend/` 源码与 API 契约；不新增后端逻辑。`web/` 源码不为桌面端分叉 —— 桌面端只是同一份
-  源码的 `--mode desktop` 产物（唯一构建期差异＝改密卡片模块换空实现，见 §6 与 PARITY 差异 ⑦）。
+  源码的 `--mode desktop` 产物（1.3.3 起不再有构建期差异：`--mode desktop` 只决定输出目录 `web/dist-desktop`，见 §6 与 PARITY 差异 ⑦）。
 - 品牌图标三处同源：`web/public/favicon.svg` 是几何真源（紫青对角渐变圆角方块 + 白色 lucide `Gamepad2`），
   Web 标签页 `<link rel="icon">`、splash 内联 SVG、`src-tauri/icons/*`（4 个栅格，由 `scripts/gen-icons.mjs`
   生成）镜像同一段几何；`gen-icons.mjs` 的 `assertBrandSvg()` 逐字断言、`scripts/verify-icons.mjs` 做像素自检。

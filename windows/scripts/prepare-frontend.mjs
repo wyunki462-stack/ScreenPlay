@@ -6,9 +6,10 @@
  * 原则：绝不修改 web/ 源码；所有精简都在副本（windows/src-tauri/resources/web）上做。
  *
  * 产物来源：`npm run build:web:desktop`（= `vite build --mode desktop`）→ web/dist-desktop。
- * 它与 Web/Linux 用的 web/dist 不是同一份：桌面模式会按平台把「只有服务端才有意义」的
- * 模块换成替身（web/src/lib/platform.ts、web/vite.config.ts），例如修改密码卡片；
- * 因此本脚本第 6 步会断言桌面产物里**没有** change-password / settings.password.*。
+ * 1.3.3 起桌面产物与 Web/Linux 用的 web/dist 是**同一个应用**（不再有按平台替换的模块：
+ * 改密卡片的构建期裁剪已取消），`--mode desktop` 只决定输出目录；两个产物的差别只剩
+ * 输出路径与可选的 `--reduce-motion`。
+ * 因此本脚本第 6 步只断言桌面产物里**没有** cdn.plyr.io 这类远端 CDN 外链（桌面端必须离线可用）。
  *
  * 用法：
  *   node windows/scripts/prepare-frontend.mjs [--reduce-motion] [--force-build]
@@ -43,8 +44,9 @@ const PLYR_BLANK_REMOTE = 'https://cdn.plyr.io/static/blank.mp4';
 const PLYR_SVG_LOCAL = 'assets/plyr.svg';
 const PLYR_BLANK_LOCAL = 'assets/blank.mp4';
 
-/** 桌面产物里绝不允许出现的字符串：远端 CDN 依赖，以及服务端专属 UI（改密卡片）。 */
-const FORBIDDEN = ['cdn.plyr.io', 'change-password', 'settings.password.'];
+/** 桌面产物里绝不允许出现的字符串：远端 CDN 依赖（桌面端必须完全离线可用）。
+ *  1.3.3 起不再把「修改密码」界面排除在桌面产物之外（见 windows/docs/PARITY.md）。 */
+const FORBIDDEN = ['cdn.plyr.io'];
 
 const LOG_PREFIX = '[prepare-frontend]';
 

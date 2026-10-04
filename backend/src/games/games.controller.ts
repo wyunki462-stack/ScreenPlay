@@ -165,9 +165,15 @@ export class GamesController {
     return this.games.clearRatingTarget(id);
   }
 
+  /**
+   * 批量刷新元数据。`?achievements=force` 强制重抓成就；默认 `ttl` 在 15 天
+   * 新鲜度内复用已存的成就行（元数据本身始终强刷），这是让 bulk 刷新变便宜的关键。
+   */
   @Post('refresh-all')
-  refreshAll(): Promise<object> {
-    return this.games.refreshAll();
+  refreshAll(@Query('achievements') achievements?: string): Promise<object> {
+    return this.games.refreshAll({
+      achievements: achievements === 'force' ? 'force' : 'ttl',
+    });
   }
 
   /**

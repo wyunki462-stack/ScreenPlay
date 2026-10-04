@@ -230,7 +230,7 @@ fn powershell_available() -> bool {
 #[cfg(windows)]
 fn write_script(path: &Path, ports: &str) -> std::io::Result<()> {
     let body = format!(
-        "# ScreenPlay 1.3.2 — 桌面端首次启动时自动生成；管理员 PowerShell 可直接重跑本文件。\r\n\
+        "# ScreenPlay — 桌面端首次启动时自动生成；管理员 PowerShell 可直接重跑本文件。\r\n\
          $ErrorActionPreference = 'Stop'\r\n\
          $name = '{RULE_NAME}'\r\n\
          $ports = '{ports}'\r\n\

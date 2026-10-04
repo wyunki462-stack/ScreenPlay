@@ -25,6 +25,12 @@ export class HttpService {
   private readonly logger = new Logger(HttpService.name);
   private readonly client: AxiosInstance;
   private readonly minIntervalMs: number;
+  /**
+   * Per-origin interval overrides, keyed by URL origin. Currently only the two
+   * Steam endpoints (see `crawlerMinIntervalSteamMs`); every other origin keeps
+   * the global default. Empty when the override is disabled.
+   */
+  private readonly originIntervalMs = new Map<string, number>();
   private readonly maxRetries: number;
   private readonly lastAccess = new Map<string, number>();
   /** Runtime proxy (from RAWG_PROXY or HTTP(S)_PROXY); '' means direct. */
@@ -32,6 +38,20 @@ export class HttpService {
 
   constructor(config: ConfigService<AppConfig, true>) {
     this.minIntervalMs = config.get('crawlerMinIntervalMs', { infer: true });
+    // Steam-only pace. The global default (1200ms) serializes every request to a
+    // single origin, so 4 concurrent bulk workers still cap `api.steampowered.com`
+    // at ~0.83 req/s and the concurrency buys nothing. Steam tolerates more, so
+    // the two Steam bases get their own (configurable) interval — still one
+    // request at a time per origin, just not one per 1.2s.
+    const steamInterval = config.get('crawlerMinIntervalSteamMs', { infer: true });
+    if (steamInterval > 0) {
+      for (const base of [
+        config.get('steamStoreBaseUrl', { infer: true }),
+        config.get('steamApiBaseUrl', { infer: true }),
+      ]) {
+        if (base) this.originIntervalMs.set(originOf(base), steamInterval);
+      }
+    }
     this.maxRetries = config.get('crawlerMaxRetries', { infer: true });
     // Apply the configured runtime proxy explicitly, for the same reason as the
     // image fetcher: we must not depend on ambient HTTP_PROXY/HTTPS_PROXY env
@@ -179,13 +199,16 @@ export class HttpService {
    * silently returns nothing) whenever a bulk refresh ran with concurrency > 1.
    *
    * Reserving the next free instant per origin up-front serializes N concurrent
-   * calls `minIntervalMs` apart, which is the intent of the limiter.
+   * calls `minIntervalMs` apart, which is the intent of the limiter. A per-origin
+   * override (e.g. Steam at 350ms) only changes the spacing, never the
+   * serialization guarantee.
    */
   private async throttle(url: string): Promise<void> {
     const origin = originOf(url);
     const now = Date.now();
+    const interval = this.originIntervalMs.get(origin) ?? this.minIntervalMs;
     const last = this.lastAccess.get(origin) ?? 0;
-    const slot = Math.max(now, last + this.minIntervalMs);
+    const slot = Math.max(now, last + interval);
     // Reserve immediately (no await in between) so parallel callers queue up
     // instead of all observing the same "last access" value.
     this.lastAccess.set(origin, slot);

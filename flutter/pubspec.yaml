@@ -7,7 +7,7 @@
 name: screenplay
 description: "ScreenPlay — 个人游戏媒体图库管理器（Flutter 客户端）。纯客户端：所有数据来自后端 HTTP API。"
 publish_to: 'none'
-version: 1.3.2+3
+version: 1.3.3+4
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

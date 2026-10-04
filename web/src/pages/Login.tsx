@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useAuthSession, useLogin, useSetup } from "../api/auth";
 import { Button } from "../components/ui/Button";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { useI18n } from "../i18n";
 
 /** Same rule the backend enforces, mirrored for instant client-side feedback. */
@@ -145,8 +146,8 @@ export default function Login() {
 
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-medium text-zinc-300">{t("setup.password")}</span>
-                <input
-                  type="password"
+                <PasswordInput
+                  testId="password-visibility-setup"
                   value={setupPassword}
                   onChange={(e) => {
                     setSetupPassword(e.target.value);
@@ -165,8 +166,8 @@ export default function Login() {
 
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-medium text-zinc-300">{t("setup.confirm")}</span>
-                <input
-                  type="password"
+                <PasswordInput
+                  testId="password-visibility-confirm"
                   value={confirm}
                   onChange={(e) => {
                     setConfirm(e.target.value);
@@ -246,8 +247,7 @@ export default function Login() {
                 {t(lang === "zh-CN" ? "lang.en" : "lang.zh")}
               </button>
             </span>
-              <input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"

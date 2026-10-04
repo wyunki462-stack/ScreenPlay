@@ -392,6 +392,23 @@ container. Never throws for a bad path — inspect `ok` and `message`.
 Returns `{ "paths": [...] }` — directories already mounted inside the container,
 used to suggest valid paths in the UI.
 
+### `GET /api/library/roots/browse?path=`
+Read-only, single-level directory listing powering the “浏览…” folder picker.
+Only subdirectories are returned (files, hidden dot-directories and OS noise such
+as `$RECYCLE.BIN` are filtered out); at most 2000 entries per level.
+
+Returns
+`{ ok, path, parent, entries: [{ name, path, isDirectory }], roots: [{ label, path }], exists, readable, message }`.
+`parent` is the parent directory when it is still inside the allow-list, else
+`null`. `roots` lists the allowed top-level shortcuts. Omitting `path` (or passing
+an empty string) starts at the first allowed root.
+
+Access is restricted to an allow-list: `LIBRARY_BROWSE_ROOTS` (comma separated)
+when set, otherwise the configured media roots plus the usual mount points
+(`/media /mnt /vol2 /home`, or drive letters on Windows). Symlinks are resolved
+before the check. Bad input / disallowed / missing / unreadable paths never throw
+— they return `ok: false` with a Chinese `message`.
+
 ### `POST /api/library/roots`
 Body: `{ "path", "label"?, "mediaType"?: "auto"|"image"|"video", "recursive"?, "enabled"?, "scan"? }`.
 Adds a library root. With `scan: true` (default) a scan starts immediately, so
@@ -523,8 +540,9 @@ curl -b /tmp/sp.jar -X DELETE http://127.0.0.1:3001/api/media/<id>
 `404`：该 `id` 在 `media` 表中不存在（重复删除也返回 404）。
 
 **鉴权**：与其它 `/api/*` 一致，仅在 `/api/auth/*` 与 `/api/health` 之外受全局会话守卫。
-带凭证（Linux/Web 端会话 Cookie 或 `Authorization: Bearer`）才能删；Windows 桌面端以
-`AUTH_DISABLED=1` 运行，无凭证即可删。
+带凭证（Linux/Web 端会话 Cookie 或 `Authorization: Bearer`）才能删。自 `1.3.2` 起，Windows 桌面端
+默认 `host=0.0.0.0`（局域网可访问）+ `auth=local`，**首次启动在网页里创建账户**，删除同样需要凭证
+（只有同时把 `host` 改回 `127.0.0.1` 并设 `auth=off`，`AUTH_DISABLED=1` 才会生效、无凭证放行）。
 
 ---
 
@@ -1161,7 +1179,7 @@ curl 'http://127.0.0.1:3001/api/games/match/search?q=宝可梦%20紫'
 | POST | `/api/auth/login` | `{username, password, remember?}` → 成功后 `Set-Cookie` |
 | POST | `/api/auth/logout` | 销毁会话并清除 Cookie |
 | POST | `/api/auth/password` | `{current, next}` 修改**本地账户**密码（设置页「修改密码」调用的就是它）。成功 `{ok:true}`；失败**一律 2xx + `{ok:false, code, error}`**，`code` ∈ `unauthenticated` / `not_local` / `wrong_current` / `blank` / `too_short` / `too_long` / `same` —— 故意不用 401：Web 端把任何 401 当作「会话已失效」并跳回登录页，用户输错一次原密码就会被登出。新密码 4~128 位、不能与原密码相同；成功后**注销该账户的其它会话**（被盗 cookie 立刻失效），只保留发起改密的当前会话；NAS 系统账户返回 `not_local` |
-| DELETE | `/api/media/:id` | 删除媒体（索引行 + 原图 + 缩略图/封面/预览缓存 + 悬空海报引用）。与其它 `/api/*` 一样**受全局会话守卫**：带 Cookie/`Bearer` 才能删，`AUTH_DISABLED=1`（Windows 桌面端）时无凭证放行。返回 `{ok,id,deleted,removedFiles,postersRemoved,originalSkipped}`，`404` 表示媒体不存在（详见「Media streaming endpoints」） |
+| DELETE | `/api/media/:id` | 删除媒体（索引行 + 原图 + 缩略图/封面/预览缓存 + 悬空海报引用）。与其它 `/api/*` 一样**受全局会话守卫**：带 Cookie/`Bearer` 才能删；自 `1.3.2` 起 Windows 桌面端默认 `host=0.0.0.0`（局域网可访问）+ `auth=local`，首次启动在网页里创建账户，删除同样需要凭证（`AUTH_DISABLED=1` 只在同时把 `host` 改回 `127.0.0.1` 并设 `auth=off` 时才会开启，届时无凭证放行）。返回 `{ok,id,deleted,removedFiles,postersRemoved,originalSkipped}`，`404` 表示媒体不存在（详见「Media streaming endpoints」） |
 
 ```bash
 # 登录并保存 Cookie

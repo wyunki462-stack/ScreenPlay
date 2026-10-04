@@ -10,6 +10,13 @@ export interface AppConfig {
   port: number;
   corsOrigins: string[];
   mediaDirs: string[];
+  /**
+   * Hard allow-list for the read-only directory browser (`/library/roots/browse`).
+   * Empty means "compute defaults at runtime" — the existing media roots plus the
+   * usual mount points / Windows drive letters. Setting `LIBRARY_BROWSE_ROOTS`
+   * replaces those defaults entirely.
+   */
+  libraryBrowseRoots: string[];
   dataDir: string;
   dbFilename: string;
   thumbnailWidth: number;
@@ -24,12 +31,23 @@ export interface AppConfig {
   igdbClientId: string;
   igdbClientSecret: string;
   steamApiKey: string;
+  /** Base URL of the Steam *store* API (search + appdetails). Override to use a stub/mirror. */
+  steamStoreBaseUrl: string;
+  /** Base URL of the Steam *web* API (achievement schemas + global percentages). */
+  steamApiBaseUrl: string;
   trophyPsnineDisabled: boolean;
   /** Base URL of the PlayStation trophy site (override to use a mirror/proxy). */
   trophyPsnineBaseUrl: string;
   steamdbKey: string;
 
   crawlerMinIntervalMs: number;
+  /**
+   * Faster per-origin interval for the two Steam endpoints only. Politeness is a
+   * policy, not a hard limit: Steam tolerates a quicker cadence than the global
+   * 1200ms default, so achievement scraping is not capped at ~0.83 req/s.
+   * Set it to the global value (1200) to fall back to the conservative pace.
+   */
+  crawlerMinIntervalSteamMs: number;
   crawlerMaxRetries: number;
   crawlerUserAgent: string;
 
@@ -86,6 +104,9 @@ export default function configuration(): AppConfig {
       ? csv(process.env.MEDIA_DIRS)
       : ['/media'],
 
+    // Empty => the browser service derives its own defaults (see browseRoots()).
+    libraryBrowseRoots: csv(process.env.LIBRARY_BROWSE_ROOTS),
+
     dataDir: process.env.DATA_DIR || './data',
     dbFilename: process.env.DB_FILENAME || 'screenplay.db',
 
@@ -115,6 +136,14 @@ export default function configuration(): AppConfig {
     igdbClientId: process.env.IGDB_CLIENT_ID || '',
     igdbClientSecret: process.env.IGDB_CLIENT_SECRET || '',
     steamApiKey: process.env.STEAM_API_KEY || '',
+    // Overridable so the achievement pipeline can be verified offline against a
+    // local stub (the same reason HLTB_BASE_URL / METACRITIC_BASE_URL exist).
+    steamStoreBaseUrl: (
+      process.env.STEAM_STORE_BASE_URL || 'https://store.steampowered.com'
+    ).replace(/\/+$/, ''),
+    steamApiBaseUrl: (
+      process.env.STEAM_API_BASE_URL || 'https://api.steampowered.com'
+    ).replace(/\/+$/, ''),
     steamdbKey: process.env.STEAMDB_KEY || '',
 
     // PlayStation trophies are scraped from a public Chinese trophy site (psnine).
@@ -130,6 +159,9 @@ export default function configuration(): AppConfig {
 
     // Crawler hygiene (respect robots.txt spirit: >= 1s between requests)
     crawlerMinIntervalMs: int(process.env.CRAWLER_MIN_INTERVAL_MS, 1200),
+    // Steam-only cadence (see AppConfig). 350ms ≈ 2.9 req/s per Steam origin:
+    // measurably faster than the 1200ms default, still serialized and polite.
+    crawlerMinIntervalSteamMs: int(process.env.CRAWLER_MIN_INTERVAL_STEAM_MS, 350),
     crawlerMaxRetries: int(process.env.CRAWLER_MAX_RETRIES, 3),
     crawlerUserAgent:
       process.env.CRAWLER_USER_AGENT ||

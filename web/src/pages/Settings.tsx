@@ -29,7 +29,7 @@ import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Field } from "../components/ui/Field";
 import LibraryManager from "../components/LibraryManager";
 import { LANGS, useI18n } from "../i18n";
-import { IS_DESKTOP_TARGET } from "../lib/platform";
+
 
 interface FormState {
   rawgApiKey: string;
@@ -194,13 +194,11 @@ export default function Settings() {
       {/* Feature 2: media library management */}
       <LibraryManager />
 
-      {/* Change password — web/Linux builds only. The desktop artifact does not
-          merely hide this card: under `--mode desktop` the alias in
-          `web/vite.config.ts` swaps `components/ChangePasswordCard.tsx` for a
-          stub, so neither the card nor its i18n strings and mutation hook are
-          in that bundle. The guard below is the second layer, for a build that
-          somehow ran without the alias. */}
-      {IS_DESKTOP_TARGET ? null : <ChangePasswordCard session={session} />}
+      {/* Change password — local accounts only; the card itself explains the
+          system-account and auth-disabled cases. Since 1.3.3 every target ships
+          this card (the desktop build no longer strips it at build time), so the
+          settings page is identical on Web, Linux and Windows. */}
+      <ChangePasswordCard session={session} />
 
       <Card>
         <CardHeader>

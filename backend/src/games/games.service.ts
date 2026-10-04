@@ -660,8 +660,17 @@ export class GamesService {
     return buildAchievementsPayload(this.db, id);
   }
 
-  /** Re-scrape metadata for every game (used right after API keys are set). */
-  async refreshAll(): Promise<{ started: boolean; total: number }> {
+  /**
+   * Re-scrape metadata for every game (used right after API keys are set).
+   *
+   * `achievements` defaults to `'ttl'`: metadata is force-refreshed, but the
+   * achievements tier reuses rows that are younger than its 15-day TTL instead of
+   * re-scraping every appid on every sweep. Pass `'force'` to override (exposed as
+   * `POST /api/games/refresh-all?achievements=force`).
+   */
+  async refreshAll(options?: {
+    achievements?: 'ttl' | 'force';
+  }): Promise<{ started: boolean; total: number }> {
     // Stragglers after a full scrape are almost always completion times — the
     // flakiest source — so the tail pass targets exactly those, and only re-runs
     // the duration providers rather than re-scraping everything.
@@ -672,6 +681,7 @@ export class GamesService {
       false,
       MISSING_DURATION_SQL,
       DURATION_SOURCE_ORDER,
+      options?.achievements ?? 'ttl',
     );
   }
 
@@ -930,6 +940,14 @@ export class GamesService {
     retrySql?: string,
     /** Providers the retry pass should run; defaults to the same set as the main pass. */
     retryOnly?: MetadataProviderName[],
+    /**
+     * How the achievements tier is treated. `'force'` (the default, and the only
+     * behaviour before this option existed) re-scrapes achievements for every
+     * game. `'ttl'` lets a fresh (< 15 days) tier be reused; only `refreshAll()`
+     * asks for that, since a bulk sweep is the path where the duplicate cost
+     * actually mattered.
+     */
+    achievements: 'ttl' | 'force' = 'force',
   ): { started: boolean; total: number } {
     const rows = this.db.all<{ id: string; name: string }>(sql);
     const total = rows.length;
@@ -949,7 +967,7 @@ export class GamesService {
             if (clearBinding && only) {
               for (const provider of only) this.metadata.clearBinding(row.id, provider);
             }
-            await this.metadata.refreshGame(row.id, only);
+            await this.metadata.refreshGame(row.id, only, { achievements });
           } catch (err) {
             this.logger.warn(`${label} failed for ${row.id} (${row.name}): ${(err as Error)?.message}`);
           }
@@ -973,7 +991,7 @@ export class GamesService {
         // recovers nothing.
         const source = retryOnly ?? only;
         for (let round = 1; round <= RETRY_ROUNDS; round += 1) {
-          const recovered = await this.retryPass(retrySql, label, source, round);
+          const recovered = await this.retryPass(retrySql, label, source, round, achievements);
           if (recovered) this.logger.log(`${label} retry pass ${round} recovered ${recovered} game(s)`);
           if (!recovered) break;
         }
@@ -996,6 +1014,7 @@ export class GamesService {
     label: string,
     only?: MetadataProviderName[],
     round = 1,
+    achievements: 'ttl' | 'force' = 'force',
   ): Promise<number> {
     let rows: { id: string; name: string }[];
     try {
@@ -1007,7 +1026,7 @@ export class GamesService {
     for (const row of rows) {
       this.bulkProgress.current = `重试(${round}) ${row.name}`;
       try {
-        await this.metadata.refreshGame(row.id, only);
+        await this.metadata.refreshGame(row.id, only, { achievements });
         recovered += 1;
       } catch (err) {
         this.logger.warn(`${label} retry failed for ${row.name}: ${(err as Error)?.message}`);

@@ -6,6 +6,117 @@
 
 ---
 
+## [1.3.3] — 2026-10-05（Windows / Web / 服务端四项改动；安卓端 `1.3.3+4` 三项修复）
+
+本轮 **Windows 桌面端 / Web / 服务端三者同源**（`web/src` 与 `backend/src` 由三端共用），一起落地四项改动；
+安卓端（Flutter）另修三项。版号按发版惯例三处同步 `1.3.2` → **`1.3.3`**（根 / `backend` / `web` 的
+`package.json`，构建期注入 `BUILD_VERSION` ⇒ 重建镜像后 `/api/health` 报 `1.3.3`）；
+`windows/package.json` / `tauri.conf.json` / `Cargo.toml` 三处同为 `1.3.3`；安卓端
+`flutter/pubspec.yaml` `1.3.2+3` → **`1.3.3+4`**（`versionName` 1.3.3；`--split-per-abi` 三个包的
+`versionCode` 为 arm64-v8a `2004` / armeabi-v7a `1004` / x86_64 `4004`）。
+
+1. **登录页密码框「眼睛」图标切换明文 / 密文** —— 新增 `web/src/components/ui/PasswordInput.tsx`
+   （props `{value,onChange,autoComplete,autoFocus,className,testId}`，按钮默认
+   `data-testid="password-visibility"`，创建账户两个框为 `password-visibility-setup` /
+   `password-visibility-confirm`，带 aria-label / aria-pressed / title）；`web/src/pages/Login.tsx`
+   三个密码框全部换用；新增 i18n 键 `login.showPassword` / `login.hidePassword`
+   （`web/src/i18n/{zh,en}/common.ts`）。
+2. **「添加媒体库」新增「浏览…」可视化选择文件夹** —— 后端新增只读接口
+   `GET /api/library/roots/browse?path=…`（`backend/src/library/library-roots.controller.ts:44-46`，
+   服务 `library-roots.service.ts` 的 `browseRoots()` / `browse()` / `browseFail()`），白名单根 = env
+   `LIBRARY_BROWSE_ROOTS`（`backend/src/config/configuration.ts:107-108`），默认 = 媒体库根 + 已挂载根 +
+   `/media /mnt /vol2 /home`（Windows 取盘符）；只列一层目录、最多 2000 条、过滤隐藏项与
+   `$RECYCLE.BIN` / `System Volume Information` / `lost+found`、用 `fs.realpath` 做前缀校验防符号链接逃逸；
+   前端新增 `web/src/components/PathBrowser.tsx`（面包屑 / 上级 / roots / Enter / Esc，`data-testid`
+   前缀 `path-browser*`），`web/src/components/LibraryManager.tsx` 路径输入右侧新增「浏览…」按钮
+   （`data-testid="browse-path"`，仅非 env 模式显示），选中后回填路径走既有 500ms 防抖 + `useCheckRoot`；
+   新增 `web/src/api/hooks.ts` 的 `useBrowsePath`；i18n 各 12 个 `library.browse.*` 键；新增校验套件
+   `backend/scripts/verify/library-browse.mjs`（33 条断言，已登记在 `scripts/verify-suites.sh:45`
+   ⇒ 套件总数 20 → **21**）。
+3. **设置页「修改密码」三端一致** —— 删掉 `web/src/components/ChangePasswordCard.desktop-stub.tsx` 与
+   `web/vite.config.ts` 里把它当替身注入的 `resolve.alias`，`Settings.tsx` 去掉 `IS_DESKTOP_TARGET` 门，
+   无条件渲染 `<ChangePasswordCard session={session} />`；`windows/scripts/prepare-frontend.mjs` 的禁入字符串
+   收敛为只剩 `cdn.plyr.io`（桌面产物与 Web 产物是同一应用，`--mode desktop` 只决定输出目录
+   `web/dist-desktop`）。
+4. **成就抓取提速（服务端）** —— `backend/src/config/configuration.ts:141` 新增 `steamStoreBaseUrl` /
+   `steamApiBaseUrl`（env `STEAM_STORE_BASE_URL` / `STEAM_API_BASE_URL`，默认真站）与
+   `crawlerMinIntervalSteamMs`（env `CRAWLER_MIN_INTERVAL_STEAM_MS`，默认 **350**；全局
+   `CRAWLER_MIN_INTERVAL_MS` 默认仍 **1200** 不变）；`backend/src/common/http/http.service.ts:33` 新增
+   per-origin 间隔表（同一 origin 仍一次只发一个）；`backend/src/metadata/providers/steam.provider.ts:324`
+   基座 schema 与全球百分比改 `Promise.all`、DLC 有界并发（上限 3，保序）、成就 in-flight 单飞、
+   `fetch(...,{skipAchievements})`；`backend/src/metadata/provider.interface.ts:199` 新增
+   `ProviderFetchOptions{skipAchievements?}`；`backend/src/metadata/metadata.service.ts:538`
+   `RefreshOptions{achievements}`、`achievementsAreFresh` 收紧为「时间戳非空 + TTL 内 +
+   `achievements_status IN ('ok','empty')`」、`refreshAchievements({respectTtl})`；
+   `POST /api/games/refresh-all` 默认 `ttl`，`?achievements=force` 回到旧行为（`games.controller.ts:168`、
+   `games.service.ts:663`）。
+
+### 成就抓取提速：前后对比（N=30、双离线桩、每请求注入 250ms 延迟）
+
+| 场景 | 改动前 | 改动后 | 变化 |
+| --- | --- | --- | --- |
+| sweep1 首次全量抓取 | 72139ms / 90 请求 | 21801ms / 90 请求 | **≥3.31×** |
+| sweep2 紧接着再点「刷新全部」 | 71868ms / 90 请求（成就 60） | 16989ms / 30 请求（成就 **0**） | **≥4.23×** |
+| 单游戏 p50 | 8867ms | 2173ms | **≥4.08×** |
+| TTL 回归断言 | `pass=false`（force 口径，预期） | `pass=true`（api_reqs=2） | — |
+
+口径说明：同一份 1.3.3 构建、仅成就阶段的口径不同（before = 「同一份新构建 + 改动前语义」，
+即 `?achievements=force` + Steam 1200ms；after = 新默认 `ttl` + `CRAWLER_MIN_INTERVAL_STEAM_MS=350`），
+故倍数应写「≥」。原始记录：`docs/perf/achievements-before.txt`、`docs/perf/achievements-after.txt`。
+
+### 安卓端（`1.3.3+4`）：详情页分区 / 数据同步 / 视频播放三项修复
+
+1. **详情页「通关时长 (HLTB) / 价格」移出评分区** —— 从评分（媒体评价）区移到「元数据刷新」上方，
+   现状顺序 = 文件夹 → 通关时长 (HLTB) → 价格 → 元数据刷新（`flutter/lib/screens/game_detail_screen.dart`
+   的 `_InfoSection`），评分页只剩评分 + 新增「媒体评价」区块（`_MediaReviewsSection`，含综合分、
+   抓取时间、失败 / 不支持 / 空态区分）。
+2. **数据同步** —— 成就接口响应是对象 `{items,counts,status,error,source}`，客户端改为取 `items`
+   （`flutter/lib/core/api_client.dart` 的 `achievements()`，兼容纯数组）；新增 `mediaReviews()` /
+   `refreshMediaReviews()` / `refreshAchievements()` 与 `mediaReviewsProvider`；下拉刷新与 AppBar 刷新改为走
+   `RefreshGameNotifier.run()`，它现在会依次刷新游戏详情 / 成就 / 媒体评论并 invalidate
+   `gameDetail` / `games` / `gameMedia` / `achievements` / `mediaReviews` 5 个 provider。
+3. **视频播放修复** —— 修掉 `PlatformException (VideoError, Video player had error 10: Source error, null, null)`：
+   `flutter/lib/widgets/video_player_screen.dart` 的 `VideoPlayerController.networkUrl` 现在带上
+   `httpHeaders: api.imageHeaders`（Bearer + Cookie，与图片同源；此前后端要求会话，401 会让 ExoPlayer 报
+   error 10），并对 `.avi` / `.rmvb` 等被判为 `application/octet-stream` 的容器给出「格式不受支持」的明确提示；
+   `api_client.dart` 的 `resolve()` 改为对路径逐段 `Uri.encodeComponent`。
+
+### 闸门结果（1.3.3，实测）
+
+`npx tsc --noEmit -p backend/tsconfig.json` 与 `-p web/tsconfig.json` 均 rc=0；
+`bash scripts/verify-suites.sh` = **21 项通过 / 0 项失败（257 秒）**；
+`node scripts/gen-source-hash.mjs --check` rc=0，指纹 **`d8e826c489fd756b`（138 个文件）**
+（1.3.2 时为 `f9864755a02c7576` / 137）；`node windows/scripts/verify-desktop.mjs` =
+**82 项通过 / 0 项失败**（新增 2 项：产物含眼睛按钮代码、改密替身文件已删除）；`--smoke` =
+**93 项通过 / 0 项失败**；`node windows/scripts/verify-lan.mjs` = **20 项通过 / 0 项失败**；
+`cd flutter && flutter analyze` = 0 error / 0 warning + 8 条既有 info（7 条 Riverpod `*ProviderRef`
+deprecated + 1 条 `prefer_const_constructors`）；`flutter test --no-pub` = **58 项通过 / 1 项跳过**
+（1.3.2 时 52 / 1；本轮新增测试文件 `flutter/test/models_parse_test.dart`、
+`flutter/test/api_client_urls_test.dart`）。
+
+### 产物（均在 Linux 上产出）
+
+Windows：
+
+| 产物 | 路径 | 实测 |
+| --- | --- | --- |
+| 桌面壳 | `windows/dist/ScreenPlay.exe` | **7,436,288 B**，PE VERSIONINFO `FileVersion` / `ProductVersion` = `1.3.3`，sha256 `0811eb02de9a0fac9fa4207fdd02a9a385792f9057b78eeb3e6940d11bce4f01` |
+| 便携包 | `windows/dist/ScreenPlay_1.3.3_x64-portable.zip` | **114,343,271 B / 11,426 条目**，sha256 `0f8b8de9c8506f5134221c38bb71692a7cff585e8308d6eff8180f991032a7c3` |
+| 免构建包 | `windows/dist/ScreenPlay_1.3.3_x64-webapp.zip` | **112,134,183 B / 11,429 条目**，sha256 `625f297143ef1ff33a8b8e270d2c24c6ded91fdc851a6a9f05e7c317352596d2` |
+| NSIS 安装包 | `windows/dist/ScreenPlay_1.3.3_x64-setup.exe` | **74,944,713 B（71.47 MiB）**，sha256 `fc60e64ed20b635cb0b49f50a38ada761dcc0e473a79ac081c68f4d58c288367` |
+
+安卓（`flutter/dist/`，`versionName 1.3.3`、`minSdk 28` / `targetSdk 34`，仍是 debug keystore 签名，
+可侧载、不可上架；每个 `.apk` 旁有同名 `.sha1`）：
+
+| ABI | 文件 | 字节 | SHA-1 |
+| --- | --- | --- | --- |
+| arm64-v8a | `app-arm64-v8a-release.apk` | 21,308,672 | `cb28dd6e536858a0741eb378921c0446f4cd7180` |
+| armeabi-v7a | `app-armeabi-v7a-release.apk` | 18,849,238 | `a0f521691a1135aace169408ee9e5149efa6ef64` |
+| x86_64 | `app-x86_64-release.apk` | 22,427,527 | `aa96fe9e25eb074fc77a8a7cbe9d105380b83736` |
+
+Windows 侧发布说明见 [`windows/docs/RELEASE-1.3.3.md`](windows/docs/RELEASE-1.3.3.md)，
+安卓侧见 [`flutter/docs/ANDROID-1.3.3.md`](flutter/docs/ANDROID-1.3.3.md)；真机验收项见对应文档。
+
 ## [1.3.2 桌面端] — 2026-10-04（Windows：默认局域网访问 + 防火墙默认放行 + 首次启动在网页创建账户）
 
 **这一轮只改 Windows 桌面端的默认行为**，且桌面端这次**与 Linux 服务端同号**（都叫 `1.3.2`，不再是

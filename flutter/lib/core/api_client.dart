@@ -66,6 +66,26 @@ class DeleteMediaResult {
 /// 媒体变体（用于 [ApiClient.mediaUrl] 拼接地址）。
 enum MediaVariant { thumbnail, preview, original, stream, cover }
 
+/// 视频流可达性探测结果 —— 把 ExoPlayer 笼统的 `error 10 (Source error)`
+/// 拆成「鉴权失败 / 网络失败 / 文件不存在 / 可达但格式或编码不支持」四类，
+/// 以便给出可执行的中文提示（不做端上转码、不伪造支持）。
+enum StreamProbeStatus {
+  /// 2xx/206：服务端正常返回，鉴权与网络都通 ⇒ 播放失败更可能是容器/编码不受支持。
+  reachable,
+
+  /// 401/403：未登录或会话失效（Linux 后端默认开鉴权）。
+  unauthorized,
+
+  /// 404：服务端已无此文件。
+  notFound,
+
+  /// 其它 4xx/5xx。
+  serverError,
+
+  /// 连接层失败（网络不可达 / 超时 / 服务未启动）。
+  network,
+}
+
 /// 依赖 serverConfigProvider 的 ApiClient 提供者（地址变更时自动重建）。
 final Provider<ApiClient> apiClientProvider = Provider<ApiClient>(
   (ProviderRef<ApiClient> ref) => ApiClient(baseUrl: ref.watch(serverConfigProvider)),
@@ -160,12 +180,23 @@ class ApiClient {
   }
 
   /// 把相对/绝对地址归一为绝对 URL（相对地址一律以当前 baseUrl 为前缀）。
+  ///
+  /// 路径部分**逐段 percent-encode**：媒体文件名/URL 里可能出现中文、空格、
+  /// `#`/`%` 等字符，直接拼进 URL 会让 `Uri.parse` 或下游播放器（ExoPlayer）
+  /// 解析失败。query 已是调用方（如 [imageSource]）编码好的，原样透传，
+  /// 避免对 `?url=...` 二次编码。
   String resolve(String pathOrUrl) {
     if (pathOrUrl.isEmpty) return pathOrUrl;
     if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
       return pathOrUrl;
     }
-    return '$_baseUrl${pathOrUrl.startsWith('/') ? pathOrUrl : '/$pathOrUrl'}';
+    final String normalized = pathOrUrl.startsWith('/') ? pathOrUrl : '/$pathOrUrl';
+    final int queryAt = normalized.indexOf('?');
+    final String rawPath = queryAt < 0 ? normalized : normalized.substring(0, queryAt);
+    final String query = queryAt < 0 ? '' : normalized.substring(queryAt);
+    final String encodedPath =
+        rawPath.split('/').map(Uri.encodeComponent).join('/');
+    return '$_baseUrl$encodedPath$query';
   }
 
   /// 图片地址归一化 —— 与 Web 端走**同一条**取图路径。
@@ -279,11 +310,67 @@ class ApiClient {
     });
   }
 
+  /// 成就列表（`GET /api/achievements/:gameId`）。
+  ///
+  /// 后端返回的是**对象** `{ items, counts, status, error, source }`
+  /// （见 `backend/src/games/achievements.view.ts` 的 `buildAchievementsPayload`），
+  /// 不是数组 —— 老实现直接走 [_parseListResponse]，首行 `if (data is! List) return const []`
+  /// 导致「成就 tab 永远为空」。Web 也是按对象取 `items`，这里对齐（不改后端契约）。
+  /// 同时兼容纯数组返回（老后端 / 测试桩）。
   Future<List<Achievement>> achievements(String gameId) {
     return _guard(() async {
       final Response<dynamic> res =
           await _dio.get<dynamic>('/api/achievements/$gameId');
-      return _parseListResponse(res, Achievement.fromJson);
+      final dynamic data = res.data;
+      if (data is Map) {
+        return _parseObjectList<Achievement>(
+          Map<String, dynamic>.from(data)['items'],
+          Achievement.fromJson,
+        );
+      }
+      return _parseObjectList<Achievement>(data, Achievement.fromJson);
+    });
+  }
+
+  /// 媒体评价（`GET /api/games/:gameId/media-reviews`）→ `{ reviews, summary }`。
+  ///
+  /// 后端 `games.service.ts` 的 `mediaReviewsFor()` 已经装配好 reviews + summary；
+  /// 与 Web `MediaReviewsPanel` 消费同一契约（`web/src/types.ts` MediaReviewsResponse）。
+  Future<MediaReviewsResult> mediaReviews(String gameId) {
+    return _guard(() async {
+      final Response<dynamic> res =
+          await _dio.get<dynamic>('/api/games/$gameId/media-reviews');
+      final dynamic data = res.data;
+      if (data is! Map) return MediaReviewsResult.empty;
+      final Map<String, dynamic> map = Map<String, dynamic>.from(data);
+      final dynamic rawSummary = map['summary'];
+      return MediaReviewsResult(
+        reviews: _parseObjectList<MediaReview>(map['reviews'], MediaReview.fromJson),
+        summary: rawSummary is Map
+            ? MediaReviewsSummary.fromJson(Map<String, dynamic>.from(rawSummary))
+            : MediaReviewsSummary.neverFetched,
+      );
+    });
+  }
+
+  /// 触发媒体评价重新抓取（`POST /api/games/:gameId/media-reviews/refresh`）。
+  ///
+  /// 返回 `{ status, stored, error, summary }`；`status` 可能是 `skipped`
+  /// （短时间内重复触发被后端跳过），不算失败。
+  Future<String?> refreshMediaReviews(String gameId) {
+    return _guard(() async {
+      final Response<dynamic> res = await _dio
+          .post<dynamic>('/api/games/$gameId/media-reviews/refresh');
+      final dynamic data = res.data;
+      if (data is Map) return Map<String, dynamic>.from(data)['status']?.toString();
+      return null;
+    });
+  }
+
+  /// 触发成就重新抓取（`POST /api/games/:gameId/achievements/refresh`）。
+  Future<void> refreshAchievements(String gameId) {
+    return _guard(() async {
+      await _dio.post<dynamic>('/api/games/$gameId/achievements/refresh');
     });
   }
 
@@ -476,6 +563,48 @@ class ApiClient {
     return resolve(p.url);
   }
 
+  /// 探测视频流是否可达（带本客户端的会话凭证）。
+  ///
+  /// 用 `Range: bytes=0-0` + 流式响应只读首字节并立刻取消，绝不把整个视频拉下来。
+  /// 结果用于把播放器的通用错误细分为鉴权/网络/文件缺失/格式问题（见 [StreamProbeStatus]）。
+  Future<StreamProbeStatus> probeStream(String url) async {
+    int status;
+    try {
+      final Response<dynamic> res = await _dio.get<dynamic>(
+        url,
+        options: Options(
+          headers: <String, dynamic>{'Range': 'bytes=0-0'},
+          responseType: ResponseType.stream,
+          // 自己判状态码，避免 4xx 被 Dio 抛异常后丢掉状态信息。
+          validateStatus: (int? status) => status != null,
+        ),
+      );
+      status = res.statusCode ?? 0;
+      await _drainStream(res.data);
+    } on DioException catch (e) {
+      final Response<dynamic>? res = e.response;
+      if (res == null) return StreamProbeStatus.network;
+      status = res.statusCode ?? 0;
+      await _drainStream(res.data);
+    } catch (_) {
+      return StreamProbeStatus.network;
+    }
+    if (status == 401 || status == 403) return StreamProbeStatus.unauthorized;
+    if (status == 404) return StreamProbeStatus.notFound;
+    if (status >= 200 && status < 300) return StreamProbeStatus.reachable;
+    return StreamProbeStatus.serverError;
+  }
+
+  /// 流式响应必须显式取消订阅，否则连接不会释放；取消阶段的异常可忽略。
+  Future<void> _drainStream(dynamic data) async {
+    if (data is! ResponseBody) return;
+    try {
+      await data.stream.listen(null).cancel();
+    } catch (_) {
+      // 状态码才是我们关心的，忽略取消阶段异常。
+    }
+  }
+
   /// 健康检查（复用既有 [health]，不解析返回体）。
   Future<void> checkHealth() async {
     await health();
@@ -488,11 +617,25 @@ class ApiClient {
     Response<dynamic> res,
     T Function(Map<String, dynamic>) fromJson,
   ) {
-    final dynamic data = res.data;
+    return _parseObjectList<T>(res.data, fromJson);
+  }
+
+  /// 逐项解析对象数组：非数组返回空表；单条坏数据只跳过该条，不污染整页
+  /// （与 `models.dart` 的 `_parseList` 同一容错原则）。
+  List<T> _parseObjectList<T>(
+    dynamic data,
+    T Function(Map<String, dynamic>) fromJson,
+  ) {
     if (data is! List) return const [];
-    return data
-        .whereType<Map>()
-        .map((dynamic e) => fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList(growable: false);
+    final List<T> parsed = <T>[];
+    for (final dynamic item in data) {
+      if (item is! Map) continue;
+      try {
+        parsed.add(fromJson(Map<String, dynamic>.from(item)));
+      } catch (_) {
+        continue; // 坏数据只丢这一条。
+      }
+    }
+    return List<T>.unmodifiable(parsed);
   }
 }

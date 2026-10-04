@@ -45,6 +45,8 @@ export const commonEn: Record<string, string> = {
   "login.hintSystem": "Verified against your NAS system accounts. The password is checked on this device only and never leaves it.",
   "login.hintLocal": "No NAS user database detected; using a local account instead.",
   "login.footer": "ScreenPlay · All data stays on this device",
+  "login.showPassword": "Show password",
+  "login.hidePassword": "Hide password",
 
   "setup.title": "Create a local account",
   "setup.intro": "This server has no account yet. Create a local account first — afterwards you can add game folders under Settings → Library, and other devices (including Android) can sign in with this account.",

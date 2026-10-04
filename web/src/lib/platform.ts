@@ -4,20 +4,19 @@
  * `desktop` is set by the desktop build: `npm run build:desktop` in `web/` runs
  * `vite build --mode desktop`, which loads `web/.env.desktop` and with it
  * `VITE_SCREENPLAY_TARGET=desktop`. The desktop shell ships the very same web
- * app as a single-machine install, and a couple of things that only make sense
- * on a shared server must disappear from that artifact itself instead of merely
- * being hidden at runtime:
+ * app as a single-machine install — same routes, same cards, same text — and
+ * differs only in where the bundle lands (`web/dist-desktop`, served
+ * same-origin by the Tauri shell).
  *
- *   - the change-password card. The desktop build swaps
- *     `web/src/components/ChangePasswordCard.tsx` for
- *     `web/src/components/ChangePasswordCard.desktop-stub.tsx` through the
- *     alias in `web/vite.config.ts`, so the card's markup, mutation hook and
- *     text (`ChangePasswordCard.i18n.ts`, imported by the card alone) are not
- *     in the bundle at all. On top of that, `web/src/pages/Settings.tsx`
- *     refuses to render it when `IS_DESKTOP_TARGET` is true.
+ * Up to 1.3.2 the flag also *stripped* UI from that artifact: `--mode desktop`
+ * aliased `ChangePasswordCard.tsx` to an empty stub, so the change-password card
+ * was absent from the desktop bundle. 1.3.3 removed that裁剪 — a single-machine
+ * install can run a local account too, so the settings page must offer the same
+ * card as Web/Linux. The flag is kept for target detection (and any future
+ * platform-specific difference).
  *
  * A plain `vite build`, the dev server and the Linux container build are the
- * `server` target and keep every feature.
+ * `server` target.
  */
 export type ScreenplayTarget = "server" | "desktop";
 

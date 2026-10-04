@@ -94,13 +94,24 @@ if (!fs.existsSync(RES)) {
     const jsFiles = files.filter((f) => f.endsWith('.js'));
     const cdnHits = jsFiles.reduce((n, f) => n + (fs.readFileSync(path.join(assetsDir, f), 'utf8').match(/cdn\.plyr\.io/g) || []).length, 0);
     check(cdnHits === 0, '产物内无 cdn.plyr.io 外链（离线可用）', `命中 ${cdnHits}`);
-    // 桌面端不提供「修改密码」入口：构建期已把该卡片模块换成空实现（见 windows/docs/PARITY.md 差异 ⑦），
-    // 这里对**已交付的资源副本**再做一次断言，防止有人用 web/dist（服务端产物）误覆盖 resources/web。
+    // 1.3.3 起桌面端与 Web/Linux 共用同一套设置页：改密卡片不再被构建期剔除
+    // （原来的 `ChangePasswordCard.desktop-stub.tsx` 已删）。这里对**已交付的资源副本**
+    // 断言它确实带上了该卡片，防止用旧产物覆盖 resources/web。
     const pwHits = jsFiles.reduce((n, f) => {
       const txt = fs.readFileSync(path.join(assetsDir, f), 'utf8');
-      return n + (txt.match(/change-password|settings\.password\./g) || []).length;
+      return n + (txt.match(/change-password/g) || []).length;
     }, 0);
-    check(pwHits === 0, '产物内无「修改密码」界面代码（桌面端按平台剔除）', `命中 ${pwHits}`);
+    check(pwHits >= 1, '产物内含「修改密码」界面代码（1.3.3 起桌面端与 Web 一致）', `命中 ${pwHits}`);
+    check(
+      !fs.existsSync(path.join(ROOT, 'web', 'src', 'components', 'ChangePasswordCard.desktop-stub.tsx')),
+      '桌面端改密替身已删除（构建期不再裁剪界面）',
+    );
+    // 登录页密码框的「显示密码」眼睛按钮（1.3.3 新增），同样必须在交付产物里。
+    const eyeHits = jsFiles.reduce((n, f) => {
+      const txt = fs.readFileSync(path.join(assetsDir, f), 'utf8');
+      return n + (txt.match(/password-visibility/g) || []).length;
+    }, 0);
+    check(eyeHits >= 1, '产物内含登录页「显示密码」眼睛按钮（password-visibility）', `命中 ${eyeHits}`);
     check(fs.existsSync(path.join(assetsDir, 'plyr.svg')), '本地 plyr.svg 已就位');
   }
 
@@ -216,7 +227,7 @@ section('1.3.2 行为断言（默认监听 0.0.0.0、程序默认放行、版号
   const cargoVer = (read(cargoToml).match(/^version = "([^"]+)"/m) || [])[1] || '';
 
   // ① 版号三件套（+ Cargo.lock）必须同步，否则 exe 属性/安装包名会不一致
-  check(winVer === '1.3.2', `${rel(winPkgJson)} 版号为 1.3.2`, winVer);
+  check(winVer === '1.3.3', `${rel(winPkgJson)} 版号为 1.3.3`, winVer);
   check(tauriVer === winVer && !!tauriVer, `${rel(tauriConfJson)} 版号与 package.json 一致`, tauriVer);
   check(cargoVer === winVer && !!cargoVer, `${rel(cargoToml)} 版号与 package.json 一致`, cargoVer);
   check(

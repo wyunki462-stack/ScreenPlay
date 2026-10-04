@@ -56,7 +56,40 @@ export interface SaveRootInput {
   enabled?: boolean;
 }
 
+/** One subdirectory shown in the path browser. Files are never returned. */
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  isDirectory: true;
+}
+
+/**
+ * Reply shape of the read-only directory browser. Every failure (bad path,
+ * outside the allow-list, unreadable) is reported as `ok: false` + a Chinese
+ * `message` — the endpoint never throws, so the dialog can always render.
+ */
+export interface BrowseResult {
+  ok: boolean;
+  path: string;
+  parent: string | null;
+  entries: BrowseEntry[];
+  roots: { label: string; path: string }[];
+  exists: boolean;
+  readable: boolean;
+  message: string;
+}
+
 const MEDIA_TYPES: RootMediaType[] = ['auto', 'image', 'video'];
+
+/** OS/system noise the browser hides; it is never media-library content. */
+const BROWSE_SKIP_NAMES = new Set([
+  '$RECYCLE.BIN',
+  'System Volume Information',
+  'lost+found',
+]);
+
+/** Hard cap on one listing — the browser only ever lists a single level. */
+const BROWSE_MAX_ENTRIES = 2000;
 
 @Injectable()
 export class LibraryRootsService {
@@ -371,6 +404,185 @@ export class LibraryRootsService {
       }
     }
     return out;
+  }
+
+  /**
+   * Effective allow-list of the path browser (see browse()).
+   *
+   * When `LIBRARY_BROWSE_ROOTS` is set it is authoritative. Otherwise we derive
+   * defaults that match how this app is actually deployed: the configured media
+   * roots (carrying their labels), the heuristic mount points, and the platform's
+   * usual top level (`/media /mnt /vol2 /home`, or existing drive letters).
+   *
+   * `real` is the symlink-resolved form used purely for the containment check.
+   */
+  private async browseRoots(): Promise<{ label: string; path: string; real: string }[]> {
+    const configured = this.config.get('libraryBrowseRoots', { infer: true });
+    const out: { label: string; path: string; real: string }[] = [];
+    const seen = new Set<string>();
+
+    const add = async (p: string, label?: string | null): Promise<void> => {
+      const resolved = path.resolve(p);
+      const real = await this.realOrResolve(resolved);
+      const key = this.canon(real);
+      if (seen.has(key)) return;
+      // Only advertise directories that actually exist — a root the UI cannot
+      // enter is worse than no shortcut at all.
+      const stat = await fs.stat(resolved).catch(() => null);
+      if (!stat?.isDirectory()) return;
+      seen.add(key);
+      out.push({
+        label: (label ?? '').trim() || path.basename(resolved) || resolved,
+        path: resolved,
+        real,
+      });
+    };
+
+    if (configured.length) {
+      for (const p of configured) await add(p);
+      return out;
+    }
+
+    // Existing media roots first (they keep their user-visible labels).
+    for (const r of await this.list()) await add(r.path, r.label);
+    for (const p of await this.mountedRoots()) await add(p);
+    if (process.platform === 'win32') {
+      for (let code = 67; code <= 90; code += 1) await add(`${String.fromCharCode(code)}:\\`);
+    } else {
+      for (const p of ['/media', '/mnt', '/vol2', '/home']) await add(p);
+    }
+    return out;
+  }
+
+  /**
+   * Read-only, one-level directory listing used by the UI's folder picker.
+   *
+   * Security: `path` must sit inside the allow-list (`LIBRARY_BROWSE_ROOTS` or,
+   * when unset, the derived defaults). Symlinks are resolved before the check so
+   * a link inside an allowed root cannot reach outside it. Files, hidden
+   * dot-directories and OS noise (`$RECYCLE.BIN`, …) are filtered out.
+   */
+  async browse(rawPath: string): Promise<BrowseResult> {
+    const whitelist = await this.browseRoots();
+    const roots = whitelist.map((r) => ({ label: r.label, path: r.path }));
+
+    const raw = (rawPath ?? '').trim();
+    // Opening the dialog before a path is known: start at the first allowed root.
+    const requested = raw || whitelist[0]?.path || '';
+    if (!requested) {
+      return this.browseFail('', roots, '没有可浏览的目录：请先配置媒体库，或设置 LIBRARY_BROWSE_ROOTS。');
+    }
+    if (!path.isAbsolute(requested)) {
+      return this.browseFail(requested, roots, '请使用绝对路径（例如 /media/games）。');
+    }
+
+    const resolved = path.resolve(requested);
+    const real = await this.realOrResolve(resolved);
+    if (!whitelist.some((r) => this.isWithin(real, r.real))) {
+      return this.browseFail(
+        resolved,
+        roots,
+        '该路径不在允许浏览的范围内。可通过环境变量 LIBRARY_BROWSE_ROOTS 增加允许的目录。',
+        await fs.pathExists(resolved),
+      );
+    }
+
+    const stat = await fs.stat(resolved).catch(() => null);
+    if (!stat) {
+      return this.browseFail(
+        resolved,
+        roots,
+        `目录不存在：${resolved}`,
+        false,
+        await this.parentWithin(resolved, whitelist),
+      );
+    }
+    if (!stat.isDirectory()) {
+      return this.browseFail(
+        resolved,
+        roots,
+        `该路径是文件而不是目录：${resolved}`,
+        true,
+        await this.parentWithin(resolved, whitelist),
+      );
+    }
+
+    let dirents: import('fs').Dirent[];
+    try {
+      dirents = await fs.readdir(resolved, { withFileTypes: true });
+    } catch {
+      return this.browseFail(
+        resolved,
+        roots,
+        '路径存在但不可读取，请检查挂载权限。',
+        true,
+        await this.parentWithin(resolved, whitelist),
+      );
+    }
+
+    const entries: BrowseEntry[] = [];
+    for (const e of dirents) {
+      if (entries.length >= BROWSE_MAX_ENTRIES) break;
+      if (!e.isDirectory()) continue; // directories only
+      if (e.name.startsWith('.')) continue; // hidden
+      if (BROWSE_SKIP_NAMES.has(e.name)) continue; // OS noise
+      entries.push({ name: e.name, path: path.join(resolved, e.name), isDirectory: true });
+    }
+    entries.sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+    );
+
+    return {
+      ok: true,
+      path: resolved,
+      parent: await this.parentWithin(resolved, whitelist),
+      entries,
+      roots,
+      exists: true,
+      readable: true,
+      message: entries.length ? `发现 ${entries.length} 个子文件夹` : '此文件夹没有子文件夹',
+    };
+  }
+
+  /** Uniform failure reply for browse() — one place, one shape. */
+  private browseFail(
+    p: string,
+    roots: { label: string; path: string }[],
+    message: string,
+    exists = false,
+    parent: string | null = null,
+  ): BrowseResult {
+    return { ok: false, path: p, parent, entries: [], roots, exists, readable: false, message };
+  }
+
+  /** The parent directory, but only while it stays inside the allow-list. */
+  private async parentWithin(
+    p: string,
+    whitelist: { real: string }[],
+  ): Promise<string | null> {
+    const parent = path.dirname(p);
+    if (parent === p) return null; // filesystem root, nothing above it
+    const realParent = await this.realOrResolve(parent);
+    return whitelist.some((r) => this.isWithin(realParent, r.real)) ? parent : null;
+  }
+
+  /** Symlink-resolved path when it exists, else the plain resolved path. */
+  private async realOrResolve(p: string): Promise<string> {
+    return (await fs.realpath(p).catch(() => null)) ?? path.resolve(p);
+  }
+
+  /** Case-normalised form for the platform (Windows paths are case-insensitive). */
+  private canon(p: string): string {
+    const resolved = path.resolve(p);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  }
+
+  /** True when `target` is `root` itself or lives underneath it. */
+  private isWithin(target: string, root: string): boolean {
+    const t = this.canon(target);
+    const r = this.canon(root);
+    if (t === r) return true;
+    return t.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
   }
 
   private normalizeType(v: string | undefined): RootMediaType {

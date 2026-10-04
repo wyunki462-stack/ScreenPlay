@@ -210,4 +210,88 @@ void main() {
       expect(p.isCover, isFalse);
     });
   });
+
+  group('MediaReview / MediaReviewsResult（媒体评价）', () {
+    test('camelCase 单条解析：分数为 double，抓取时间转成本地 DateTime', () {
+      final MediaReview r = MediaReview.fromJson(<String, dynamic>{
+        'id': 'mr1',
+        'gameId': 'g1',
+        'source': 'metacritic',
+        'outlet': 'IGN',
+        'score': 90,
+        'verdict': 'Great',
+        'text': '正文',
+        'url': 'https://example.com/review',
+        'author': '张三',
+        'platform': 'PC',
+        'publishedAt': '2023-08-01',
+        'fetchedAt': 1700000000000,
+      });
+
+      expect(r.id, 'mr1');
+      expect(r.gameId, 'g1');
+      expect(r.outlet, 'IGN');
+      expect(r.score, 90.0);
+      expect(r.scoreText, '90'); // 整数不带小数点
+      expect(r.author, '张三');
+      expect(r.fetchedAtTime, isNotNull);
+    });
+
+    test('缺 outlet 时用 source 兜底；坏数据不抛错', () {
+      final MediaReview r = MediaReview.fromJson(<String, dynamic>{
+        'source': 'opencritic',
+        'score': 78.5,
+      });
+      expect(r.outlet, 'opencritic');
+      expect(r.scoreText, '78.5'); // 小数保留一位
+      expect(r.id, '');
+      expect(r.fetchedAtTime, isNull);
+
+      final MediaReview blank = MediaReview.fromJson(<String, dynamic>{});
+      expect(blank.outlet, isNull);
+      expect(blank.score, isNull);
+      expect(blank.scoreText, '');
+    });
+
+    test('summary 解析 + 从未抓取常量', () {
+      final MediaReviewsSummary s = MediaReviewsSummary.fromJson(<String, dynamic>{
+        'status': 'failed',
+        'error': 'timeout',
+        'fetchedAt': 1700000000000,
+        'sourceUrl': 'https://www.metacritic.com/game/x',
+        'count': 3,
+      });
+      expect(s.status, 'failed');
+      expect(s.error, 'timeout');
+      expect(s.count, 3);
+      expect(s.fetchedAtTime, isNotNull);
+
+      final MediaReviewsSummary blank =
+          MediaReviewsSummary.fromJson(<String, dynamic>{});
+      expect(blank.status, isNull);
+      expect(blank.count, 0);
+
+      expect(MediaReviewsSummary.neverFetched.status, isNull);
+      expect(MediaReviewsSummary.neverFetched.fetchedAtTime, isNull);
+    });
+
+    test('综合分：仅统计有分数的条目，空集合不展示', () {
+      final MediaReviewsResult result = MediaReviewsResult(
+        reviews: <MediaReview>[
+          MediaReview.fromJson(<String, dynamic>{'outlet': 'A', 'score': 90}),
+          MediaReview.fromJson(<String, dynamic>{'outlet': 'B', 'score': 80}),
+          MediaReview.fromJson(<String, dynamic>{'outlet': 'C'}), // 无分数
+        ],
+        summary: MediaReviewsSummary.neverFetched,
+      );
+      expect(result.hasScores, isTrue);
+      expect(result.averageScore, 85.0);
+      expect(result.averageScoreText, '85');
+
+      expect(MediaReviewsResult.empty.hasScores, isFalse);
+      expect(MediaReviewsResult.empty.averageScore, isNull);
+      expect(MediaReviewsResult.empty.averageScoreText, '');
+      expect(MediaReviewsResult.empty.reviews, isEmpty);
+    });
+  });
 }

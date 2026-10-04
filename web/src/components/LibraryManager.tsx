@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  FolderOpen,
   FolderPlus,
   HardDrive,
   Loader2,
@@ -23,6 +24,7 @@ import {
 import { useT } from "../i18n";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
+import PathBrowser from "./PathBrowser";
 
 /**
  * "媒体库管理" module for the Settings page (feature 2).
@@ -203,6 +205,7 @@ function RootEditor({
   const [enabled, setEnabled] = useState(root?.enabled ?? true);
   const [debounced, setDebounced] = useState(path);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   const add = useAddLibraryRoot();
   const update = useUpdateLibraryRoot();
@@ -231,6 +234,7 @@ function RootEditor({
   };
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
       onClick={onClose}
@@ -253,13 +257,27 @@ function RootEditor({
             <label className="mb-1.5 block text-xs font-medium text-zinc-300">
               {t("library.pathLabel")}
             </label>
-            <Input
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder="/media/games"
-              disabled={isEnv}
-              className="font-mono text-xs"
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                placeholder="/media/games"
+                disabled={isEnv}
+                className="min-w-0 flex-1 font-mono text-xs"
+              />
+              {!isEnv && (
+                <Button
+                  variant="secondary"
+                  onClick={() => setBrowserOpen(true)}
+                  data-testid="browse-path"
+                  className="shrink-0"
+                  title={t("library.browse.open")}
+                >
+                  <FolderOpen className="mr-1.5 h-4 w-4" />
+                  {t("library.browse.open")}
+                </Button>
+              )}
+            </div>
             <p className="mt-1.5 text-[11px] text-zinc-500">{t("library.pathHint")}</p>
           </div>
 
@@ -405,5 +423,19 @@ function RootEditor({
         </div>
       </div>
     </div>
+
+    {/* Kept outside the editor overlay so its own overlay-click handling is not
+        swallowed by the editor's `onClick={onClose}`. Pure HTTP — no Tauri API. */}
+    {browserOpen && (
+      <PathBrowser
+        initialPath={path}
+        onSelect={(picked) => {
+          setPath(picked);
+          setBrowserOpen(false);
+        }}
+        onClose={() => setBrowserOpen(false)}
+      />
+    )}
+    </>
   );
 }

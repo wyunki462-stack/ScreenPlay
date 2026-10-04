@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 离线全量回归：后端/前端类型检查 + 15 个离线套件 + 前端产物投递检查 + Dockerfile 分层自查。
+# 离线全量回归：后端/前端类型检查 + 17 个离线套件 + 前端产物投递检查 + Dockerfile 分层自查
+# （共 21 项；「项数」以本文件 run() 调用为准，别照抄注释里的数字）。
 #
 #   bash scripts/verify-suites.sh                    # 打到 stdout
 #   bash scripts/verify-suites.sh docs/perf/suites-after.txt
@@ -41,7 +42,7 @@ run "typecheck-web" npx tsc --noEmit -p web/tsconfig.json
 for s in review-pagination-test metacritic-reviews-test metacritic-api-test metacritic-crawl-test \
   media-reviews-e2e duration-cache-e2e poster-rotation-e2e poster-ui-ssr \
   requirements-ui poster-merge-unit achievement-icon-url password-change sqlite-vacuum \
-  media-delete-e2e android-auth-bearer auth-setup; do
+  media-delete-e2e android-auth-bearer auth-setup library-browse; do
   run "$s" node "backend/scripts/verify/$s.mjs"
 done
 run "verify-build-artifacts" env APP_DIR="$PWD" sh scripts/verify-build-artifacts.sh

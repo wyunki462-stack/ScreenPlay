@@ -140,8 +140,9 @@ class _GameDetailScreenState extends ConsumerState<GameDetailScreen>
 
     return RefreshIndicator(
       onRefresh: () async {
-        ref.invalidate(gameDetailProvider(widget.gameId));
-        await ref.read(gameDetailProvider(widget.gameId).future);
+        // 下拉刷新与 AppBar 刷新走同一条链路：先打后端 refresh，再让
+        // 详情/媒体/成就/媒体评价 provider 全部重新拉取（见 RefreshGameNotifier.run）。
+        await ref.read(refreshGameProvider.notifier).run(widget.gameId);
       },
       child: ListView(
         padding: const EdgeInsets.only(bottom: 24),
@@ -416,12 +417,42 @@ class _InfoSection extends StatelessWidget {
           if (detail.aliases.isNotEmpty)
             _LabelValue(label: '别名', value: detail.aliases.join('、')),
           _LabelValue(label: '文件夹', value: detail.folderName),
+          // 通关时长（HLTB）与价格对齐 Web 详情页顶部信息网格：从「评分」tab 移到
+          // 此处，排在「元数据刷新」行之前（顺序：… 文件夹 → 通关时长 → 价格 → 元数据刷新）。
+          if (detail.mainStoryHours != null ||
+              detail.mainPlusExtraHours != null ||
+              detail.completionistHours != null) ...<Widget>[
+            Text('通关时长 (HLTB)', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 12,
+              children: <Widget>[
+                if (detail.mainStoryHours != null)
+                  _MiniCard(label: '主线', value: '${_hours(detail.mainStoryHours)} 小时'),
+                if (detail.mainPlusExtraHours != null)
+                  _MiniCard(label: '主线+支线', value: '${_hours(detail.mainPlusExtraHours)} 小时'),
+                if (detail.completionistHours != null)
+                  _MiniCard(label: '全收集', value: '${_hours(detail.completionistHours)} 小时'),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (detail.prices.isNotEmpty) ...<Widget>[
+            Text('价格', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            ...detail.prices.map((Price p) => _PriceCard(price: p)),
+            const SizedBox(height: 16),
+          ],
           if (detail.lastMetadataRefresh != null)
             _LabelValue(label: '元数据刷新', value: formatDateTime(detail.lastMetadataRefresh)),
         ],
       ),
     );
   }
+
+  /// 小时数文本：整数不带小数点（90 而非 90.0），小数保留一位。
+  static String _hours(double? v) =>
+      v == null ? '—' : (v % 1 == 0 ? v.toInt().toString() : v.toStringAsFixed(1));
 }
 
 class _LabelValue extends StatelessWidget {
@@ -712,7 +743,10 @@ class _AchievementIcon extends StatelessWidget {
   }
 }
 
-/// 评分 / 价格分区。
+/// 评分 / 媒体评价分区。
+///
+/// 通关时长（HLTB）与价格已移到 `_InfoSection`（对齐 Web 顶部信息网格），
+/// 此处只保留评分卡与媒体评价区块（对齐 Web 的 RatingsPanel + MediaReviewsPanel）。
 class _RatingsTab extends StatelessWidget {
   const _RatingsTab({required this.detail});
 
@@ -724,45 +758,214 @@ class _RatingsTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        // HLTB 通关时长。
-        if (detail.mainStoryHours != null ||
-            detail.mainPlusExtraHours != null ||
-            detail.completionistHours != null) ...<Widget>[
-          Text('通关时长 (HLTB)', style: theme.textTheme.titleSmall),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 12,
-            children: <Widget>[
-              if (detail.mainStoryHours != null)
-                _MiniCard(label: '主线', value: '${_num(detail.mainStoryHours)} 小时'),
-              if (detail.mainPlusExtraHours != null)
-                _MiniCard(label: '主线+支线', value: '${_num(detail.mainPlusExtraHours)} 小时'),
-              if (detail.completionistHours != null)
-                _MiniCard(label: '全收集', value: '${_num(detail.completionistHours)} 小时'),
-            ],
-          ),
-          const SizedBox(height: 16),
-        ],
-
         if (detail.ratings.isNotEmpty) ...<Widget>[
           Text('评分', style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           ...detail.ratings.map((Rating r) => _RatingCard(rating: r)),
           const SizedBox(height: 16),
-        ],
-
-        if (detail.prices.isNotEmpty) ...<Widget>[
-          Text('价格', style: theme.textTheme.titleSmall),
+        ] else ...<Widget>[
+          const _EmptyText(text: '暂无评分数据'),
           const SizedBox(height: 8),
-          ...detail.prices.map((Price p) => _PriceCard(price: p)),
         ],
-        if (detail.ratings.isEmpty && detail.prices.isEmpty)
-          const _EmptyText(text: '暂无评分 / 价格数据'),
+        _MediaReviewsSection(gameId: detail.id),
       ],
     );
   }
+}
 
-  static String _num(double? v) => v == null ? '—' : (v % 1 == 0 ? v.toInt().toString() : v.toStringAsFixed(1));
+/// 媒体评价区块（「评分」tab 内）—— 对齐 Web `MediaReviewsPanel`。
+///
+/// 标题 + 条数/抓取时间 + 综合分 + 各家媒体评分列表；空态按后端 `status`
+/// （failed / unsupported / empty / 从未抓取）给不同中文说明；加载中与失败重试复用
+/// 既有 `_TabLoading` / `_TabError` 风格。
+class _MediaReviewsSection extends ConsumerWidget {
+  const _MediaReviewsSection({required this.gameId});
+
+  final String gameId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AsyncValue<MediaReviewsResult> reviewsAsync =
+        ref.watch(mediaReviewsProvider(gameId));
+    final ThemeData theme = Theme.of(context);
+
+    return reviewsAsync.when(
+      loading: () => const _TabLoading(),
+      error: (Object error, StackTrace stackTrace) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('媒体评价', style: theme.textTheme.titleSmall),
+          _TabError(onRetry: () => ref.invalidate(mediaReviewsProvider(gameId))),
+        ],
+      ),
+      data: (MediaReviewsResult result) {
+        final List<MediaReview> reviews = result.reviews;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Text('媒体评价', style: theme.textTheme.titleSmall),
+                const SizedBox(width: 8),
+                if (reviews.isNotEmpty)
+                  Text(
+                    '共 ${reviews.length} 条',
+                    style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF9E96B5)),
+                  ),
+                const Spacer(),
+                if (result.summary.fetchedAtTime != null)
+                  Text(
+                    '抓取于 ${formatDateTime(result.summary.fetchedAtTime)}',
+                    style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF9E96B5)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (reviews.isEmpty)
+              _ReviewsEmptyState(summary: result.summary)
+            else ...<Widget>[
+              if (result.hasScores) ...<Widget>[
+                _AverageScoreBadge(text: result.averageScoreText),
+                const SizedBox(height: 8),
+              ],
+              ...reviews.map((MediaReview r) => _MediaReviewCard(review: r)),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 综合分（所有有分数条目的算术平均）。
+class _AverageScoreBadge extends StatelessWidget {
+  const _AverageScoreBadge({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1B1826),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        '综合分：$text',
+        style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+/// 单条媒体评价卡片：媒体名 + 评分芯片（颜色与 Web `metacriticTone` 一致）+
+/// 结论/正文 + 平台/作者/发布时间。
+class _MediaReviewCard extends StatelessWidget {
+  const _MediaReviewCard({required this.review});
+
+  final MediaReview review;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final double? score = review.score;
+    final Color color = score == null
+        ? const Color(0xFF9E96B5)
+        : GameCard.metacriticColor(score.toInt());
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    review.outlet ?? '媒体',
+                    style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                if (score != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.16),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: color.withOpacity(0.5)),
+                    ),
+                    child: Text(
+                      review.scoreText,
+                      style: TextStyle(color: color, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+              ],
+            ),
+            if (review.verdict != null && review.verdict!.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 6),
+              Text(review.verdict!, style: theme.textTheme.bodyMedium?.copyWith(fontStyle: FontStyle.italic)),
+            ],
+            if (review.text != null && review.text!.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 6),
+              Text(review.text!, style: theme.textTheme.bodySmall),
+            ],
+            _buildMeta(theme),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMeta(ThemeData theme) {
+    final List<String> parts = <String>[
+      if (review.platform != null && review.platform!.isNotEmpty) '平台 ${review.platform}',
+      if (review.author != null && review.author!.isNotEmpty) '作者 ${review.author}',
+      if (review.publishedAt != null && review.publishedAt!.isNotEmpty) review.publishedAt!,
+    ];
+    if (parts.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        parts.join(' · '),
+        style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF9E96B5)),
+      ),
+    );
+  }
+}
+
+/// 媒体评价空态：按后端 `summary.status` 分不同说明（与 Web `EmptyState` 对齐）。
+class _ReviewsEmptyState extends StatelessWidget {
+  const _ReviewsEmptyState({required this.summary});
+
+  final MediaReviewsSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final String text;
+    switch (summary.status) {
+      case 'failed':
+        final String reason =
+            (summary.error != null && summary.error!.isNotEmpty) ? summary.error! : '未知原因';
+        text = '媒体评价抓取失败：$reason\n（数据源站点不可达、需要代理或被限流，已抓到的评价不会被清空。）';
+        break;
+      case 'unsupported':
+        text = '未找到该游戏在媒体评价站的对应条目。';
+        break;
+      case 'empty':
+        text = '该游戏的媒体评价数据源没有收录评价内容。';
+        break;
+      case null:
+        text = '还没有抓取过媒体评价，点右上角刷新获取。';
+        break;
+      default:
+        text = '暂无媒体评价';
+    }
+    return _EmptyText(text: text);
+  }
 }
 
 class _RatingCard extends StatelessWidget {

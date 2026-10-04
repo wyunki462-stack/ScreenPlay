@@ -116,4 +116,18 @@ export const settingsEn: Record<string, string> = {
   "library.enable": "Enable this library (disabled libraries are skipped when scanning)",
   "library.saveHint": "Saves and rescans immediately — no container restart needed",
   "library.saveAndScan": "Save & scan",
+
+  // Visual path browser dialog (the “Browse…” button)
+  "library.browse.open": "Browse…",
+  "library.browse.title": "Choose a media library folder",
+  "library.browse.hint": "Folders only; step into subfolders or pick the current one. The path must be within the allowed roots.",
+  "library.browse.up": "Parent",
+  "library.browse.roots": "Quick access",
+  "library.browse.enter": "Open",
+  "library.browse.current": "Current folder",
+  "library.browse.selected": "Selected: {path}",
+  "library.browse.select": "Select this folder",
+  "library.browse.loading": "Loading…",
+  "library.browse.empty": "This folder has no subfolders",
+  "library.browse.failed": "Could not load the folder",
 };

@@ -797,6 +797,41 @@ export function useMountedRoots() {
   });
 }
 
+/** One subdirectory in the path browser. Files are never returned. */
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  isDirectory: true;
+}
+
+export interface BrowseResult {
+  ok: boolean;
+  path: string;
+  parent: string | null;
+  entries: BrowseEntry[];
+  roots: { label: string; path: string }[];
+  exists: boolean;
+  readable: boolean;
+  message: string;
+}
+
+/**
+ * Read-only directory listing for the "浏览…" folder picker.
+ *
+ * Only fetched while `enabled` (the dialog is open) — the query key changes with
+ * the path, and React Query aborts the previous request's `signal` when a new
+ * directory supersedes it, so a slow listing never overwrites a newer one.
+ */
+export function useBrowsePath(path: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["library-browse", path],
+    enabled,
+    retry: false,
+    queryFn: ({ signal }) =>
+      apiFetch<BrowseResult>(`/library/roots/browse?path=${encodeURIComponent(path)}`, { signal }),
+  });
+}
+
 export interface SaveRootInput {
   path?: string;
   label?: string;
