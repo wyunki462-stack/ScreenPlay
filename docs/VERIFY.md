@@ -95,6 +95,19 @@ bash scripts/verify-suites.sh                  # 期望 20 项通过 / 0 项失�
 node scripts/gen-source-hash.mjs --check       # 期望 ✓ f9864755a02c7576（137 文件）
 ```
 
+### 产物（1.3.2，均在 Linux 上产出）
+
+| 产物 | 路径 | 大小 / 条目 |
+| --- | --- | --- |
+| 桌面壳 | `windows/dist/ScreenPlay.exe` | 7,436,288 B（7.09 MiB），PE32+ x64 / `subsystem=GUI` |
+| NSIS 安装包 | `windows/dist/ScreenPlay_1.3.2_x64-setup.exe` | 74,983,691 B（71.51 MiB），sha256 `97127edf…` |
+| 便携包 | `windows/dist/ScreenPlay_1.3.2_x64-portable.zip` | 114,388,270 B（109.09 MiB）/ 11,427 条目 |
+| 零工具链包 | `windows/dist/ScreenPlay_1.3.2_x64-webapp.zip` | 112,179,200 B（106.98 MiB）/ 11,430 条目 |
+| 源码包 | `dist-src/ScreenPlay-1.3.2-src.zip` | 1,977,115 B / 466 条目 |
+
+生成方式（Linux 交叉编译 + 原生 `makensis`）见 `windows/docs/BUILD-WINDOWS.md` §3 与 §3.6；
+体积明细见 `windows/docs/ARTIFACTS.md` §5。
+
 ### 关键锚点
 
 | 项 | 内容 |
@@ -106,7 +119,7 @@ node scripts/gen-source-hash.mjs --check       # 期望 ✓ f9864755a02c7576（1
 | 安全不变量 | `config.rs` `normalize()` 尾部：`if self.lan_reachable() && self.auth == "off" { self.auth = "local"; }`；`pub fn lan_reachable(&self) -> bool { self.host != LOOPBACK_HOST }` |
 | 免安装形态 | `windows/launcher/launch.mjs` 的 `bindHost()` / `ensureFirewall()` / `lanUrls()`：与 Rust 侧同一规则名、同一端口段、同一份脚本内容 |
 
-### 真机待验收（本机是 Linux NAS：无 Windows、无 cargo/rustc）
+### 真机待验收（Windows 产物已在 Linux 上交叉编译产出，但真机行为必须上 Windows）
 
 - [ ] Windows 10/11 首次启动只弹**一次** UAC；`wf.msc` 入站规则里出现 `ScreenPlay`（TCP `3210-3309`）。
 - [ ] 同局域网手机/平板打开 `http://<本机局域网 IP>:<端口>/` → 出「创建账户」页 → 建号 → 正常看图库。

@@ -48,10 +48,19 @@ Dockerfile 与 `docker-compose*` 未动。因此 Android 端无需重打包，We
 且 token 只在 cookie、重复 setup 403）；`bash scripts/verify-suites.sh` **20 项通过 / 0 项失败**；
 `node scripts/gen-source-hash.mjs --check` ✓ `f9864755a02c7576`（137 文件）。
 
-**产物**：本机没有 Windows 也没有 Rust 工具链（`cargo`/`rustc` 均无），**本轮未产出 exe / 安装包 / zip**，
-真机编译与防火墙行为必须在 Windows 上验收 —— 步骤与清单见
-[`windows/docs/RELEASE-1.3.2.md`](windows/docs/RELEASE-1.3.2.md)（`npm run prepare` → `npx tauri build` →
-`npm run portable:win` → `npm run verify:win` → `npm run verify:lan`）。
+**产物**：本次 Windows 产物已全部产出（Linux 交叉编译 + 原生 `makensis` 打包，配方见
+[`windows/docs/BUILD-WINDOWS.md`](windows/docs/BUILD-WINDOWS.md) §3 与 §3.6）：
+
+| 产物 | 路径 | 实测 |
+| --- | --- | --- |
+| 桌面壳 | `windows/dist/ScreenPlay.exe` | **7,436,288 B（7.09 MiB）**，PE32+ x64 / `subsystem=GUI` / 资源目录 10,368 B |
+| NSIS 安装包 | `windows/dist/ScreenPlay_1.3.2_x64-setup.exe` | **74,983,691 B（71.51 MiB）**，sha256 `97127edf…` |
+| 便携包 | `windows/dist/ScreenPlay_1.3.2_x64-portable.zip` | **114,388,270 B（109.09 MiB）/ 11,427 条目**，全量比对 ✓ |
+| 免构建包 | `windows/dist/ScreenPlay_1.3.2_x64-webapp.zip` | **112,179,200 B（106.98 MiB）/ 11,430 条目** |
+| 源码包 | `dist-src/ScreenPlay-1.3.2-src.zip` | 1,977,115 B / 466 条目（`git archive`，仅跟踪文件） |
+
+真机行为（UAC 只弹一次、防火墙规则、局域网设备创号）仍需在 Windows 上验收 —— 步骤与清单见
+[`windows/docs/RELEASE-1.3.2.md`](windows/docs/RELEASE-1.3.2.md) 第 6 节。
 
 ## [1.3.2] — 2026-10-04（服务端：Steam 成就图标 URL 归一化 + 存量数据一次性修复；安卓端 `1.3.2+3`：卡片比例 / 拖拽排序 / 轮播同步三项交互修复）
 

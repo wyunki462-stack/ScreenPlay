@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- |
 | ① Windows 本机一键构建 | 手边有 Windows 机器或虚拟机 | **推荐** | 20–40 分钟（含 Rust 全量编译） | `ScreenPlay_<ver>_x64-setup.exe` + `ScreenPlay_<ver>_x64-portable.zip` |
 | ② Windows 手动分步 | 想逐步看产出、排错 | 可选 | 与①相同，但可控 | 同① |
-| ③ Linux 交叉编译尝试 | 只有 Linux 机器 | 兜底 | 30–60 分钟，且**大概率卡在最后一步** | **只出便携 zip**（NSIS 安装包生成不了） |
+| ③ Linux 交叉编译 | 只有 Linux 机器 | 可选（**已实测跑通**） | 30–60 分钟（Rust 全量编译）+ 约 15 分钟（打安装包） | `ScreenPlay_<ver>_x64-setup.exe` + `ScreenPlay_<ver>_x64-portable.zip`（另出 `ScreenPlay.exe`） |
 
 三条路径都需要联网。`windows/` 下的所有脚本都**不修改** `web/` 与 `backend/` 的源码，
 只是在构建期生成 `windows/src-tauri/resources/` 与 `windows/dist/`。
@@ -133,12 +133,13 @@ npm run portable:win
 
 ---
 
-## 3. 路径三：Linux 交叉编译（**已实测跑通**，产出便携 zip）
+## 3. 路径三：Linux 交叉编译（**已实测跑通**，产出 exe + 便携 zip + NSIS 安装包）
 
 > **结论先说**：在无 root、`HOME` 不可写、没有任何系统 C 编译器的 Linux 上，本仓库**已经用它编译出
-> 真正的 Windows x64 GUI 可执行文件**并打出免安装包（体积见 §3.3.2）。NSIS 安装包仍需在 Windows 上生成。
+> 真正的 Windows x64 GUI 可执行文件**，并打出免安装包（体积见 §3.3.2）与 NSIS 安装包（配方见 §3.6）。
 >
-> 一键脚本：`windows/scripts/cross/cross-build.sh`（4 个垫片 + 1 个 LD_PRELOAD 修丁，见 §3.3.1）。
+> 一键脚本：`windows/scripts/cross/cross-build.sh`（4 个垫片 + 1 个 LD_PRELOAD 修丁，见 §3.3.1）；
+> 安装包另跑 `windows/scripts/cross/make-setup-cross.sh`（见 §3.6）。
 
 ### 3.1 前置条件
 
@@ -165,7 +166,7 @@ npm run prepare:backend       # 下载 Windows 版 node.exe / ffmpeg / ffprobe /
 | `ffmpeg.exe` + `ffprobe.exe` | GitHub release（302 跳转） | ✅ 可达 |
 | `better-sqlite3` 预编译包 | npmmirror / GitHub release | ✅ 可达 |
 | MSVC CRT / Windows SDK | cargo-xwin 内置下载（`aka.ms`） | ✅ 可达（约 630 MB，1m13s） |
-| **NSIS 打包器** | `github.com/tauri-apps/binary-releases/.../nsis-3.11.zip` | ❌ 直连 `http=000`，必须走代理 |
+| **NSIS 打包器** | Debian `nsis` 3.08 的 `makensis`（`deb.debian.org`）+ 3.11 包里的 `Include/Win/RestartManager.nsh` | ✅ 直连可达（两个 deb 共约 1.7 MB；见 §3.6） |
 
 ### 3.3 交叉编译 exe（一条命令）
 
@@ -201,19 +202,20 @@ bash scripts/cross/cross-build.sh --portable # 出 exe 并顺手打便携 zip
 | --- | --- |
 | 构建命令 | `cargo-xwin build --release --locked --target x86_64-pc-windows-msvc -j 2` |
 | 编译耗时 | `Finished 'release' profile [optimized] target(s) in 39.93s`（依赖已编译完时约 37 s） |
-| 产物 | `screenplay.exe` = **7,381,504 B = 7.04 MiB** |
-| PE 校验 | `machine=0x8664`(x64)、PE32+、**`subsystem=2`(GUI，不弹控制台)**、8 节、资源目录 8,968 B |
+| 产物 | `screenplay.exe` = **7,436,288 B = 7.09 MiB**（1.3.2 源码） |
+| PE 校验 | `machine=0x8664`(x64)、PE32+、**`subsystem=2`(GUI，不弹控制台)**、8 节、资源目录 10,368 B |
 | 资源内容 | `[3] ICON 7809 B`、`[14] GROUP_ICON 20 B`、`[16] VERSION 488 B`、`[24] MANIFEST 334 B`（**图标/版本信息/manifest 全都在**） |
 | 告警 | 只有 `LNK4099`（CRT 库的 PDB 引用缺失），无害 |
 | 便携包 | `dist/ScreenPlay_1.0.0_x64-portable.zip` = **114,278,175 B = 108.98 MiB**（11,417 条目，staging 309.94 MiB） |
-| 未产出 | NSIS `*-setup.exe`（需要 wine + makensis，本机没有） |
+| 便携包（1.3.2） | `dist/ScreenPlay_1.3.2_x64-portable.zip` = **114,388,270 B = 109.09 MiB**（11,427 条目，staging 310.25 MiB） |
+| NSIS 安装包（1.3.2） | `dist/ScreenPlay_1.3.2_x64-setup.exe` = **74,983,691 B ≈ 71.51 MiB**（§3.6 流程，makensis 3.08 + LZMA 固实，sha256 `97127edf…`） |
 
 ### 3.4 已知阻塞点（踩坑清单）
 
-1. **NSIS 安装包做不出来**：`tauri build` 在非 Windows 平台会下载 NSIS 打包器，而该下载源
-   `https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip`
-   本机直连返回 `http=000`；即使拿到，跑 `makensis.exe` 还需要 wine。
-   → **Linux 交叉编译只做便携 zip，NSIS 安装包在 Windows 上生成。**
+1. **NSIS 安装包不需要 wine**：`tauri` 官方那条路会去下 `nsis-3.11.zip` 再跑 `makensis.exe`（那才需要
+   wine），而本机直连该 GitHub 地址返回 `http=000`。改成 **Debian 的 Linux 原生 `makensis`（3.08）
+   + `tauri bundle --bundles nsis`**，安装包可以完全在 Linux 上生成——配方与两个坑
+   （`NSISDIR`、缺 `RestartManager.nsh`）见 §3.6。
 2. **需要 MSVC CRT / Windows SDK**：`cargo-xwin` 会自行下载（实测 `⏬ Downloading MSVC CRT...`
    后 1m13s 完成，约 630 MB，落在 `XWIN_CACHE_DIR`），直连可达、不需要代理；但它不给 `link.exe`
    ——链接由 rustc 自带的 `lld-link` 完成。
@@ -253,6 +255,36 @@ ScreenPlay_1.0.0_x64-portable/
 ```
 
 > 便携包的体积预期见 `windows/docs/ARTIFACTS.md`。
+
+### 3.6 在 Linux 上打 NSIS 安装包（`make-setup-cross.sh`）
+
+```bash
+cd <项目>/windows
+bash scripts/cross/make-setup-cross.sh
+# → windows/dist/ScreenPlay_<ver>_x64-setup.exe
+```
+
+脚本做的事：校验 `resources/` 与 `cross-build.sh` 已编好的 exe → 准备 `makensis`（缺则自动从
+`deb.debian.org` 下载两个 deb 并解包）→ 跑 `npx tauri bundle --target x86_64-pc-windows-msvc
+--bundles nsis` → 校验 PE（32 位引导程序 + GUI 子系统）→ 拷进 `windows/dist/`。
+
+要点（都是踩过的坑）：
+
+| 坑 | 现象 | 处理 |
+| --- | --- | --- |
+| 习惯性用 `tauri build` | `failed to run 'cargo metadata' ... No such file or directory` | 只跑 `tauri bundle`（bundle 阶段仍要宿主 `cargo` 在 `PATH` 上，但不再编译 Rust） |
+| `makensis` 找不到自己的库 | `Error: reading stub "/usr/share/nsis/Stubs/zlib-x86-unicode"` | Debian 的 `makensis` 内建默认路径写死 `/usr/share/nsis`；用包装脚本 `export NSISDIR=<解包目录>/usr/share/nsis` 再 `exec` |
+| 下载 NSIS 插件 dll 报 `Permission denied (os error 13)` | 本共享盘把新文件建成 `000` | `LD_PRELOAD` `fixmode.so`（`cross-build.sh` 编的那个）+ 把 `HOME`/`XDG_CACHE_HOME` 指到可写盘（脚本默认 `/tmp/sp-home`、`/tmp/sp-cache`） |
+| `!include: could not find: "Win\RestartManager.nsh"`（`installer.nsi` 第 27 行） | Debian 的 `nsis-common` 3.08 在 `Include/Win/` 里少了这个文件 | 从 3.11 的 `nsis-common` 包里取出来放进 `Include/Win/`（脚本自动做） |
+| 想用更新版 `makensis` | 3.11 的 Debian 包要 GLIBC 2.38（glibc 2.36 的机器跑不了） | 钉 3.08：`v3.08-3+deb12u1` |
+
+预期耗时：`makensis` 要对约 300 MiB 的 `resources/` 做 LZMA 固实压缩，本机实测 **约 15 分钟**；
+安装包体积见 `windows/docs/ARTIFACTS.md` §5。
+
+> 安装包是 `installMode=currentUser`（默认装当前用户，可自选目录，一般不需要管理员权限），并按需下载
+> WebView2 常青版运行时引导程序。
+
+---
 
 ## 4. 网络受限：镜像与代理
 
@@ -311,7 +343,7 @@ registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"
 | `error: linker 'link.exe' not found` / `LINK : fatal error` | 缺 MSVC 链接器 | 装 Visual Studio 生成工具 +「使用 C++ 的桌面开发」工作负载，重开命令行 |
 | `note: rustc ... requires the MSVC toolchain` | rustup 装的是 GNU 工具链 | `rustup default stable-x86_64-pc-windows-msvc` |
 | 下载失败：`ECONNRESET` / `ETIMEDOUT` / `getaddrinfo` | 网络受限 | 见 §4（npm 换镜像、GitHub 走代理） |
-| `卡在下载 nsis-3.11.zip` | GitHub binary-releases 不可达（本机实测 `http=000`） | 设置系统代理后重试；或只做便携包（见 §3.4、§4.2） |
+| `卡在下载 nsis-3.11.zip` | GitHub binary-releases 不可达（本机实测 `http=000`） | 在 Linux 上改用 §3.6 的原生 `makensis`；Windows 上设置系统代理后重试，或只做便携包（见 §3.4、§4.2） |
 | `EADDRINUSE` / 端口被占用 | 配置端口被别的程序占了 | 改 `config.json` 的 `port`（或置 0 让壳自动探测）；见 ARTIFACTS 排障 |
 | `better-sqlite3` 编译/加载失败（`NODE_MODULE_VERSION` 不匹配） | 拉到了错 ABI 的预编译包，或混进了 Linux 版 `.node` | 删 `windows/.cache/backend-pkg` 与 `resources/backend/node_modules` 重跑 `prepare:backend`（应取 ABI 127 / win32-x64） |
 | `grep -c "cdn.plyr.io" resources/web -r` 不为 0 | 前端精简没生效 | 重跑 `npm run prepare:frontend`；确认产物 JS 已被改写为本地 `assets/plyr.svg` |

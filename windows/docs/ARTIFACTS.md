@@ -165,18 +165,18 @@ ScreenPlay_<version>_x64-portable/
 
 | 组成项 | 路径 | 解压后（实测） | zip 内 |
 | --- | --- | --- | --- |
-| Node 运行时 | `resources/node/node.exe` | **81.62 MiB** / 1 文件 | — |
-| 后端生产依赖 | `resources/backend/node_modules/**` | **81.44 MiB** / 10,300 文件（18 个依赖，230 packages 装机） | — |
-| ffmpeg + ffprobe | `resources/bin/{ffmpeg,ffprobe}.exe` | **138.72 MiB**（61.47 + 77.24）/ 2 文件 | — |
-| Web 产物（精简版） | `resources/web/**` | **0.60 MiB** / 5 文件（`index.html` 443 B、CSS 71.56 KB、JS 532.92 KB、`assets/plyr.svg`、`assets/blank.mp4`） | — |
-| 后端 JS / 清单 | `resources/backend/dist/**` + `package.json`、`build-info.json` | **0.84 MiB** / 148 文件（`dist` 无 `.map`） | — |
-| **`resources/` 合计** | 上五项 | **303.22 MiB = 317,945,062 B** / 10,456 文件 | — |
-| 桌面壳 | `ScreenPlay.exe`（Tauri v2 release，`strip=true`） | **7.04 MiB = 7,381,504 B**（本机 Linux 交叉编译实测；PE32+ x64、`subsystem=GUI`、资源目录 8,968 B 内含 ICON/GROUP_ICON/VERSION/MANIFEST） | 并入便携包 |
-| **便携包合计** | `resources/` + `ScreenPlay.exe` + 标记文件 + 说明 | **309.94 MiB**（staging = resources 303.22 MiB + 真 exe 7.04 MiB，10,461 文件） | **zip 108.98 MiB = 114,278,175 B**（真 exe 跑 `npm run portable:win` 实测，条目 11,417，全量比对 ✓，≤200 MiB 目标达标） |
-| **零工具链包**（备用方案，无需 Rust） | `resources/` + `launcher/` + `ScreenPlay.cmd` | **303.22 MiB + 0.1 MiB** / 10,463 文件（staging 计数） | **zip 106.89 MiB**（真跑 `make-webapp-bundle.mjs` 实测，条目 11,420） |
-| 安装包 | `ScreenPlay_<ver>_x64-setup.exe` | — | 与便携包同量级（内容相同，仅多一层自解压） |
+| Node 运行时 | `resources/node/node.exe` | **81.62 MiB = 85,588,976 B** / 1 文件 | — |
+| 后端生产依赖 | `resources/backend/node_modules/**` | **81.12 MiB = 85,063,501 B** / 10,300 文件（18 个依赖，230 packages 装机） | — |
+| ffmpeg + ffprobe | `resources/bin/{ffmpeg,ffprobe}.exe` | **138.72 MiB = 145,454,080 B**（61.47 + 77.24）/ 2 文件 | — |
+| Web 产物（精简版） | `resources/web/**` | **0.61 MiB = 640,787 B** / 12 文件（`index.html` 667 B + `favicon.svg` + 9 个分包 JS/CSS（含 VideoPlayer / GameDetail / Settings / Card）+ `assets/plyr.svg` + `assets/blank.mp4`） | — |
+| 后端 JS / 清单 | `resources/backend/dist/**` + `package.json`、`build-info.json` | **1.08 MiB = 1,136,487 B** / 153 文件（`dist` 151 文件，无 `.map`） | — |
+| **`resources/` 合计** | 上五项 | **303.16 MiB = 317,883,831 B** / 10,468 文件 | — |
+| 桌面壳 | `ScreenPlay.exe`（Tauri v2 release，`strip=true`） | **7.09 MiB = 7,436,288 B**（1.3.2 源码，本机 Linux 交叉编译实测；PE32+ x64、`subsystem=GUI`、资源目录 10,368 B 内含 ICON/GROUP_ICON/VERSION/MANIFEST） | 并入便携包 |
+| **便携包合计** | `resources/` + `ScreenPlay.exe` + 标记文件 + 说明 | **310.25 MiB**（staging = resources 303.16 MiB + 真 exe 7.09 MiB，10,471 文件） | **zip 109.09 MiB = 114,388,270 B**（1.3.2 实测，条目 11,427，全量比对 ✓，≤200 MiB 目标达标） |
+| **零工具链包**（备用方案，无需 Rust） | `resources/` + `launcher/` + `ScreenPlay.cmd` | **303.16 MiB + 0.1 MiB** / 10,468 文件（staging 计数） | **zip 106.98 MiB = 112,179,200 B**（1.3.2 实测，条目 11,430） |
+| 安装包 | `ScreenPlay_<ver>_x64-setup.exe` | — | **71.51 MiB = 74,983,691 B**（1.3.2 实测；内容与便携包相同，只多一层 NSIS 自解压） |
 
-* `windows/DESIGN.md` §10 的**硬指标**是「便携包压缩后 ≤ 200 MB」。实测 **108.98 MiB（约 114 MB，真 exe 版；零工具链版 106.89 MiB）**，
+* `windows/DESIGN.md` §10 的**硬指标**是「便携包压缩后 ≤ 200 MB」。实测 **109.09 MiB（约 114 MB，真 exe 版；零工具链版 106.98 MiB）**，
   余量充足。若构建后明显超出，按经验先查：误把 devDependencies 或 Web 端 `node_modules` 打进包、
   ffmpeg 换了带全部编码器的巨型静态版。
 * 体积大头是 ffmpeg/ffprobe（138.72 MiB 解压后）与 Node 运行时（81.62 MiB），两者合计占 74%。

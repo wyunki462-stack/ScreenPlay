@@ -12,7 +12,7 @@ for a in "$@"; do
     /imsvc) skip=1 ;;                                   # /imsvc <dir> → -isystem <dir>
     /imsvc*) args+=("-isystem" "${a#/imsvc}") ;;
     -Xclang) skip=1 ;;                                  # -Xclang + 下一个参数（cc_xc 传的是 -xc）
-    -xc|-x)c ;;                                         # 语言由下面统一指定
+    -xc|-x|c) ;;                                        # 语言由下面统一指定
     --) ;;                                              # cc-rs 给 clang-cl 加的路径分隔符
     /I*) args+=("-I${a#/I}") ;;
     /D*) args+=("-D${a#/D}") ;;

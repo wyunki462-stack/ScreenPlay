@@ -183,6 +183,16 @@ npm run verify:win:smoke # 91 项（多出的 11 项真启动打包后端跑接�
 npm run verify:lan       # 20 项「局域网 + 首次创号」端到端自查（需先 npm run prepare）
 ```
 
-本轮 exe / 安装包 / zip **尚未产出**：本机 NAS 上没有 `cargo`/`rustc`（`windows/scripts/cross/`
-交叉编译脚本存在但未验证），Rust 侧的改动只做了源码级复核与文档复核，真机编译与防火墙行为
-必须在 Windows 上完成（见第 6 节清单）。
+本轮 Windows 产物已产出，其中 exe 与 NSIS 安装包是在 Linux 上交叉编译 / 原生打包得到的
+（配方：`windows/docs/BUILD-WINDOWS.md` §3.3 与 §3.6）：
+
+```bash
+cd windows
+bash scripts/cross/cross-build.sh          # 交叉编译 → dist/ScreenPlay.exe
+bash scripts/cross/make-setup-cross.sh     # NSIS 安装包 → dist/ScreenPlay_1.3.2_x64-setup.exe
+npm run portable:win                       # 便携 zip → dist/ScreenPlay_1.3.2_x64-portable.zip
+npm run bundle:webapp                      # 免构建 zip → dist/ScreenPlay_1.3.2_x64-webapp.zip
+```
+
+体积、哈希与条目数见 `windows/docs/ARTIFACTS.md` §5。真机行为（UAC 提示、防火墙规则、局域网设备
+创号）仍必须在 Windows 上验收，见第 6 节清单。
