@@ -8,11 +8,14 @@
 
 ## [1.3.2] — 2026-10-04（服务端：Steam 成就图标 URL 归一化 + 存量数据一次性修复）
 
-**只动后端（`backend/src`），Web / 安卓 / Windows 前端一行未改**：源码指纹由 `1.3.1+2` 的
-`a0e18c54d5340a97` 变为 **`521c4985d95f713c`**（仍是 137 个文件，`node scripts/gen-source-hash.mjs --check`
-可复核）。根 `package.json` 未动 ⇒ Linux 端 `/api/health` 仍报 `1.3.0`（三端版号策略不变）；
-**安卓端无需重打包**（缺陷在服务端数据，App 取图与奖杯占位逻辑不变），`1.3.1+2` 的三个分包继续有效。
-Windows 桌面端内置的是旧 `backend/dist`，下次重打包时自动带上本修复。
+**只动后端（`backend/src`）**：源码指纹由 `1.3.1+2` 的 `a0e18c54d5340a97` 变为
+**`521c4985d95f713c`**（仍是 137 个文件，`node scripts/gen-source-hash.mjs --check` 可复核；指纹只覆盖
+`backend/src` + `web/src`，与版号改动无关）。版号按发版惯例三处同步 `1.3.0` → **`1.3.2`**（根 / `backend` /
+`web` 的 `package.json`）：`scripts/docker-build.sh` 读根 `package.json` 注入镜像的 `BUILD_VERSION`，
+由 `backend/src/app.controller.ts` 的 `/api/health` 回显 ⇒ **重建镜像后 `/api/health` 报 `1.3.2`**，
+一条 curl 即可确认部署的是这一版。Web / 安卓前端一行未改，**安卓端无需重打包**（缺陷在服务端数据，
+App 取图与奖杯占位逻辑不变），`1.3.1+2` 的三个分包继续有效。Windows 桌面端内置的是旧 `backend/dist`，
+若要一并带上本修复需在 Windows 机重新打包（届时版号同样可为 `1.3.2`）。
 
 ### 修复：Steam 成就图标 81% 是「双重 URL」，怎么取都 502
 
@@ -45,6 +48,17 @@ Windows 桌面端内置的是旧 `backend/dist`，下次重打包时自动带上
 - 上线方式：重建镜像 + 重启容器即可（迁移在启动期自动跑），无需手工 SQL。
   ⚠️ 备份 / 复制生产库时必须**连同 `-wal` / `-shm`**：只拷 `screenplay.db` 会漏掉 WAL 里
   未 checkpoint 的写入（实测只拷主文件得到的是 1655 行 / 1364 条坏值的旧快照）。
+
+### 发布与部署
+
+- 构建：`bash scripts/docker-build.sh`（`BUILD_VERSION` 取自根 `package.json` = `1.3.2`）⇒ `screenplay:latest`
+- 推送：`bash scripts/push-to-ghcr.sh screenplay:1.3.2 1.3.2` ⇒ GHCR `ghcr.io/wyunki462-stack/screenplay`
+  与 Docker Hub `wyunki/screenplay`（逐层重试，`latest` 最后推；凭据只在没登录时才交互输入）
+- 升级：`docker compose up -d`（或 `docker pull …:1.3.2`）；**首次启动**日志出现
+  `Repaired 1409 Steam achievement icon URL(s) with a nested URL or retired CDN host`，之后不再打印（幂等）
+- 验收：`curl -s http://127.0.0.1:3001/api/health | grep -o '"version":"[^"]*"'` ⇒ `"version":"1.3.2"`；
+  浏览器刷新详情页，成就图标不再裂图
+- 离线搬运：`bash scripts/package-image.sh`（出 tar，不依赖目标机网络）
 
 ### 验证
 

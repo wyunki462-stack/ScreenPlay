@@ -65,8 +65,9 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 
 范围：只改 `backend/src`（`metadata/providers/steam.provider.ts`、`database/database.service.ts`、
 `common/image-url.ts`）+ 新增离线套件 `backend/scripts/verify/achievement-icon-url.mjs`，并把该套件
-登记进 `scripts/verify-suites.sh`。Web / `flutter/**` / `windows/**` / 根 `package.json` 一行未改 ⇒ Linux 端
-`/api/health` 仍 `1.3.0`，安卓端无需重打包（`1.3.1+2` 三个分包继续有效）。
+登记进 `scripts/verify-suites.sh`；另按发版惯例把版号三处同步 `1.3.0` → `1.3.2`（根 / `backend` / `web` 的
+`package.json`，构建期注入 `BUILD_VERSION` ⇒ `/api/health` 报 `1.3.2`）。`flutter/**` / `windows/**`
+一行未改，安卓端无需重打包（`1.3.1+2` 三个分包继续有效）。
 
 > 源码指纹：**`521c4985d95f713c`**（137 文件）。下面 1.3.1+2 节里写的 `a0e18c54d5340a97` / 18 项 /
 > 508 条断言是那一版发布时的现场数字，作为历史记录保留（当时后端确实一行未改）；以本节数字为准。
@@ -126,6 +127,16 @@ docker cp screenplay:/data/screenplay.db-shm /tmp/sp-iconfix/live/sp-icon.db-shm
 
 上线：重建镜像后重启容器即自动迁移，无需手工 SQL。
 
+```bash
+bash scripts/docker-build.sh                           # BUILD_VERSION 取自根 package.json = 1.3.2
+bash scripts/push-to-ghcr.sh screenplay:1.3.2 1.3.2    # GHCR + Docker Hub，逐层重试
+docker compose up -d && docker logs --tail 50 screenplay | grep Repaired
+curl -s http://127.0.0.1:3001/api/health | tr ',' '\n' | grep '"version"'   # 期望 "version": "1.3.2"
+```
+
+版号三处同步为 `1.3.2`（根 / `backend` / `web` 的 `package.json`）。安卓端 `1.3.1+2` 无需重打包；
+Windows 端内嵌的是旧 `backend/dist`，下次在 Windows 机上跑 `windows/scripts/prepare-backend.mjs` 时随包更新。
+
 ### 接口级端到端（真编译产物 + 生产库副本，2026-10-04）
 
 ```bash
@@ -152,7 +163,7 @@ DATA_DIR=/tmp/<tmp>/data DB_FILENAME=sp-icon.db MEDIA_DIRS='<相册路径>' PORT
 
 范围：只改 `flutter/**`，外加一个新零依赖生成器 `scripts/brand-icons.mjs`。`node scripts/gen-source-hash.mjs --check`
 仍是 `a0e18c54d5340a97`（137 文件，**该版发布时现场值**；`1.3.2` 后端修复后为 `521c4985d95f713c`）；
-Linux 端 `/api/health` 仍 `1.3.0`；安卓端 `versionName` 仍 `1.3.1`
+Linux 端 `/api/health` 当时仍 `1.3.0`（`1.3.2` 起为 `1.3.2`）；安卓端 `versionName` 仍 `1.3.1`
 （三端版号一致），只把 build number 升到 **`1.3.1+2`**（`--split-per-abi` 后 `versionCode` arm64 2002 /
 v7a 1002 / x86_64 4002）。五项修复的根因、修法与取证见
 [`../flutter/docs/ANDROID-1.3.1.md`](../flutter/docs/ANDROID-1.3.1.md) §9。

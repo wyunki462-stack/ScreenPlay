@@ -67,12 +67,12 @@
 | 13 | **`1.3.1`（安卓端 Flutter 客户端，Linux/Windows 服务版号仍为 `1.3.0`）**：安卓端首次可用（登录 / 两列网格 / 长按拖拽排序 / 卡片海报左右滑动 / 长按删除媒体 / 分享与存相册 / WiFi 原图策略 / 三级缓存 / 后台省电），后端新增 `DELETE /api/media/:id` 并让 `/api/auth/session`、`logout` 识别 Bearer | `flutter analyze`（0 error）+ `backend/scripts/verify/media-delete-e2e.mjs`（22 项）+ `android-auth-bearer.mjs`（19 项）+ `bash scripts/verify-suites.sh`（18 项 / 508 条断言 / 211 s）+ NAS 上 `flutter build apk --release --split-per-abi` 出包（真机交互验收待用户设备） |
 | — | **`1.3.1+2`（仅安卓端，后端 / Web / Linux 镜像 / Windows 未动）**：连 Linux 后端后**大部分海报不显示**（图片端点要凭证而 `CachedNetworkImage` 绕过拦截器 ⇒ 401；且卡片退化成远端 CDN 直链）、**点任意卡片都「加载详情失败」**（详情的 `achievements[]` 是 snake_case 而模型只读 camelCase）、**只有卡片下方文字能进详情**（轮播层的手势吸收层吃掉点击）、**图标未统一**（应用图标 + 页内品牌标记改为与 Web 同源生成）、**首页新增下拉刷新**（`POST /api/library/scan` 后全量重取列表与统计） | `flutter test`（43 项 / 1 跳过）+ 连真实 Linux 后端的 `flutter/test/live_backend_test.dart`（7/7：39 游戏全部有海报来源、详情 39/39 解析、封面带凭证 200 / 不带 401、远端 CDN 经代理 200）+ `node scripts/brand-icons.mjs --check` + `bash scripts/verify-suites.sh`（18 项 / 508 条断言 / 235 s）+ 重出三个 ABI 分包（真机交互验收待用户设备） |
 
-| — | **`1.3.2`（仅服务端，Web / 安卓 / Windows 未动）**：Steam 成就图标 81%（1409 / 1738）落库成「域名 + 路径后又拼一个完整 URL」或指向**已下线**的 `steamcdn-a.akamaihd.net` ⇒ 怎么取都 502（Web 端详情页长期裂图、安卓端退回奖杯占位） | 修法：抓取侧绝对 URL 守卫（`steamAchievementIconUrl`）+ 启动期一次性归一化迁移（`repairNestedSteamIconUrls`，只改两种可判定坏形状、幂等） | `backend/scripts/verify/achievement-icon-url.mjs`（36 项）+ `bash scripts/verify-suites.sh`（19 项 / 544 条断言 / 260 s）+ 源指纹 `521c4985d95f713c`（137 文件）+ 生产库副本预演（修好 1409 行、总行数 1738 与 PSN 329 条不变、`integrity_check` ok）+ 经代理端到端（规范值 `200 image/jpeg 3,542 B` / 坏值 `502`） |
+| — | **`1.3.2`（仅服务端，Web / 安卓 / Windows 前端未动；版号三处同步 `1.3.2`）**：Steam 成就图标 81%（1409 / 1738）落库成「域名 + 路径后又拼一个完整 URL」或指向**已下线**的 `steamcdn-a.akamaihd.net` ⇒ 怎么取都 502（Web 端详情页长期裂图、安卓端退回奖杯占位） | 修法：抓取侧绝对 URL 守卫（`steamAchievementIconUrl`）+ 启动期一次性归一化迁移（`repairNestedSteamIconUrls`，只改两种可判定坏形状、幂等） | `backend/scripts/verify/achievement-icon-url.mjs`（36 项）+ `bash scripts/verify-suites.sh`（19 项 / 544 条断言 / 260 s）+ 源指纹 `521c4985d95f713c`（137 文件）+ 生产库副本预演（修好 1409 行、总行数 1738 与 PSN 329 条不变、`integrity_check` ok）+ 经代理端到端（规范值 `200 image/jpeg 3,542 B` / 坏值 `502`）+ 版号 `1.3.0` → **`1.3.2`**（根 / `backend` / `web` 三处 `package.json`，重建镜像后 `/api/health` 报 `1.3.2`） |
 
 累计约 **22 项编号需求**的落地与回归，外加第 7～10 轮的修复项、`1.2.0` 的桌面端 / 三端图标统一、
 `1.3.0` 的性能优化、`1.3.1` 的桌面端三项修复与安卓端首个客户端（Linux 服务版号与镜像不变）、
 `1.3.1+2` 的安卓端「连 Linux 后端五项体验修复」（海报 / 详情 / 点击热区 / 图标统一 / 下拉刷新，后端未动）、
-`1.3.2` 的服务端 Steam 成就图标 URL 归一化（爬虫守卫 + 存量一次性迁移，前端三端一行未改）。
+`1.3.2` 的服务端 Steam 成就图标 URL 归一化（爬虫守卫 + 存量一次性迁移，前端三端一行未改，版号三处同步为 `1.3.2`）。
 每轮的完整验收记录（含实测输出）保留在 [`docs/VERIFY.md`](docs/VERIFY.md)。
 
 > 上表里的一次性轮次脚本（`scripts/verify-round-*.sh`、`scripts/verify-*.mjs` 等 37 个文件）

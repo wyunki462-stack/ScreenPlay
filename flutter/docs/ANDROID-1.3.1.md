@@ -3,7 +3,9 @@
 本轮为 ScreenPlay 新增**安卓端客户端**（`flutter/` 目录内的 Flutter 应用，非新工程），
 并为它补齐后端所需的两个能力（媒体删除接口、无 Cookie 的会话凭证通道）。安卓端版号
 `1.3.1`；**Linux 端与 Windows 后端的服务版号不变**（`GET /api/health` 在 Linux 容器里仍是
-`1.3.0`，`windows/` 桌面端仍是 `1.3.1`，根 `package.json` 一字未动）。
+`1.3.0`，`windows/` 桌面端仍是 `1.3.1`，根 `package.json` 一字未动）—— 这一句描述的是**本轮发布时的
+现场状态**；随后的 `1.3.2`（2026-10-04，服务端成就图标修复）已把版号三处同步为 `1.3.2`，Linux 侧
+`/api/health` 随之报 `1.3.2`。
 
 改动范围：`flutter/**`（20 个 Dart 文件、6118 行；安卓工程胶水）+
 `backend/src/media/**`、`backend/src/auth/**` + `backend/scripts/verify/*`（两个离线验证脚本）
@@ -43,7 +45,7 @@
 | ② 同时兼容 Linux 端 NAS 服务与 Windows 桌面端内置后端 | `lib/screens/connect_screen.dart` 保存地址后探测 `GET /api/auth/session`：`enabled==false` ⇒ `ServerMode.windows` 直连；`enabled==true` ⇒ `ServerMode.linux` 走登录（`lib/core/prefs.dart:16`） |
 | ③ Linux 必须登录（账号体系与 PAM 一致、复用登录接口），Windows 免登录 | `lib/screens/login_screen.dart` 调 `ApiClient.login()`（`POST /api/auth/login`），会话校验走 `GET /api/auth/session`；Windows 端后端以 `AUTH_DISABLED=1` 启动，探测即免登录 |
 | ④ 游戏列表默认一行 2 个卡片 | `lib/screens/home_screen.dart:349` `_columnsForWidth()`：宽 ≥900 → 4 列、≥600 → 3 列、否则 **2 列**；`lib/screens/home_screen.dart:364` `_childAspectRatioFor()` 由格子宽高反推并夹在 `[0.40, 0.62]` |
-| ⑤ 安卓端版号 1.3.1，Linux/Windows 服务版号不变 | 见 §0；`flutter/pubspec.yaml:7` |
+| ⑤ 安卓端版号 1.3.1，Linux/Windows 服务版号不变 | 见 §0（该版现场状态；`1.3.2` 起 Linux 侧报 `1.3.2`）；`flutter/pubspec.yaml:7` |
 | ⑥ 海报轮播改为左右滑动切换 | `lib/widgets/game_card.dart` 的 `_PosterSlideshow`：多张海报时用 `PageView` 左右滑，单张时退回静态海报；滑动层上盖 `Positioned.fill(GestureDetector(behavior: opaque))` 保证滑动不误触点击 |
 | ⑦ 列表长按卡片拖拽自定义排序，实时同步服务端 | `lib/screens/home_screen.dart:595` `_onReorder()`：乐观本地顺序 + `PUT /api/games/order`（`beforeId` = 落点下方卡片、`afterId` = 落点上方卡片），失败回滚并弹「排序同步失败」；`lib/providers/api_providers.dart:119` `reorderGamesProvider` |
 | ⑧ 相册图片/视频长按删除，弹系统风格确认框，默认同步到服务端 | `lib/widgets/media_tile.dart:159` `runMediaDelete()`、`:201` `_MediaDeleteDialog`；`lib/core/media_actions.dart:43` `MediaActions.delete()` |
