@@ -12,6 +12,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../../config/configuration';
 import { HttpService } from '../../common/http/http.service';
+import { steamAchievementIconUrl } from '../../common/image-url';
 import { GameRecognizerService } from '../../library/game-recognizer.service';
 import { SettingsService } from '../../settings/settings.service';
 import { MetadataProvider, MetadataFragment, ProviderMatch, AchievementData } from '../provider.interface';
@@ -329,9 +330,10 @@ export class SteamProvider implements MetadataProvider {
       externalId: dlcAppId ? `${dlcAppId}:${a.name}` : a.name,
       name: a.displayName || a.name,
       description: a.description ?? null,
-      iconUrl: a.icon
-        ? `https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/${appid}/${a.icon}.jpg`
-        : null,
+      // `a.icon` is usually a bare `<hash>.jpg`, but some apps return a full URL
+      // on the retired akamaihd host; the helper takes just the file name so the
+      // CDN template can never nest one URL inside another (see image-url.ts).
+      iconUrl: steamAchievementIconUrl(appid, a.icon),
       globalPercent: pctMap.has(a.name) ? pctMap.get(a.name)! : null,
       unlocked: false,
       source: 'steam',

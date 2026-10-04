@@ -350,7 +350,7 @@ XML 注释里**不能出现 `--`**，写说明时注意。
 4. 图片缓存上限（内存 80 MB / 磁盘 600 对象 / 30 天）在设置页只提供「清理」，未做容量可视化调节。
 5. Windows 桌面端若要支持安卓端删除服务端文件，`windows/` 需要重新打包（新的 `backend/dist` 必须进入
    `resources/backend`）——本轮不主动重发 Windows 包。
-6. **服务端成就图标数据缺陷（2026-10-04 实测发现，不属本轮 App 修复范围，未改后端）**：
+6. **服务端成就图标数据缺陷（2026-10-04 实测发现；当日已在服务端 `1.3.2` 修复，App 无需重打包）**：
    `GET /api/games/:id` 内嵌的 `achievements[].icon_url` 里有 **1409 / 1738（81%）** 是「域名 + 路径之后
    又拼了一个完整 URL」的双重地址，例：
 
@@ -362,8 +362,13 @@ XML 注释里**不能出现 `--`**，写说明时注意。
    正确形式（实测可用）：`https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/3768760/b3332b48b48964e7ddb245b4cfe6672b33df1c68.jpg` → `200 image/jpeg 18,633 B`。
    同类统计：`media[].coverUrl` **0/335** 坏、`GET /api/games/:id/posters` 的 `url` **0/536** 坏 —— 缺陷只集中在
    成就图标（爬虫写入时拼错），**Web 端同样显示裂图**，App 会退回奖杯占位图标（不劣于 Web）。
-   建议后续：爬虫侧加绝对 URL 守卫 + 一次性迁移把 `<hash>.jpg.jpg` 归一为
-   `https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/<appid>/<hash>.jpg`。
+   **已修（`1.3.2`，2026-10-04，只改后端）**：爬虫侧加绝对 URL 守卫（`steamAchievementIconUrl()`：
+   返回完整 URL 时剥掉域名 / 查询串取文件名主干，再按规范域名重建）+ 启动期一次性迁移
+   `DatabaseService.repairNestedSteamIconUrls()` 把库里「双重 URL / 退役主机」两种可判定坏形状原地归一化。
+   生产库副本（`screenplay.db` + `-wal` + `-shm`）预演：`Repaired 1409`，总行数 1738 不变、来源分布
+   psnine 329 / steam 1409 不变、坏值计数 1409 → 0、`integrity_check` ok、二次启动零改动（幂等）。
+   安卓端取图与奖杯占位逻辑不变，`1.3.1+2` 三个分包继续有效；重建镜像 + 重启容器即自动迁移。
+   详见 `CHANGELOG.md` 的 `[1.3.2]` 与 `docs/VERIFY.md` 的 `1.3.2` 节。
 7. `READ_EXTERNAL_STORAGE`（`maxSdkVersion=28`）不是主清单声明的，而是插件清单合并带来的既有项（见 §7 /
    §9.3），文档此前只记了主清单的 3 项权限。
 
@@ -471,7 +476,7 @@ XML 注释里**不能出现 `--`**，写说明时注意。
 | 静态分析 | `cd flutter && flutter analyze` | **0 error / 0 warning**（7 条 `deprecated_member_use` info 为 riverpod 2.6.1 既有写法） |
 | Dart 单元测试 | `cd flutter && flutter test` | **43 通过 / 1 跳过**（跳过的是真后端用例的占位） |
 | 图标产物一致性 | `node scripts/brand-icons.mjs --check` | ✓ 与 `web/public/favicon.svg` 一致 |
-| 后端 / Web 未改 | `node scripts/gen-source-hash.mjs --check` | ✓ `a0e18c54d5340a97`（137 文件，与 1.3.1 首发相同） |
+| 后端 / Web 未改 | `node scripts/gen-source-hash.mjs --check` | ✓ `a0e18c54d5340a97`（137 文件，与 1.3.1 首发相同）—— **`1.3.1+2` 发布时的现场值**；当日 `1.3.2` 服务端修复后为 `521c4985d95f713c` |
 | 整仓离线全量回归 | `bash scripts/verify-suites.sh` | 见 `docs/VERIFY.md` |
 
 新增测试文件：`flutter/test/models_parse_test.dart`（13 例：列表 / 详情夹具解析、snake_case 内嵌成就、
@@ -515,7 +520,9 @@ cd flutter && flutter test --dart-define=SP_LIVE_BASE=http://127.0.0.1:3007 test
 
 ### 9.4 明确未改的东西
 
-- 后端 / Web 一行未改（源指纹 `a0e18c54d5340a97` 不变，18 项 508 断言全量回归照跑）。
+- 后端 / Web 一行未改（源指纹 `a0e18c54d5340a97` 不变 —— **`1.3.1+2` 发布时现场值**；当日 `1.3.2`
+  服务端修复后为 `521c4985d95f713c`。18 项 508 断言全量回归照跑）。
 - 未给 App 加任何新权限、未改 `minSdk` / `targetSdk`、未动签名配置。
-- 未处理 §8.6 的成就图标数据缺陷（属后端爬虫 + 数据迁移，另行安排）。
+- §8.6 的成就图标数据缺陷**未在本轮处理**（属后端爬虫 + 数据迁移）；**当日已在服务端 `1.3.2` 修复**
+  （爬虫守卫 + 启动期迁移，见 §8.6 第 6 条），App 侧一行未改、无需重打包。
 - 详情页空海报占位、`postersProvider` 预取兜底路径、媒体清晰度策略均保持原样。

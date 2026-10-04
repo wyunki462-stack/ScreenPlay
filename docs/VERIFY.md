@@ -61,10 +61,98 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 
 ---
 
+## 1.3.2：服务端 Steam 成就图标 URL 归一化 + 存量数据一次性修复（前端三端均未动）
+
+范围：只改 `backend/src`（`metadata/providers/steam.provider.ts`、`database/database.service.ts`、
+`common/image-url.ts`）+ 新增离线套件 `backend/scripts/verify/achievement-icon-url.mjs`，并把该套件
+登记进 `scripts/verify-suites.sh`。Web / `flutter/**` / `windows/**` / 根 `package.json` 一行未改 ⇒ Linux 端
+`/api/health` 仍 `1.3.0`，安卓端无需重打包（`1.3.1+2` 三个分包继续有效）。
+
+> 源码指纹：**`521c4985d95f713c`**（137 文件）。下面 1.3.1+2 节里写的 `a0e18c54d5340a97` / 18 项 /
+> 508 条断言是那一版发布时的现场数字，作为历史记录保留（当时后端确实一行未改）；以本节数字为准。
+
+### 一键复核（不需要 docker 权限）
+
+```bash
+node backend/scripts/verify/achievement-icon-url.mjs   # 期望 36 项通过 / 0 项失败
+bash scripts/verify-suites.sh                          # 期望 19 项通过 / 0 项失败（544 条断言；本轮实测 260 s）
+node scripts/gen-source-hash.mjs --check               # 期望 ✓ 521c4985d95f713c（137 文件）
+```
+
+### 缺陷与修法（取证记录）
+
+| 项 | 内容 |
+| --- | --- |
+| 现象 | `GET /api/games/:id` 内嵌 `achievements[].icon_url` 有 **1409 / 1738（81%）** 是「域名 + 路径后又拼一个完整 URL」的双重地址，尾巴指向**已下线**的 `steamcdn-a.akamaihd.net`；经 `/api/media/proxy` 取 = `502 text/html; charset=utf-8` |
+| 根因 | `SchemaAchievement.icon` 有时返回**完整 URL**（不是裸 `<hash>.jpg`），而 `backend/src/metadata/providers/steam.provider.ts` 无条件按 `https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/${appid}/${icon}.jpg` 拼接 |
+| 修法 1 | `steamIconFileStem()` 剥域名 / 查询串取文件名主干 → `steamAchievementIconUrl(appid, icon)` 按规范域名重建；抓取侧改调它 |
+| 修法 2 | `DatabaseService.migrate()` 末尾 `repairNestedSteamIconUrls()`：只归一化「双重 URL / 退役主机」两种可判定坏形状，其余原样返回（幂等） |
+| 修法 3 | 纯函数放叶子模块 `backend/src/common/image-url.ts`，避免 database → metadata 反向依赖 |
+| 影响面 | `media[].coverUrl` 0/335 坏、`/api/games/:id/posters` 的 `url` 0/536 坏 ⇒ 缺陷只在成就图标；Web 端同样裂图，安卓端退回奖杯占位 |
+
+端到端取证（`sp-linux-test` 容器 `127.0.0.1:3007`，`AUTH_MODE=local`）：
+
+```bash
+# 规范值 → 200；坏值（双重 URL）→ 502
+curl -s -o /tmp/a.bin -w '%{http_code} %{content_type} %{size_download}\n' \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:3007/api/media/proxy?url=<URL-encoded>"
+# 规范：https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/812140/08bdee6fbec196b65f29410ea6f010c867b59831.jpg
+#   ⇒ 200 image/jpeg 3542（file: 64x64 JPEG）
+# 坏值：同 appid 的 …/apps/812140/https://steamcdn-a.akamaihd.net/…/08bdee6f….jpg.jpg ⇒ 502 text/html
+```
+
+### 迁移预演（生产库副本，2026-10-04）
+
+```bash
+# 必须连 -wal / -shm 一起拷，否则拿到的是旧快照（实测只拷主文件 = 1655 行 / 1364 坏值）
+docker cp screenplay:/data/screenplay.db     /tmp/sp-iconfix/live/sp-icon.db
+docker cp screenplay:/data/screenplay.db-wal /tmp/sp-iconfix/live/sp-icon.db-wal
+docker cp screenplay:/data/screenplay.db-shm /tmp/sp-iconfix/live/sp-icon.db-shm
+# 用 sqlite-shim + backend/dist 的 DatabaseService 在副本上启动一次（配置 dataDir 指向该目录）
+```
+
+预演结果（`Repaired 1409 Steam achievement icon URL(s) with a nested URL or retired CDN host`）：
+
+| 指标 | 迁移前（副本，含 WAL） | 迁移后 |
+| --- | --- | --- |
+| `achievements` 总行数 | 1738 | **1738（不变）** |
+| 来源分布 | psnine 329 / steam 1409 | **不变** |
+| `icon_url LIKE '%/https://%'` | 1409 | **0** |
+| 规范域名 `…/apps/` 行数 | — | **1409** |
+| PSN `psnobj…png` 行数 | 329 | **329（未被触碰）** |
+| `PRAGMA integrity_check` | — | **ok** |
+| 二次启动 | — | **零改动、无日志**（幂等） |
+
+上线：重建镜像后重启容器即自动迁移，无需手工 SQL。
+
+### 接口级端到端（真编译产物 + 生产库副本，2026-10-04）
+
+```bash
+# 把生产库（db + -wal + -shm）拷到临时 DATA_DIR，用真实 dist 起隔离实例
+DATA_DIR=/tmp/<tmp>/data DB_FILENAME=sp-icon.db MEDIA_DIRS='<相册路径>' PORT=4466 \
+  AUTH_DISABLED=1 NODE_ENV=production node -e "<sqlite-shim 补丁> require('backend/dist/main.js')"
+# 然后逐个 GET /api/games/:id 统计 achievements[].icon_url 形状
+```
+
+| 断言 | 实测 |
+| --- | --- |
+| `GET /api/games` | **39** 个游戏（库未丢） |
+| 逐个 `GET /api/games/:id` 失败数 | **0** |
+| 带图标的成就总数 | **1738**（与库内一致） |
+| 双重 URL / 嵌套（`…/https://…`） | **0**（迁移前 1409） |
+| 规范域名 `…/apps/` 行数 | **1409** |
+| PSN `psnobj…png` 行数 | **329（原样保留）** |
+| 同实例 `/api/media/proxy` 取规范地址 | `200 image/jpeg 18,633 B` |
+| **二次启动同一个已修库** | 应用日志**无** `Repaired …` 行 ⇒ 幂等 |
+
+---
+
 ## 1.3.1+2：安卓端「连 Linux 后端五项体验修复」（后端 / Web / Linux 镜像 / Windows 均未动）
 
 范围：只改 `flutter/**`，外加一个新零依赖生成器 `scripts/brand-icons.mjs`。`node scripts/gen-source-hash.mjs --check`
-仍是 `a0e18c54d5340a97`（137 文件）；Linux 端 `/api/health` 仍 `1.3.0`；安卓端 `versionName` 仍 `1.3.1`
+仍是 `a0e18c54d5340a97`（137 文件，**该版发布时现场值**；`1.3.2` 后端修复后为 `521c4985d95f713c`）；
+Linux 端 `/api/health` 仍 `1.3.0`；安卓端 `versionName` 仍 `1.3.1`
 （三端版号一致），只把 build number 升到 **`1.3.1+2`**（`--split-per-abi` 后 `versionCode` arm64 2002 /
 v7a 1002 / x86_64 4002）。五项修复的根因、修法与取证见
 [`../flutter/docs/ANDROID-1.3.1.md`](../flutter/docs/ANDROID-1.3.1.md) §9。
@@ -75,7 +163,7 @@ v7a 1002 / x86_64 4002）。五项修复的根因、修法与取证见
 cd flutter && flutter analyze         # 期望 0 error / 0 warning（7 条 info 为既有 riverpod 2.6.1 弃用提示）
 cd flutter && flutter test --no-pub   # 期望 43 项通过 / 1 项跳过（跳过的是真后端用例）
 cd .. && node scripts/brand-icons.mjs --check   # 期望「品牌图标产物与 web/public/favicon.svg 一致」
-node scripts/gen-source-hash.mjs --check        # 期望 ✓ a0e18c54d5340a97（137 文件）
+node scripts/gen-source-hash.mjs --check        # 期望 ✓ a0e18c54d5340a97（1.3.1+2 当时的 137 文件；现为 521c4985d95f713c）
 bash scripts/verify-suites.sh                   # 期望 18 项通过 / 0 项失败（508 条断言；本轮实测 235 s）
 ```
 
@@ -135,6 +223,7 @@ cd flutter && flutter test --dart-define=SP_LIVE_BASE=http://127.0.0.1:3007 test
   正确形式实测可用（见 [`../flutter/docs/ANDROID-1.3.1.md`](../flutter/docs/ANDROID-1.3.1.md) §8.6）。
   `media[].coverUrl`（0/335 坏）与 `/posters` 的 `url`（0/536 坏）均正常；**Web 端同样显示裂图**，
   安卓端退回奖杯占位图标。建议后续在后端爬虫侧加绝对 URL 守卫 + 一次性迁移归一化。
+  > **同轮已修**：见本文件上面 [`1.3.2`] 节（抓取守卫 + 启动期一次性迁移；指纹 `521c4985d95f713c`）。
 
 ---
 

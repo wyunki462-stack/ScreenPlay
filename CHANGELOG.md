@@ -6,6 +6,66 @@
 
 ---
 
+## [1.3.2] — 2026-10-04（服务端：Steam 成就图标 URL 归一化 + 存量数据一次性修复）
+
+**只动后端（`backend/src`），Web / 安卓 / Windows 前端一行未改**：源码指纹由 `1.3.1+2` 的
+`a0e18c54d5340a97` 变为 **`521c4985d95f713c`**（仍是 137 个文件，`node scripts/gen-source-hash.mjs --check`
+可复核）。根 `package.json` 未动 ⇒ Linux 端 `/api/health` 仍报 `1.3.0`（三端版号策略不变）；
+**安卓端无需重打包**（缺陷在服务端数据，App 取图与奖杯占位逻辑不变），`1.3.1+2` 的三个分包继续有效。
+Windows 桌面端内置的是旧 `backend/dist`，下次重打包时自动带上本修复。
+
+### 修复：Steam 成就图标 81% 是「双重 URL」，怎么取都 502
+
+根因在抓取侧：Steam 成就接口的 `SchemaAchievement.icon` 多数返回裸文件名 `<hash>.jpg`，但另有
+**1409 条**返回**完整 URL**（尾巴指向已下线的 `steamcdn-a.akamaihd.net`），而
+`backend/src/metadata/providers/steam.provider.ts` 无条件按
+`https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/${appid}/${icon}.jpg`
+拼接，于是落库成
+`…/apps/812140/https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/812140/<hash>.jpg.jpg`。
+实测（经 `/api/media/proxy`）：坏值 `502 text/html`，规范值 `200 image/jpeg`。Web 端详情页成就图标
+因此长期裂图，安卓端退回奖杯占位（不劣于 Web）。`media[].coverUrl`（0/335 坏）与 `/posters` 的
+`url`（0/536 坏）均正常，缺陷只集中在成就图标这一个字段。
+
+1. **抓取守卫**：`steam.provider.ts` 改调 `steamAchievementIconUrl(appid, icon)` —— 先剥掉完整 URL
+   的域名 / 查询串、取到文件名主干，再按规范域名重建 ⇒ 以后不论 Steam 返回文件名还是完整 URL，落库都是规范值。
+2. **启动期一次性迁移**：`backend/src/database/database.service.ts` 的 `migrate()` 末尾新增
+   `repairNestedSteamIconUrls()`，把命中「双重 URL」或「退役主机」的历史值原地归一化，日志
+   `Repaired N Steam achievement icon URL(s) with a nested URL or retired CDN host`。
+3. **纯函数抽到叶子模块**：新逻辑在 `backend/src/common/image-url.ts`
+   （`steamIconFileStem` / `steamAchievementIconUrl` / `normalizeSteamAchievementIconUrl`），
+   数据库层直接 import，不引入 database → metadata 反向依赖。
+
+### 迁移安全（已在**生产库副本**上预演）
+
+- 只改两种可判定的坏形状（双重 URL / 退役主机），其余值（含 329 条 PSN `psnobj…png`）**原样返回**
+  ⇒ 幂等：二次启动不再改任何行、也不再打印日志；未知主机 `403/404`。
+- 生产库副本（`screenplay.db` + `-wal` + `-shm` 一起拷）预演结果：`Repaired 1409`；
+  `total 1738`（不变）、来源分布 psnine 329 / steam 1409（不变）、
+  `icon_url LIKE '%/https://%'` **1409 → 0**、规范值 1409、`integrity_check` = `ok`。
+- 上线方式：重建镜像 + 重启容器即可（迁移在启动期自动跑），无需手工 SQL。
+  ⚠️ 备份 / 复制生产库时必须**连同 `-wal` / `-shm`**：只拷 `screenplay.db` 会漏掉 WAL 里
+  未 checkpoint 的写入（实测只拷主文件得到的是 1655 行 / 1364 条坏值的旧快照）。
+
+### 验证
+
+- `node backend/scripts/verify/achievement-icon-url.mjs`：**36 项通过 / 0 项失败**（esbuild 打
+  `image-url.ts` 真实源码 + 临时库跑 `backend/dist` 的 `DatabaseService`）：双重 URL（含 `.jpg.jpg`
+  与 `…/http://` 变体）、退役主机被判坏并归一化；规范值 / PSN PNG / NULL 行不动；二次启动零改动；
+  `integrity_check` ok。
+- `bash scripts/verify-suites.sh`：**19 项通过 / 0 项失败 / 544 条断言**（260 s；已把上面这条套件
+  登记进清单，18 → 19）。
+- `node scripts/gen-source-hash.mjs --check`：✓ **`521c4985d95f713c`**（137 个文件）。
+- **启动期迁移 + 接口输出（真编译产物 `backend/dist/main.js` + 生产库副本）**：把生产库
+  （`screenplay.db` + `-wal` + `-shm`）拷到临时 `DATA_DIR` 起隔离实例（`AUTH_DISABLED=1`、
+  `DB_FILENAME=sp-icon.db`、端口 4466）：`GET /api/games` 39 个游戏、逐个 `GET /api/games/:id`
+  合计 **1738** 条带图标的成就 ⇒ **双重 URL 0 条**、规范值 **1409**、PSN `psnobj…png` **329 条原样保留**、
+  详情请求失败 0；同实例经 `/api/media/proxy` 取规范地址 ⇒ `200 image/jpeg 18,633 B`。
+  **二次启动同一个已修库：应用日志无 `Repaired …` 行**（幂等）。
+- 端到端取证：经 `sp-linux-test` 容器 `/api/media/proxy`，规范地址 `200 image/jpeg 3,542 B`（64×64 JPEG，
+  `file` 确认），同一成就的坏地址 `502 text/html; charset=utf-8`。
+
+---
+
 ## [1.3.1+2] — 2026-10-04（安卓端：连 Linux 后端的五项体验修复）
 
 **只动安卓端 Flutter 客户端（`flutter/`），后端、Web、Linux 镜像、Windows 桌面端一行未改**
@@ -69,6 +129,8 @@ Linux 端仍是 `1.3.0`）。安卓端 `versionName` 保持 `1.3.1`（三端版�
   → `200 image/jpeg 18,633 B`）。`media[].coverUrl`（0/335 坏）与 `/posters` 的 `url`（0/536 坏）都正常，
   缺陷只集中在成就图标，**Web 端同样显示裂图**，App 退回奖杯占位图标、不劣于 Web。建议后续在后端爬虫侧加
   绝对 URL 守卫 + 一次性迁移归一化。
+  > **已于同日 [`1.3.2`] 修复**（抓取守卫 + 启动期一次性迁移，见本文档顶部）：源指纹 `521c4985d95f713c`，
+  > 生产库副本预演修好 1409 行、行数与 PSN 数据不变；安卓端无需重打包。
 - 合并清单里的 `READ_EXTERNAL_STORAGE`（`maxSdkVersion=28`）由插件清单合并带入，为**首发包既有**项，
   非本轮新增（此前文档只记了主清单的 3 项权限，已在 `flutter/docs/ANDROID-1.3.1.md` 按实测补齐）。
 

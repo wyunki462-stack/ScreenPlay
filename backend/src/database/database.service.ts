@@ -12,6 +12,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
+import { normalizeSteamAchievementIconUrl } from '../common/image-url';
 
 /** Size of a file, or 0 if it cannot be read (used only for the VACUUM log). */
 function fileSize(file: string): number {
@@ -474,6 +475,7 @@ export class DatabaseService implements OnModuleInit {
 
     this.repairFakeScrapedPosters();
     this.repairLegacyAchievements();
+    this.repairNestedSteamIconUrls();
   }
 
   /**
@@ -575,6 +577,50 @@ export class DatabaseService implements OnModuleInit {
     this.logger.log(
       `Repaired ${repaired} poster row(s) that were wrongly recorded as official artwork`,
     );
+    return repaired;
+  }
+
+  /**
+   * Undo Steam achievement-icon URLs that had one URL nested inside another.
+   *
+   * `SteamProvider.toAchievements()` prefixed the CDN template onto whatever the
+   * schema API returned in `icon`. That field is usually a bare `<hash>.jpg`, but
+   * for some apps it is already a fully-qualified URL — still on the retired
+   * `steamcdn-a.akamaihd.net` host — so the stored value became
+   * `…/apps/812140/https://steamcdn-a.akamaihd.net/…/08bdee6f….jpg.jpg`. The CDN
+   * answers that with 502, leaving every achievement icon of those games blank on
+   * both Web and the Android client (the App falls back to a trophy placeholder).
+   * The provider now normalizes through `steamAchievementIconUrl()`; this repairs
+   * the rows already in the database.
+   *
+   * Only the two broken shapes are rewritten — nested, or retired host — so a
+   * canonical URL, a PlayStation PNG or an unknown host is left exactly as it is.
+   * Idempotent: after one pass no matching row changes, so later boots are no-ops.
+   */
+  private repairNestedSteamIconUrls(): number {
+    const rows = this.db
+      .prepare(
+        `SELECT id, icon_url FROM achievements
+          WHERE icon_url LIKE '%steamstatic.com/steamcommunity/public/images/apps/%'
+             OR icon_url LIKE '%akamaihd.net/steamcommunity/public/images/apps/%'`,
+      )
+      .all() as Array<{ id: string; icon_url: string }>;
+    if (!rows.length) return 0;
+
+    const update = this.db.prepare('UPDATE achievements SET icon_url = ? WHERE id = ?');
+    let repaired = 0;
+    for (const row of rows) {
+      const fixed = normalizeSteamAchievementIconUrl(row.icon_url);
+      if (fixed && fixed !== row.icon_url) {
+        update.run(fixed, row.id);
+        repaired += 1;
+      }
+    }
+    if (repaired) {
+      this.logger.log(
+        `Repaired ${repaired} Steam achievement icon URL(s) with a nested URL or retired CDN host`,
+      );
+    }
     return repaired;
   }
 
