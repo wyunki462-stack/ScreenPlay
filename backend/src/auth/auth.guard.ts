@@ -21,6 +21,9 @@ export const PUBLIC_PATHS = [
   // that a wrong-password / signed-out attempt is a normal JSON reply instead of
   // a guard 401 (which the Web client would broadcast as "session lost").
   '/api/auth/password',
+  // First-run account creation must be reachable without a session, otherwise
+  // there would be no way to get in on a fresh Windows install.
+  '/api/auth/setup',
 ];
 
 @Injectable()

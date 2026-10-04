@@ -86,7 +86,7 @@
 
 | Web 端表现 | 桌面端实现方式 | 验收证据 |
 | --- | --- | --- |
-| 标签页图标与页眉左上角品牌块是同一枚品牌 mark：紫青对角渐变圆角方块（`#7c3aed → #06b6d4`，圆角 8/36）+ 白色 lucide `Gamepad2`（按 `20/36` 缩放、描边 2） | 同一段几何镜像三处：Web 标签页 `<link rel="icon" href="/favicon.svg">`（真源 `web/public/favicon.svg`）、桌面启动画面内联 SVG（`src-tauri/splash/index.html`）、exe/安装包图标（`src-tauri/icons/{32x32.png,128x128.png,icon.png,icon.ico}`，由 `windows/scripts/gen-icons.mjs` 生成） | `node windows/scripts/verify-icons.mjs` → 32 项像素断言；`node windows/scripts/verify-desktop.mjs --smoke` → 68 项，含 `GET /favicon.svg` 200；肉眼应与页眉品牌块一致 |
+| 标签页图标与页眉左上角品牌块是同一枚品牌 mark：紫青对角渐变圆角方块（`#7c3aed → #06b6d4`，圆角 8/36）+ 白色 lucide `Gamepad2`（按 `20/36` 缩放、描边 2） | 同一段几何镜像三处：Web 标签页 `<link rel="icon" href="/favicon.svg">`（真源 `web/public/favicon.svg`）、桌面启动画面内联 SVG（`src-tauri/splash/index.html`）、exe/安装包图标（`src-tauri/icons/{32x32.png,128x128.png,icon.png,icon.ico}`，由 `windows/scripts/gen-icons.mjs` 生成） | `node windows/scripts/verify-icons.mjs` → 32 项像素断言；`node windows/scripts/verify-desktop.mjs --smoke` → 91 项（静态 80 项），含 `GET /favicon.svg` 200；肉眼应与页眉品牌块一致 |
 
 > 生成与校验只用 Node 标准库（自写 PNG/ICO 编码器与 PNG 解码器），不引入 sharp/canvas/Playwright。
 > **exe 内嵌图标要在 Windows 上重新打包后才会变成新图标**（PNG/ICO 已是 git 跟踪的产物文件）。
@@ -101,15 +101,16 @@
 | 静态托管 + SPA history 回退 | `backend/src/main.ts:56-73`——:56 取 `const webDist = process.env.WEB_DIST \|\| path.join(process.cwd(), 'public')`；:57-58 在 `webDist/index.html` 存在时启用静态托管；:63-73 对「非 `/api` 且接受 `text/html`」的 GET 回退到 `index.html` | 桌面端把 `WEB_DIST` 指到 `resources/web`；详情页等前端路由直接刷新不会 404 |
 | 非 API 路径放行 | `backend/src/auth/auth.guard.ts:29`（`if (!path.startsWith('/api/')) return true;`） | 开启鉴权后页面与静态资源仍可访问 |
 | Plyr 控件图标 CDN | `web/src/components/VideoPlayer.tsx:24-41`（Plyr `options` 块） | 其默认图标指向 `https://cdn.plyr.io/3.8.4/plyr.svg`，桌面端产物里被替换（差异 ②） |
-| 后端监听 | `backend/src/main.ts` 末尾 `await app.listen(port, host)`，`host = process.env.HOST \|\| '0.0.0.0'` | 桌面端传入 `HOST=127.0.0.1` 仅本机监听 |
+| 后端监听 | `backend/src/main.ts` 末尾 `await app.listen(port, host)`，`host = process.env.HOST \|\| '0.0.0.0'` | 桌面端传入 `HOST=<config.host>`：**1.3.2 起默认 `0.0.0.0`（同一局域网可访问）**，写 `127.0.0.1` 回退为仅本机监听 |
 | 品牌图标 | 真源 `web/public/favicon.svg`；镜像 `windows/src-tauri/splash/index.html`（内联 SVG）与 `windows/src-tauri/icons/*`（由 `windows/scripts/gen-icons.mjs` 生成，其 `assertBrandSvg()` 对前两处逐字断言） | 三端同一枚图标；改几何必须三处同步，否则 `gen-icons.mjs` 直接报错 |
 
 ---
 
 ## 3. 桌面端差异与处理
 
-以下 6 条是**全部**差异。每一条都是「要么本来就成立、要么在产物里替换、要么用环境变量代替默认行为」，
-没有任何一条要求改动 `web/` 或 `backend/` 的源码。
+以下 9 条是**全部**差异。每一条都是「要么本来就成立、要么在产物里替换、要么用环境变量代替默认行为」，
+没有任何一条要求改动 `web/` 或 `backend/` 的源码（1.3.2 的「首次创号」是 Web/后端**共用**的通用能力，
+`AUTH_ALLOW_SETUP` 默认关，服务端/容器部署行为不变）。
 
 ### ① SPA history 回退
 
@@ -148,17 +149,18 @@
 
 | 环境变量 | 桌面端默认值 | 为什么 | 怎么改回来 |
 | --- | --- | --- | --- |
-| `AUTH_MODE` / `AUTH_DISABLED` | **鉴权关闭（`off`）**——对应 `backend/src/config/configuration.ts:144-145`，`AUTH_DISABLED=1` 时 `authEnabled=false`，`authMode` 只认 `local`，否则 `system` | 桌面端是单人本机应用，首启就要求登录很烦；且本机仅 `127.0.0.1` 监听 | 编辑 `<DATA_DIR>\config.json` 把 `"auth"` 改成 `"local"` 或 `"system"`，重启应用。**测试的鉴权代码与 Web 端完全一致，没有分支** |
+| `HOST` / `AUTH_MODE` / `AUTH_ALLOW_SETUP` / `AUTH_DISABLED` | **默认 `HOST=0.0.0.0` + `AUTH_MODE=local` + `AUTH_ALLOW_SETUP=1`**（1.3.2 起）——对应 `backend/src/config/configuration.ts:150-152`（`:150` `authEnabled`、`:151` `authMode`、`:152` `authAllowSetup`）；`AUTH_ALLOW_SETUP=1` 时后端不播种账户，`POST /api/auth/setup` 由用户在网页上创建第一个账户 | 桌面端默认要让**同一局域网的手机/平板**也能用，所以不再只绑 `127.0.0.1`；一旦对局域网开放就**不能**关鉴权（`config.rs::normalize()` 的安全不变量会自动把 `off` 提升为 `local`） | 只要本机：编辑 `<DATA_DIR>\config.json` 把 `"host"` 改成 `"127.0.0.1"`（可再把 `"auth"` 设为 `"off"`）；想用随机密码而不是自己创号：把 `"allowSetup"` 改成 `false`（密码写 `<DATA_DIR>\初始密码.txt`）；改用系统账户：`"auth": "system"`。**鉴权代码与 Web/Linux 端完全一致，没有分支** |
 | `MAINTENANCE_ON_BOOT` | **`0`（不在启动时跑维护）**——`backend/src/maintenance/maintenance.service.ts:69` 有对应分支 | 启动更快：不必每次开窗都等一遍扫描/清理 | 该变量由壳传入，普通用户无需改；要扫库在**设置页 → 媒体库管理**手动触发即可 |
 
-> 其余环境变量（`PORT`、`HOST=127.0.0.1`、`DATA_DIR`、`MEDIA_DIRS`、`WEB_DIST`、`FFMPEG_PATH`、`FFPROBE_PATH`、
+> 其余环境变量（`PORT`、`HOST=<config.host>`、`DATA_DIR`、`MEDIA_DIRS`、`WEB_DIST`、`FFMPEG_PATH`、`FFPROBE_PATH`、
 > `BUILD_VERSION`、`BUILD_TIME`）只是把路径指到随包资源与用户数据目录，不改变任何业务默认值。
 > 详见 `windows/DESIGN.md` §2 与 §7。
 
 ### ⑦ 桌面端不提供「修改密码」入口（唯一的界面裁剪）
 
 * **情况**：Web/Linux 的设置页有「修改密码」卡片（本地账户改本机 SQLite 里的密码）。桌面端是单人单机应用：
-  鉴权默认关闭；开启后密码由首次启动随机生成并写在 `<DATA_DIR>\初始密码.txt`，界面上不存在改密的场景。
+  密码由用户**首次打开网页时自己创建**（`allowSetup: true`；关掉时才退回「随机生成并写在 `<DATA_DIR>\初始密码.txt`」），
+  界面上不存在改密的场景。
 * **处理**：**构建期整模块替换**（不是运行时隐藏）。`web/.env.desktop` 提供 `VITE_SCREENPLAY_TARGET=desktop`，
   `npm run build:web:desktop`（`vite build --mode desktop`）时 `web/vite.config.ts` 用 `resolve.alias`
   把 `web/src/components/ChangePasswordCard.tsx` 换成空实现
@@ -185,6 +187,30 @@
 * **为什么不影响别的**：`web/src` 与 `windows/src-tauri/src` 里对 Tauri 文件拖放事件
   （`onDragDropEvent` / `tauri://` / `DragDropEvent`）**零引用**，桌面端没有「把文件拖进窗口」这类
   依赖；关掉接管后网页标准拖放全量可用。
+
+### ⑨ 默认对局域网开放 + 首次创号 + 防火墙默认放行（`1.3.2`）
+
+* **情况**：桌面端原先只绑 `127.0.0.1` 且把鉴权关掉（见 ⑥ 的旧说明）。实际使用场景是「装在客厅/NAS
+  边上那台 Windows 上，手机、平板、电视盒子也要看同一个库」，而只绑回环地址时局域网根本连不上；
+  就算绑出去，Windows 防火墙默认还会挡入站，并且第一次监听非回环地址时系统会弹「允许访问」对话框。
+* **处理**（三件事一起改）：
+  1. **监听地址**默认 `0.0.0.0`：壳 `cmd.env("HOST", &cfg.host)`（`src/backend.rs`）、启动器 `HOST` 同理，
+     端口探测也改成绑**真实地址**（`pick_port(&cfg.host, cfg.port)`）。`normalize()` 只把
+     `127.0.0.1`/`localhost`/`loopback`/`local-only` 认成「仅本机」，其余一律回到 `0.0.0.0`。
+  2. **鉴权**默认 `local` + `allowSetup: true` ⇒ `AUTH_ALLOW_SETUP=1`，第一次打开网页时用户自己创建账户
+     （`POST /api/auth/setup`）。**安全不变量**：对局域网开放时不允许 `auth: "off"`，`normalize()` 会自动提升为 `local`。
+  3. **防火墙默认放行**：`firewall: "auto"`（默认）时，壳在**起后端之前**查 `ScreenPlay` 规则、缺失则把
+     `allow-screenplay.ps1`（TCP `3210-3309`）写进 `<DATA_DIR>\firewall\` 并**提权执行一次**（一次 UAC），
+     再写 `attempted.txt` 保证不反复弹窗；拒绝授权/无 PowerShell 都**不阻断启动**（系统会退回自己的对话框）。
+     免安装启动器 `launcher/launch.mjs` 用同一套规则与同一个脚本内容。
+* **怎么改回来**：`config.json` 里 `"host": "127.0.0.1"`（仅本机，可再把 `"auth"` 设为 `"off"`）、
+  `"firewall": "off"`（完全不碰防火墙）、`"allowSetup": false`（改用随机密码 + `<DATA_DIR>\初始密码.txt`）。
+* **源码锚点**：`windows/src-tauri/src/config.rs`（`LOOPBACK_HOST`/`LAN_HOST`/`normalize()`/`lan_reachable()`/
+  `allow_setup_env()`）、`windows/src-tauri/src/backend.rs`（`pick_port(host, preferred)`、`cmd.env("HOST", &cfg.host)`、
+  `crate::firewall::ensure_allowed(...)`、`lan_ipv4()`）、`windows/src-tauri/src/firewall.rs`（`RULE_NAME = "ScreenPlay"`、
+  `port_spec()`、`Outcome`）、`windows/launcher/launch.mjs`（`bindHost()`、`ensureFirewall()`、`lanUrls()`）、
+  `backend/src/auth/auth.controller.ts:73`（`@Post('setup')`）、`backend/src/auth/auth.guard.ts:26`
+  （`/api/auth/setup` 加入 `PUBLIC_PATHS`）、`web/src/pages/Login.tsx`（`needsSetup` 时的「创建账户」表单）。
 * **顺带的前端修复**（同一版：拖后立即生效、不再闪回）：
   * `web/src/pages/Home.tsx` 的 `commitMove` 在发 `PUT /games/order`（`web/src/api/hooks.ts`
     `useReorderGames`）的同时，把新顺序**直接写进** react-query 的 `["games", filters]` 缓存

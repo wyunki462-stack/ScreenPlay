@@ -5,12 +5,17 @@
  * 用途：当目标 Windows 机器上**没有 Rust/构建工具链**、或不想装 NSIS 安装包时，
  * 直接双击 `ScreenPlay.cmd` 就能用。它做四件事（全部逻辑都在这里，.cmd 只是一行壳）：
  *
- *   1. 选一个空闲端口（净绑定 127.0.0.1:0 由系统分配，避免端口冲突）；
+ *   1. 选一个空闲端口（在本机地址上净绑定 0，由系统分配，避免端口冲突）；
  *   2. 用随包发布的 `resources/node/node.exe` 拉起 `resources/backend/dist/main.js`
  *      （数据目录、WEB_DIST、ffmpeg 路径等全部沿用后端既有环境变量，不重复实现任何后端逻辑）；
  *   3. 轮询 `GET /api/health` 直到后端就绪（最多 60 秒）；
  *   4. 用 Edge/Chrome 的 `--app=` 模式打开一个**无地址栏的窗口**（看起来就是个桌面应用），
  *      并带独立 `--user-data-dir`（语言/布局等前端本地存储可持久化）。窗口关闭后回收后端子进程树。
+ *
+ * 1.3.2：默认 `HOST=0.0.0.0`（同一局域网里的手机/平板/电视盒子可以直接访问），并在首次
+ * 运行时提权加一条 Windows 防火墙入站放行规则（`ScreenPlay`，TCP 3210-3309），避免系统
+ * 弹出「允许访问」对话框。`config.json` 里 `host: "127.0.0.1"` 可切回仅本机、`firewall: "off"`
+ * 可让启动器完全不碰防火墙。
  *
  * 与 Tauri 壳的关系：Tauri（`src-tauri/`）是**主方案**，提供真正的原生窗口与单实例；
  * 本启动器是**备用方案**，不需要任何编译产物，用同一份 `resources/` 即可运行。
@@ -90,8 +95,8 @@ function readJson(file) {
 }
 
 // 配置来源：包根目录 config.json（优先，随包分发/便携场景）→ <数据目录>/config.json（与 Tauri 壳同一位置）。
-// 键名刻意与 Tauri 壳保持一致：dataDir / port / auth("off"|"local"|"system") / mediaDirs / adminPassword；
-// 另外接受 authDisabled(布尔) 作为便利别名。
+// 键名刻意与 Tauri 壳保持一致：dataDir / port / host / auth("off"|"local"|"system") / allowSetup /
+// firewall("auto"|"off") / mediaDirs / adminPassword；另外接受 authDisabled(布尔) 作为便利别名。
 const pkgCfg = readJson(path.join(ROOT, 'config.json')) || {};
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
@@ -101,11 +106,30 @@ const cfg = readJson(path.join(DATA_DIR, 'config.json')) || pkgCfg;
 /** auth 归一化：兼容 "off"/false、"local"、true。 */
 function authMode() {
   if (cfg.authDisabled !== undefined) return cfg.authDisabled ? 'off' : 'local';
-  const a = String(cfg.auth ?? 'off').toLowerCase();
-  if (a === 'off' || a === 'false' || a === '0' || a === '') return 'off';
+  const a = String(cfg.auth ?? 'local').toLowerCase();
   if (a === 'system') return 'system';
+  if (a === 'off' || a === 'false' || a === '0' || a === '') return 'off';
   return 'local';
 }
+
+/* ------------------------------------------------------------ 监听地址 */
+
+/**
+ * 监听地址：默认 `0.0.0.0`（局域网可访问，1.3.2 起），`127.0.0.1` 只认「仅本机」的写法。
+ * 与 Tauri 壳 `windows/src-tauri/src/config.rs` 的 normalize() 保持一致。
+ */
+function bindHost() {
+  const h = String(cfg.host ?? '0.0.0.0').trim().toLowerCase();
+  return ['127.0.0.1', 'localhost', 'loopback', 'local-only', 'localonly'].includes(h)
+    ? '127.0.0.1'
+    : '0.0.0.0';
+}
+
+const HOST = bindHost();
+// 安全不变量（与 Rust 壳一致）：对局域网开放就不允许「无鉴权」。
+const AUTH = HOST === '0.0.0.0' && authMode() === 'off' ? 'local' : authMode();
+const ALLOW_SETUP = cfg.allowSetup !== false;
+const LAN = HOST !== '127.0.0.1';
 
 /* ------------------------------------------------------------ 空闲端口 */
 
@@ -114,11 +138,116 @@ function pickPort() {
     const srv = net.createServer();
     srv.unref();
     srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
+    // 按真实监听地址探测：只探测 127.0.0.1 会在「别的进程恰好占着 0.0.0.0:端口」时误判。
+    srv.listen(0, HOST, () => {
       const port = srv.address().port;
       srv.close(() => resolve(port));
     });
   });
+}
+
+/* -------------------------------------------------------- 防火墙默认放行 */
+
+const FW_RULE = 'ScreenPlay';
+const FW_FIRST = 3210;
+const FW_LAST = 3309;
+const FW_DIR = path.join(DATA_DIR, 'firewall');
+const FW_SCRIPT = path.join(FW_DIR, 'allow-screenplay.ps1');
+const FW_FLAG = path.join(FW_DIR, 'attempted.txt');
+
+/** 端口段（与 `src-tauri/src/backend.rs` 的 FIRST_PORT/PORT_PROBE_RANGE 对齐）。 */
+function firewallPorts(wantPort) {
+  const base = `${FW_FIRST}-${FW_LAST}`;
+  return wantPort > 0 && (wantPort < FW_FIRST || wantPort > FW_LAST) ? `${base},${wantPort}` : base;
+}
+
+/** 与 Rust 壳 `firewall.rs::write_script` 语义相同：先 New-NetFirewallRule，老系统退回 netsh。 */
+function firewallScript(ports) {
+  return [
+    '# ScreenPlay 1.3.2 — 免安装启动器首次运行时自动生成；管理员 PowerShell 可直接重跑本文件。',
+    "$ErrorActionPreference = 'Stop'",
+    `$name = '${FW_RULE}'`,
+    `$ports = '${ports}'`,
+    'try {',
+    '  if (-not (Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue)) {',
+    '    New-NetFirewallRule -DisplayName $name -Group $name -Direction Inbound -Action Allow `',
+    '      -Protocol TCP -LocalPort $ports -Profile Any `',
+    "      -Description 'ScreenPlay desktop (LAN access to the bundled server)' | Out-Null",
+    '  }',
+    '} catch {',
+    '  netsh advfirewall firewall show rule name=$name *> $null',
+    '  if ($LASTEXITCODE -ne 0) {',
+    '    netsh advfirewall firewall add rule name=$name dir=in action=allow `',
+    '      protocol=TCP localport=$ports profile=any | Out-Null',
+    '  }',
+    '}',
+    'exit 0',
+    '',
+  ].join('\r\n');
+}
+
+function psQuote(s) {
+  return `'${String(s).replace(/'/g, "''")}'`;
+}
+
+function firewallRuleExists() {
+  if (!isWin) return false;
+  const r = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+      `$r = Get-NetFirewallRule -DisplayName '${FW_RULE}' -ErrorAction SilentlyContinue; if ($r) { exit 0 } else { exit 3 }`],
+    { stdio: 'ignore', windowsHide: true, timeout: 15_000 },
+  );
+  return r.status === 0;
+}
+
+/** 确保防火墙放行；失败只提示，不阻断启动（与 Tauri 壳行为一致）。 */
+function ensureFirewall(wantPort) {
+  if (!isWin || !LAN || String(cfg.firewall ?? 'auto').toLowerCase() === 'off') return;
+  if (firewallRuleExists()) {
+    log(`防火墙：已存在入站放行规则「${FW_RULE}」`);
+    return;
+  }
+  if (fs.existsSync(FW_FLAG)) {
+    log(`防火墙：此前已尝试放行（见 ${FW_FLAG}），本次不重复弹窗`);
+    return;
+  }
+  const ports = firewallPorts(wantPort);
+  try {
+    fs.mkdirSync(FW_DIR, { recursive: true });
+    fs.writeFileSync(FW_SCRIPT, firewallScript(ports), 'utf8');
+  } catch (e) {
+    log(`防火墙：无法写入 ${FW_SCRIPT}（${e.message}），本次跳过`);
+    return;
+  }
+  log('防火墙：正在请求一次管理员授权以添加放行规则（只弹这一次）…');
+  const elevate =
+    `Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',` +
+    `${psQuote(FW_SCRIPT)} -Verb RunAs -Wait -WindowStyle Hidden`;
+  spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', elevate],
+    { stdio: 'ignore', windowsHide: true, timeout: 180_000 },
+  );
+  try {
+    fs.writeFileSync(FW_FLAG, `${new Date().toISOString()} — 已尝试自动放行（${FW_RULE} TCP ${ports}）。\r\n重新尝试：删除本文件后重启，或以管理员身份运行同目录的 ${path.basename(FW_SCRIPT)}。\r\n`, 'utf8');
+  } catch { /* 标记文件写不出来最多下次再问一遍，不影响运行 */ }
+  if (firewallRuleExists()) {
+    log(`防火墙：已添加入站放行规则（TCP ${ports}）`);
+  } else {
+    log(`防火墙：未能自动放行，Windows 可能会弹出「允许访问」对话框，点允许即可；也可用管理员 PowerShell 运行 ${FW_SCRIPT}`);
+  }
+}
+
+/** 局域网地址（给手机/平板抄地址用）。 */
+function lanUrls(port) {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const ni of list || []) {
+      if (ni.family === 'IPv4' && !ni.internal) out.push(`http://${ni.address}:${port}`);
+    }
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------ 路径检查 */
@@ -182,7 +311,11 @@ async function main() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const wantPort = Number(cfg.port) > 0 ? Number(cfg.port) : 0;
   const port = wantPort || (await pickPort());
-  const auth = authMode();
+  const auth = AUTH;
+
+  // 「默认放行」：先把防火墙规则放好，再让后端开始监听，这样 Windows 不会弹
+  // 「允许访问」对话框。失败（比如用户在 UAC 上点了否）不影响启动。
+  ensureFirewall(wantPort);
 
   // 媒体目录：config.json 的 mediaDirs（字符串数组或分号分隔的字符串），
   // 否则退到 <数据目录>\media —— 必须显式给，否则后端会去扫 Linux 默认的 /media。
@@ -197,13 +330,20 @@ async function main() {
 
   log(`数据目录：${DATA_DIR}`);
   log(`媒体目录：${mediaDirs}`);
+  log(`监听地址：${HOST}${LAN ? '（局域网可访问）' : '（仅本机）'}`);
   log(`后端端口：${port}${wantPort ? '（来自 config.json）' : '（系统分配的空闲端口）'}`);
-  if (auth !== 'off') log(`鉴权模式：${auth}（开启后需登录；本机模式密码见 <数据目录>\\初始密码.txt 或后端日志）`);
+  if (auth === 'off') {
+    log('鉴权模式：off（仅本机监听时才可能，见 config.json 的 host）');
+  } else if (auth === 'local' && ALLOW_SETUP) {
+    log('鉴权模式：local —— 首次打开网页时创建账户（config.json 的 allowSetup=true）');
+  } else {
+    log(`鉴权模式：${auth}（开启后需登录；本机模式备用密码见 <数据目录>\\初始密码.txt 或后端日志）`);
+  }
 
   const env = {
     ...process.env,
     PORT: String(port),
-    HOST: '127.0.0.1',
+    HOST,
     NODE_ENV: 'production',
     DATA_DIR,
     MEDIA_DIRS: mediaDirs,
@@ -211,12 +351,13 @@ async function main() {
     MAINTENANCE_ON_BOOT: '0',
     BUILD_VERSION: `${readBuildVersion()}-desktop-portable`,
     ...(auth === 'off' ? { AUTH_DISABLED: '1' } : { AUTH_MODE: auth }),
-    ...(auth === 'local' && cfg.adminPassword ? { AUTH_ADMIN_PASSWORD: String(cfg.adminPassword) } : {}),
+    ...(auth === 'local' && ALLOW_SETUP ? { AUTH_ALLOW_SETUP: '1' } : {}),
+    ...(auth === 'local' && !ALLOW_SETUP && cfg.adminPassword ? { AUTH_ADMIN_PASSWORD: String(cfg.adminPassword) } : {}),
     ...(fs.existsSync(ffmpeg) ? { FFMPEG_PATH: ffmpeg } : {}),
   };
-  // auth=off 时不需要账户库；local/system 时后端按既有逻辑（本地账户库 / 系统账户）处理。
-  // local 且未提供 adminPassword 时，后端会自行播种 admin 并**把随机密码打印到日志**，
-  // 我们同时把后端输出落到 <数据目录>\\launcher.log，方便用户回头找密码。
+  // auth=off 时不需要账户库（默认只在 host=127.0.0.1 时才可能出现）；local 时默认走
+  // AUTH_ALLOW_SETUP=1，在网页上创建账户；关掉 allowSetup 时后端会自行播种 admin 并
+  // **把随机密码打印到日志**，我们同时把后端输出落到 <数据目录>\\launcher.log，方便回查。
 
   const logFile = path.join(DATA_DIR, 'launcher.log');
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
@@ -261,6 +402,11 @@ async function main() {
 
   if (process.env.SP_SKIP_SMOKE !== '1') {
     log(`后端就绪：version=${ready.version} status=${ready.status} 功能标记=${(ready.features || []).length} 个`);
+  }
+
+  if (LAN) {
+    const lans = lanUrls(port);
+    if (lans.length) log(`局域网访问地址：${lans.join('  ')}（同一局域网里的手机/平板直接填这个地址）`);
   }
 
   if (process.env.SP_NO_BROWSER === '1') {

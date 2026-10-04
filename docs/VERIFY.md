@@ -25,6 +25,8 @@ node backend/scripts/verify/password-change.mjs          # 设置页「修改密
 node backend/scripts/verify/media-delete-e2e.mjs         # DELETE /api/media/:id 端到端（22 项，安卓端 1.3.1）
 node backend/scripts/verify/android-auth-bearer.mjs      # 会话端点接受 Authorization: Bearer（19 项，安卓端 1.3.1）
 node backend/scripts/verify/sqlite-vacuum.mjs            # 可选启动期 VACUUM（12 项；默认关，MAINTENANCE_VACUUM=1 才走）
+node backend/scripts/verify/achievement-icon-url.mjs     # Steam 成就图标 URL 归一化（36 项，服务端 1.3.2）
+node backend/scripts/verify/auth-setup.mjs               # 首次启动创建账户 AUTH_ALLOW_SETUP + POST /api/auth/setup（26 项，桌面端 1.3.2）
 node scripts/verify-docker-layers.mjs                    # Dockerfile 分层自查（33 项；纯静态解析，不需要 docker）
 
 # 安卓端（离线；需要 flutter + 已就绪的 pub 缓存，未纳入 verify-suites.sh 清单）
@@ -36,7 +38,7 @@ cd flutter && flutter analyze && flutter test --no-pub    # 期望 0 error / 0 w
 #   "Flutter failed to write to a file at ...tool_state"
 cd .. && node scripts/brand-icons.mjs --check            # 品牌图标产物 = web/public/favicon.svg（零依赖，漂移即 exit 1）
 
-# 或者一键跑完上面 A 段全部（2 个类型检查 + 14 套件 + 产物自查 + Dockerfile 分层自查）
+# 或者一键跑完上面 A 段全部（2 个类型检查 + 16 套件 + 产物自查 + Dockerfile 分层自查 = 20 项）
 bash scripts/verify-suites.sh                            # 可选：bash scripts/verify-suites.sh 输出文件.txt
 
 # C. Windows 桌面端产物自检（不需要 Rust；先准备产物）
@@ -44,7 +46,10 @@ cd <仓库根目录>
 node windows/scripts/gen-icons.mjs                       # 按品牌几何重建 4 个图标（零依赖）
 node windows/scripts/verify-icons.mjs                    # 图标像素自检（32 项）
 node windows/scripts/prepare-frontend.mjs                # 由 web/dist-desktop 生成 resources/web
-node windows/scripts/verify-desktop.mjs                  # 桌面产物自检（57 项，含品牌图标小节）
+node windows/scripts/prepare-backend.mjs                 # 由 backend/dist 生成 resources/backend（verify-lan 需要）
+node windows/scripts/verify-desktop.mjs                  # 桌面产物自检（80 项，含品牌图标小节与 1.3.2 默认行为断言）
+node windows/scripts/verify-desktop.mjs --smoke          # 同上 + 真拉一次壳与后端（--smoke，共 91 项；需要 resources/ 就绪）
+node windows/scripts/verify-lan.mjs                      # 局域网 + 首次创号端到端（20 项，1.3.2；真拉免安装启动器）
 
 # B. 已部署实例上的运行时自检（需要容器在跑；PORT 默认 3001）
 cd <仓库根目录>
@@ -66,6 +71,51 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 
 ---
 
+## 1.3.2 桌面端：默认局域网访问 + 防火墙默认放行 + 首次启动在网页创建账户
+
+范围：`windows/**`（Rust 壳 `config.rs` / `backend.rs` / `firewall.rs`(新) / `main.rs`、免安装启动器
+`launcher/launch.mjs`、新增 `scripts/verify-lan.mjs`）、`backend/src/**`（`config/configuration.ts` 的
+`authAllowSetup`、`auth/{auth.service,auth.controller,auth.guard}.ts`、新增
+`backend/scripts/verify/auth-setup.mjs`）、`web/src/**`（`api/auth.ts`、`pages/Login.tsx`、
+`i18n/{zh,en}/common.ts`）。**HTTP 接口只新增 `POST /api/auth/setup`**（201，会话 token 只在
+`Set-Cookie: …; HttpOnly`，响应体不含 token），既有接口形状与数据库结构未变；`flutter/**` 未动。
+
+一句话默认值：`host: "0.0.0.0"`（局域网可访问）、`auth: "local"`、`allowSetup: true`（首启在网页建号）、
+`firewall: "auto"`（首次启动提权一次放行 `ScreenPlay` / TCP `3210-3309`）。
+**安全不变量**：对局域网开放时 `auth: "off"` 会被 `normalize()` 自动提升为 `"local"`。
+
+### 一键复核（不需要 docker、不需要 Windows）
+
+```bash
+node backend/scripts/verify/auth-setup.mjs     # 期望 26 项通过 / 0 项失败
+node windows/scripts/verify-desktop.mjs        # 期望 80 项通过 / 0 项失败（含 1.3.2 默认行为的源码级断言）
+node windows/scripts/prepare-backend.mjs       # verify-lan 需要 resources/backend/dist
+node windows/scripts/verify-lan.mjs            # 期望 20 项通过 / 0 项失败（真拉免安装启动器 + 真后端）
+bash scripts/verify-suites.sh                  # 期望 20 项通过 / 0 项失败
+node scripts/gen-source-hash.mjs --check       # 期望 ✓ f9864755a02c7576（137 文件）
+```
+
+### 关键锚点
+
+| 项 | 内容 |
+| --- | --- |
+| 监听地址 | `windows/src-tauri/src/config.rs` 新增 `host`（默认 `LAN_HOST = "0.0.0.0"`，回环 `LOOPBACK_HOST`）；`normalize()` 只把 `127.0.0.1`/`localhost`/`loopback`/`local-only`/`localonly` 认成「仅本机」；`backend.rs` 改为 `cmd.env("HOST", &cfg.host)`（原为写死的 `"127.0.0.1"`）与 `pick_port(&cfg.host, cfg.port)`（只试回环会误判端口空闲） |
+| 局域网地址 | `backend.rs` `lan_ipv4()`（UDP `connect("8.8.8.8:80")` → `local_addr()`，不发包、零依赖）写进启动日志/状态文案；`launch.mjs` `lanUrls()` 枚举 `os.networkInterfaces()` 非 internal IPv4 |
+| 防火墙 | `windows/src-tauri/src/firewall.rs`（新，零新依赖）：`RULE_NAME = "ScreenPlay"`、端口段 `3210-3309`（`port_spec()`）、`pub enum Outcome {Disabled, LoopbackOnly, NotWindows, AlreadyAllowed, Added, Declined(String), Skipped}`、`ensure_allowed()` **在 spawn 之前**调用（先放行再监听 ⇒ 系统不弹自己的对话框）；`Get-NetFirewallRule` 只读查（不需管理员）→ 写 `allow-screenplay.ps1` → `Start-Process -Verb RunAs`（180 s 超时）一次 → `attempted.txt` → 复查；老系统 `catch` 退回 `netsh advfirewall firewall add rule`；拒绝/无 PowerShell/组策略禁止**都不阻断启动**；`firewall: "off"` 或 `host` 为回环时跳过 |
+| 首次创号 | `backend/src/config/configuration.ts:152` `authAllowSetup`（真值 `1/true/yes`，默认关）；`auth.service.ts` 跳过播种 + `setupAllowed()`/`localUserCount()`/`needsSetup()`/`async setup()` + login 401「该服务端还没有账户…」；`auth.controller.ts:73` `@Post('setup')`；`auth.guard.ts:26` 把 `/api/auth/setup` 加进 `PUBLIC_PATHS`；`web/src/pages/Login.tsx`（`session.needsSetup` → 创建账户表单）+ 15 个 `setup.*` i18n 键 |
+| 安全不变量 | `config.rs` `normalize()` 尾部：`if self.lan_reachable() && self.auth == "off" { self.auth = "local"; }`；`pub fn lan_reachable(&self) -> bool { self.host != LOOPBACK_HOST }` |
+| 免安装形态 | `windows/launcher/launch.mjs` 的 `bindHost()` / `ensureFirewall()` / `lanUrls()`：与 Rust 侧同一规则名、同一端口段、同一份脚本内容 |
+
+### 真机待验收（本机是 Linux NAS：无 Windows、无 cargo/rustc）
+
+- [ ] Windows 10/11 首次启动只弹**一次** UAC；`wf.msc` 入站规则里出现 `ScreenPlay`（TCP `3210-3309`）。
+- [ ] 同局域网手机/平板打开 `http://<本机局域网 IP>:<端口>/` → 出「创建账户」页 → 建号 → 正常看图库。
+- [ ] UAC 点「否」：程序照常启动，系统弹自己的「允许访问」对话框，点允许后局域网可用。
+- [ ] 防火墙服务被禁用 / 组策略禁止改规则的机器：启动不卡死，日志里有解释行。
+- [ ] 老 `config.json`（无 `host`/`allowSetup`）升级：默认值生效，老账户仍能登录（`needsSetup=false`）。
+
+---
+
 ## 1.3.2：服务端 Steam 成就图标 URL 归一化 + 存量数据一次性修复（前端三端均未动）
 
 范围：只改 `backend/src`（`metadata/providers/steam.provider.ts`、`database/database.service.ts`、
@@ -75,7 +125,10 @@ AUTH_USER=你的NAS用户名 AUTH_PASSWORD=密码 bash scripts/verify-image-fix.
 一行未改，安卓端无需重打包（`1.3.1+2` 三个分包继续有效）。
 
 > 源码指纹：**`521c4985d95f713c`**（137 文件）。下面 1.3.1+2 节里写的 `a0e18c54d5340a97` / 18 项 /
-> 508 条断言是那一版发布时的现场数字，作为历史记录保留（当时后端确实一行未改）；以本节数字为准。
+> 508 条断言是那一版发布时的现场数字，作为历史记录保留（当时后端确实一行未改）。
+> **本节数字是该次服务端发布的现场值**：同日稍后的 Windows 桌面端轮次改了 `web/src`（登录页「创建账户」）
+> 与 `backend/src`（`AUTH_ALLOW_SETUP`），当前期望指纹已变为 `f9864755a02c7576`、`verify-suites.sh` 为 20 项
+> —— 以**上一节**（1.3.2 桌面端）的数字为准。
 
 ### 一键复核（不需要 docker 权限）
 
@@ -336,6 +389,10 @@ node windows/scripts/verify-desktop.mjs   # 桌面端离线自查：期望「57 
 node scripts/gen-source-hash.mjs --check  # 源码指纹：期望 ✓ 1736b31e358104b9（137 文件）
 unzip -l windows/dist/ScreenPlay_1.3.1_x64-portable.zip | tail -3   # 期望 11427 条目
 ```
+
+> 本节数字是 `1.3.1`（Windows 桌面端）发布时的现场值：当时 `verify-desktop.mjs` 是 **57 项**、
+> 源码指纹 `1736b31e358104b9`。当前（`1.3.2` 桌面端轮次）为 **80 项 / `--smoke` 91 项**、
+> 指纹 `f9864755a02c7576`，见本文顶部「1.3.2 桌面端」一节。
 
 产物口径（2026-10-03 本机 NAS 交叉编译 + 打包）：
 

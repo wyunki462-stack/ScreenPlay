@@ -64,6 +64,38 @@ export class AuthController {
     return { ok: true, user: result.user, expiresAt: result.expiresAt };
   }
 
+  /**
+   * Create the very first local account (first-run setup). Mirrors `login`
+   * exactly — same cookie attributes, same response shape — but the token still
+   * never appears in the body: the Android client reads it from `Set-Cookie`
+   * just like it does after a login.
+   */
+  @Post('setup')
+  async setup(
+    @Body() body: { username?: string; password?: string; remember?: boolean },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.auth.setup(
+      (body?.username ?? '').trim(),
+      body?.password ?? '',
+      req.headers['user-agent'],
+    );
+
+    const secure = (req.headers['x-forwarded-proto'] ?? '').toString().includes('https');
+    const attrs = [
+      `${SESSION_COOKIE}=${encodeURIComponent(result.token)}`,
+      'Path=/',
+      'HttpOnly',
+      'SameSite=Lax',
+    ];
+    if (body?.remember !== false) attrs.push(`Max-Age=${cookieMaxAge(this.auth)}`);
+    if (secure) attrs.push('Secure');
+    res.setHeader('Set-Cookie', attrs.join('; '));
+
+    return { ok: true, user: result.user, expiresAt: result.expiresAt };
+  }
+
   @Post('logout')
   logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     this.auth.logout(sessionTokenOf(req));

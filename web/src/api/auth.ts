@@ -28,6 +28,10 @@ export interface AuthSession {
   users: Array<{ username: string; gecos: string; uid: number }>;
   authenticated: boolean;
   user: SessionUser | null;
+  /** 服务端允许首次创建账户（AUTH_ALLOW_SETUP=1）。 */
+  allowSetup: boolean;
+  /** 服务端还没有任何本地账户：登录页应改为「创建账号」。 */
+  needsSetup: boolean;
 }
 
 const SESSION_KEY = ["auth-session"] as const;
@@ -63,6 +67,21 @@ export function useLogin() {
       }),
     onSuccess: () => {
       // Signed in: refetch the session and everything the login gate hid.
+      void queryClient.invalidateQueries();
+    },
+  });
+}
+
+export function useSetup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { username: string; password: string; remember?: boolean }) =>
+      apiFetch<{ ok: boolean; user: SessionUser; expiresAt: number }>("/auth/setup", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      // 账号已创建且已登录：刷新会话与登录守卫之前隐藏的所有数据。
       void queryClient.invalidateQueries();
     },
   });

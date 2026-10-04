@@ -132,14 +132,18 @@ fn read_build_info(root: &Path) -> (String, String) {
 // Port selection
 // ---------------------------------------------------------------------------
 
-/// `config.port` when set, otherwise the first bindable 127.0.0.1 port from 3210.
-pub fn pick_port(preferred: u16) -> u16 {
+/// `config.port` when set, otherwise the first bindable `<host>:<port>` from 3210.
+///
+/// 1.3.2 起 `host` 默认是 `0.0.0.0`：探测必须绑**同一个地址**，否则会出现
+/// 「127.0.0.1:3210 空闲」但后端绑 0.0.0.0:3210 却失败的假象（别的进程可能正好占着
+/// 3210 的某个具体网卡地址）。
+pub fn pick_port(host: &str, preferred: u16) -> u16 {
     if preferred > 0 {
         return preferred;
     }
     for offset in 0..PORT_PROBE_RANGE {
         let port = FIRST_PORT.saturating_add(offset);
-        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+        if TcpListener::bind((host, port)).is_ok() {
             return port;
         }
     }
@@ -389,7 +393,7 @@ fn run(app: &AppHandle) -> Result<(), String> {
     }
 
     // --- §5.3 port ---------------------------------------------------------
-    let port = pick_port(cfg.port);
+    let port = pick_port(&cfg.host, cfg.port);
 
     // --- §5.4 log wiring ---------------------------------------------------
     if let Err(e) = fs::create_dir_all(&log_dir) {
@@ -407,16 +411,26 @@ fn run(app: &AppHandle) -> Result<(), String> {
     config::append_line(
         &log_path,
         &format!(
-            "\n===== {} ScreenPlay 桌面壳启动（port={port}, data={}）=====",
+            "\n===== {} ScreenPlay 桌面壳启动（host={}, port={port}, data={}）=====",
             config::now_human(),
+            cfg.host,
             data_dir.display()
         ),
     );
 
+    // 「局域网地址」：给日志和人看的一行，方便手机/平板直接填地址。
+    let lan_ip = if cfg.lan_reachable() { lan_ipv4() } else { None };
+    if let Some(ip) = lan_ip {
+        config::append_line(&log_path, &format!("[backend] 局域网访问地址：http://{ip}:{port}/"));
+    }
+
     set_status(app, |s| {
         s.state = "starting".to_string();
         s.port = port;
-        s.message = format!("正在启动本地服务（端口 {port}）…");
+        s.message = match lan_ip {
+            Some(ip) => format!("正在启动本地服务（{ip}:{port}，局域网可访问）…"),
+            None => format!("正在启动本地服务（端口 {port}）…"),
+        };
         s.log_path = log_path.display().to_string();
     });
 
@@ -426,6 +440,20 @@ fn run(app: &AppHandle) -> Result<(), String> {
     let _ = fs::create_dir_all(&default_media);
 
     let (build_version, build_time) = read_build_info(&root);
+
+    // --- 「默认放行」：先让防火墙有规则，再让 node 开始监听 ------------------
+    //
+    // 顺序是刻意的：Windows 只有在「程序正在监听非回环地址且没有匹配的放行规则」时
+    // 才会弹它自己的「允许访问」对话框。规则先落地，用户就完全看不到那个弹窗。
+    // 这一步失败也不阻断启动，只写日志。
+    let fw = crate::firewall::ensure_allowed(
+        &cfg,
+        &data_dir,
+        cfg.port,
+        FIRST_PORT,
+        PORT_PROBE_RANGE,
+    );
+    config::append_line(&log_path, &format!("[firewall] {}", fw.describe()));
 
     // --- §5.4/§5.5 spawn ---------------------------------------------------
     let mut cmd = Command::new(&node_exe);
@@ -438,7 +466,8 @@ fn run(app: &AppHandle) -> Result<(), String> {
 
     let bin_dir = root.join("bin");
     cmd.env("PORT", port.to_string());
-    cmd.env("HOST", "127.0.0.1");
+    // 1.3.2 起默认 `0.0.0.0`（局域网可达）；后端 `backend/src/main.ts:102` 也认这个键。
+    cmd.env("HOST", &cfg.host);
     cmd.env("DATA_DIR", &data_dir);
     cmd.env("MEDIA_DIRS", media_dirs_env(&cfg, &data_dir));
     cmd.env("WEB_DIST", root.join("web"));
@@ -454,10 +483,13 @@ fn run(app: &AppHandle) -> Result<(), String> {
     cmd.env("BUILD_TIME", build_time);
 
     match cfg.auth.as_str() {
-        // Password was generated + persisted by config::ensure_admin_password().
+        // 默认路径：`AUTH_ALLOW_SETUP=1` ⇒ 首次打开网页自己创建账户（不生成随机密码）。
+        // 密码在 `config::ensure_admin_password()` 里生成 + 持久化（仅 allowSetup=false）。
         "local" => {
             cmd.env("AUTH_MODE", "local");
-            if !cfg.admin_password.is_empty() {
+            if cfg.allow_setup_env() {
+                cmd.env("AUTH_ALLOW_SETUP", "1");
+            } else if !cfg.admin_password.is_empty() {
                 cmd.env("AUTH_ADMIN_PASSWORD", &cfg.admin_password);
             }
         }
@@ -518,10 +550,16 @@ fn run(app: &AppHandle) -> Result<(), String> {
 
     config::append_line(&log_path, "[backend] 健康检查通过，正在打开主界面");
     let url = format!("http://127.0.0.1:{port}/");
+    // 本机窗口与健康检查始终走回环地址（host 绑 0.0.0.0 时 127.0.0.1 一样可达）；
+    // 后面这段只是把「手机/平板该填哪个地址」告诉用户。
+    let lan_hint = match lan_ip {
+        Some(ip) => format!("；局域网地址 http://{ip}:{port}/"),
+        None => String::new(),
+    };
     set_status(app, |s| {
         s.state = "ready".to_string();
         s.port = port;
-        s.message = format!("已就绪，正在打开 {url}");
+        s.message = format!("已就绪，正在打开 {url}{lan_hint}");
     });
     navigate_to_main(app, &url);
     Ok(())
@@ -578,6 +616,20 @@ fn navigate_to_main(app: &AppHandle, url: &str) {
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
+
+/// 本机在局域网里的 IPv4 地址（拿不到就 `None`）。
+///
+/// 手法：把一个 UDP socket `connect` 到外网地址 —— 不发任何数据包，`connect` 只做一次
+/// 路由查找，于是 `local_addr()` 就给出「系统认为去局域网该走的那块网卡」的地址。
+/// 这样不必引入 `getifaddrs`/`netdev` 之类依赖，完全离线也有效。
+fn lan_ipv4() -> Option<std::net::Ipv4Addr> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    match sock.local_addr().ok()? {
+        SocketAddr::V4(addr) => Some(*addr.ip()),
+        _ => None,
+    }
+}
 
 /// `<DATA_DIR>\media` first, then any user-configured extras, `;`-joined.
 fn media_dirs_env(cfg: &Config, data_dir: &Path) -> String {

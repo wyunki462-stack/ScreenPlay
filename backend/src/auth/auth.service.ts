@@ -12,7 +12,7 @@
  * Sessions live in the SQLite data volume, so a container restart keeps the user
  * signed in. Nothing here talks to any external service.
  */
-import { Injectable, Logger, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
@@ -97,6 +97,13 @@ export class AuthService implements OnModuleInit {
       this.logger.warn('认证模式：本地账户（回退）。如需使用 NAS 系统账户，请按 docker-compose.yml 挂载宿主 /etc。');
     }
 
+    if (this.enabled && this.setupAllowed) {
+      // First-run setup mode (Windows desktop default): do NOT seed an account —
+      // the login page creates it instead, so the user picks their own password.
+      this.logger.log('本地认证已开启：尚未创建账户，请在登录页创建（AUTH_ALLOW_SETUP=1 生效）');
+      return;
+    }
+
     // Always seed a local admin so there is a way in even if the mount is later
     // removed or the system account cannot be verified.
     await this.ensureLocalAdmin();
@@ -108,6 +115,21 @@ export class AuthService implements OnModuleInit {
 
   get mode(): 'system' | 'local' {
     return this.config.get('authMode', { infer: true });
+  }
+
+  /** Whether the first-run "create account" flow is enabled (`AUTH_ALLOW_SETUP`). */
+  get setupAllowed(): boolean {
+    return this.config.get('authAllowSetup', { infer: true });
+  }
+
+  /** How many app-local accounts exist (NAS system accounts are never counted). */
+  localUserCount(): number {
+    return this.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM auth_users')?.c ?? 0;
+  }
+
+  /** This server still has to be set up before anyone can sign in. */
+  needsSetup(): boolean {
+    return this.enabled && this.setupAllowed && this.localUserCount() === 0;
   }
 
   private sessionTtlMs(): number {
@@ -271,9 +293,42 @@ export class AuthService implements OnModuleInit {
     return res.changes;
   }
 
+  // --------------------------------------------------------------- setup ---
+
+  /**
+   * Create the very first app-local account (Windows desktop first-run flow).
+   *
+   * Only reachable while `AUTH_ALLOW_SETUP` is on and no local account exists;
+   * once one account is written this permanently refuses, so the endpoint cannot
+   * be reused to add accounts later. Linux/Docker keeps the seeded `admin` path
+   * because the switch defaults to off.
+   */
+  async setup(username: string, password: string, userAgent?: string): Promise<LoginResult> {
+    if (!this.enabled || !this.setupAllowed) {
+      throw new ForbiddenException('当前服务端未开启首次创建账户（需要 AUTH_ALLOW_SETUP=1）');
+    }
+    if (this.localUserCount() > 0) {
+      throw new ForbiddenException('该服务端已经创建过账户，请直接登录');
+    }
+    const name = username.trim();
+    if (!/^[A-Za-z0-9._-]{2,32}$/.test(name)) {
+      throw new BadRequestException('用户名需为 2–32 位字母、数字、点、下划线或连字符');
+    }
+    if (password.length < 8) {
+      throw new BadRequestException('密码至少 8 位');
+    }
+    await this.setLocalPassword(name, password, name);
+    this.logger.log(`已创建首个本地账户：${name}（首次创建账户流程）`);
+    return this.createSession(name, 'local', userAgent);
+  }
+
   // --------------------------------------------------------------- login ---
 
   async login(username: string, password: string, userAgent?: string): Promise<LoginResult> {
+    if (this.needsSetup()) {
+      throw new UnauthorizedException('该服务端还没有账户，请先在服务器本机打开网页创建账户');
+    }
+
     const provider = this.effectiveProvider();
 
     if (provider === 'system') {
@@ -383,6 +438,8 @@ export class AuthService implements OnModuleInit {
     provider: 'system' | 'local';
     systemAvailable: boolean;
     reason: string | null;
+    allowSetup: boolean;
+    needsSetup: boolean;
     users: Array<{ username: string; gecos: string; uid: number }>;
   } {
     const systemAvailable = this.systemUsers.available();
@@ -392,6 +449,8 @@ export class AuthService implements OnModuleInit {
       provider: this.effectiveProvider(),
       systemAvailable,
       reason: this.mode === 'system' ? this.systemUsers.unavailableReason() : null,
+      allowSetup: this.setupAllowed,
+      needsSetup: this.needsSetup(),
       users: systemAvailable ? this.systemUsers.loginableUsers() : [],
     };
   }

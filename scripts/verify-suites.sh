@@ -41,7 +41,7 @@ run "typecheck-web" npx tsc --noEmit -p web/tsconfig.json
 for s in review-pagination-test metacritic-reviews-test metacritic-api-test metacritic-crawl-test \
   media-reviews-e2e duration-cache-e2e poster-rotation-e2e poster-ui-ssr \
   requirements-ui poster-merge-unit achievement-icon-url password-change sqlite-vacuum \
-  media-delete-e2e android-auth-bearer; do
+  media-delete-e2e android-auth-bearer auth-setup; do
   run "$s" node "backend/scripts/verify/$s.mjs"
 done
 run "verify-build-artifacts" env APP_DIR="$PWD" sh scripts/verify-build-artifacts.sh

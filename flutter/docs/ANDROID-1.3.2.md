@@ -16,8 +16,8 @@ Web 端」，所以修法一律以 Web 端既有实现为基准，并补了离�
 | --- | --- |
 | Flutter 版号 | `flutter/pubspec.yaml`：`1.3.1+2` → **`1.3.2+3`**（`versionCode` 3、`versionName` 1.3.2） |
 | 改动文件 | `flutter/lib/models/models.dart`、`flutter/lib/widgets/game_card.dart`、`flutter/lib/screens/home_screen.dart`；新增测试 `flutter/test/home_reorder_test.dart`、`flutter/test/game_card_carousel_test.dart` |
-| 后端 / Web | **未改**。源码指纹 `521c4985d95f713c`（137 文件）不变；服务端 1.3.2 的图标修复与本轮无关 |
-| Windows / Linux 桌面端 | 未改（`windows/` 仍 `1.3.1`） |
+| 后端 / Web | 本轮未改（发布时现场值：源码指纹 `521c4985d95f713c`，137 文件；服务端 1.3.2 的图标修复与本轮无关）。**同日稍后的 Windows 桌面端轮次**改了 `web/src` 登录页与 `backend/src` 鉴权 ⇒ 当前指纹 `f9864755a02c7576`，与本轮 APK 无关 |
+| Windows / Linux 桌面端 | 本轮未改（当时 `windows/` 仍 `1.3.1`；同日稍后 Windows 提升到 `1.3.2`，见 `windows/docs/RELEASE-1.3.2.md`） |
 | 为什么与后端同版号 | 同一发布轮次的两端载体：服务端 `1.3.2`（成就图标归一化）+ 安卓端 `1.3.2+3`。安装包版本号只影响 App，不影响任何 HTTP 契约 |
 
 ---
@@ -155,9 +155,14 @@ cd flutter
 source /tmp/sp-android/env.sh   # 本机 Flutter 3.24.5 / JDK 17 / SDK 34
 flutter analyze                 # 0 error / 0 warning（8 条既有 info）
 flutter test                    # 52 项通过 / 1 项跳过 / 0 失败
-cd .. && bash scripts/verify-suites.sh          # 19 项通过 / 0 项失败
-node scripts/gen-source-hash.mjs --check        # ✓ 521c4985d95f713c（137 文件，未变）
+cd .. && bash scripts/verify-suites.sh          # 19 项通过 / 0 项失败（当时）
+node scripts/gen-source-hash.mjs --check        # ✓ 521c4985d95f713c（137 文件，本轮未变）
 ```
+
+> 上面两行是**本轮发布时的现场值**：`verify-suites.sh` 当时 19 项、指纹 `521c4985d95f713c`。
+> 同日稍后的 **Windows 桌面端 1.3.2 轮次**改了 `web/src`（登录页「创建账户」）与 `backend/src`
+> （`AUTH_ALLOW_SETUP`），所以现在 `--check` 期望 **`f9864755a02c7576`**、套件为 **20 项**
+> —— 这不影响本轮三个 APK（安卓端不打包 `web/src`，服务端接口形状未变）。
 
 - 新增 9 条用例（`1.3.1+2` 为 43 通过 + 1 跳过）：
   - `flutter/test/home_reorder_test.dart`（3 条）：①拖到卡片 C 右半 → 立刻乐观重排（`A.left > C.left`）

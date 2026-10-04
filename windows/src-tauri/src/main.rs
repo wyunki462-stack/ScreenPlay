@@ -11,6 +11,7 @@
 
 mod backend;
 mod config;
+mod firewall;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -104,17 +105,27 @@ fn build_state(app: &AppHandle) -> AppState {
     }
 
     let mut cfg = config::load_or_init(&data_dir);
-    // `auth == "local"` generates + persists the admin password on first run.
-    if config::ensure_admin_password(&data_dir, &mut cfg).is_some() {
-        eprintln!("[shell] 已启用本地登录，管理员密码见 {}/{}", data_dir.display(), config::PASSWORD_FILE);
+    // 1.3.2 默认（`allowSetup: true`）：不生成随机密码，第一次打开网页时自己创建账户。
+    if cfg.allow_setup_env() {
+        eprintln!("[shell] 本地登录：首次在网页上创建账户（config.json 的 allowSetup=true）");
+    } else if config::ensure_admin_password(&data_dir, &mut cfg).is_some() {
+        // 仅当用户在 config.json 里显式关掉 allowSetup 时才生成随机密码。
+        eprintln!(
+            "[shell] 已启用本地登录，备用管理员密码见 {}/{}",
+            data_dir.display(),
+            config::PASSWORD_FILE
+        );
     }
 
     let resource_root = backend::resource_root(&exe_dir);
     let log_path = data_dir.join("logs").join(config::log_file_name());
 
     eprintln!(
-        "[shell] data_dir={} (portable={portable}) resources={}",
+        "[shell] data_dir={} (portable={portable}) host={} auth={} firewall={} resources={}",
         data_dir.display(),
+        cfg.host,
+        cfg.auth,
+        cfg.firewall,
         resource_root.display()
     );
 

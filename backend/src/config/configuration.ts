@@ -42,6 +42,11 @@ export interface AppConfig {
   authEnabled: boolean;
   /** `system` = NAS accounts via mounted /etc; `local` = app-managed accounts. */
   authMode: 'system' | 'local';
+  /**
+   * Allow the login page to create the first local account when none exists
+   * (`AUTH_ALLOW_SETUP=1`). Off by default, so Linux/Docker keeps seeding `admin`.
+   */
+  authAllowSetup: boolean;
   /** How long a session stays valid; drives "记住登录状态". */
   authSessionDays: number;
   /** Where the host user database is mounted inside the container. */
@@ -143,6 +148,7 @@ export default function configuration(): AppConfig {
     // app database. Nothing is ever sent to a cloud service.
     authEnabled: !['1', 'true', 'yes'].includes((process.env.AUTH_DISABLED ?? '').toLowerCase()),
     authMode: (process.env.AUTH_MODE ?? 'system').toLowerCase() === 'local' ? 'local' : 'system',
+    authAllowSetup: ['1', 'true', 'yes'].includes((process.env.AUTH_ALLOW_SETUP ?? '').toLowerCase()),
     authSessionDays: int(process.env.AUTH_SESSION_DAYS, 30),
     authPasswdPath: process.env.AUTH_PASSWD_PATH || '/host-etc/passwd',
     authShadowPath: process.env.AUTH_SHADOW_PATH || '/host-etc/shadow',

@@ -165,7 +165,7 @@ function main() {
   console.log('='.repeat(72));
 
   // 与 prepare-backend 同规则：包名取 Windows 版号（windows/package.json），
-  // 该文件承载 1.3.1 这类「只有 Windows 端」的版本。
+  // 该文件承载 1.3.2 这类「只有 Windows 端」的版本。
   const winPkg = JSON.parse(fs.readFileSync(path.join(WIN_DIR, 'package.json'), 'utf8'));
   const version = winPkg.version || '0.0.0';
 

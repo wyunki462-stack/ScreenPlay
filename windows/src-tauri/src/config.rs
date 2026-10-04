@@ -20,6 +20,12 @@ pub const PORTABLE_FLAG: &str = "portable.flag";
 /// Name of the file the generated local password is written to (DESIGN §5/§7).
 pub const PASSWORD_FILE: &str = "初始密码.txt";
 
+/// Wildcard bind — 默认值。1.3.2 起桌面端默认监听 `0.0.0.0`，同一局域网里的
+/// 手机/平板/电视盒子都能直接访问；Tauri 窗口与健康检查仍然走 `127.0.0.1`。
+pub const LAN_HOST: &str = "0.0.0.0";
+/// 仅本机（旧行为，可在 `config.json` 里显式切回）。
+pub const LOOPBACK_HOST: &str = "127.0.0.1";
+
 /// The shell configuration, mirroring `DESIGN.md` §7 one-to-one.
 ///
 /// `#[serde(default)]` means a `config.json` written by an older build (or one
@@ -31,10 +37,20 @@ pub struct Config {
     pub mode: String,
     /// Preferred port; `0` = auto-probe from 3210 upwards.
     pub port: u16,
+    /// `0.0.0.0` (**default**: 局域网内其它设备也能访问) | `127.0.0.1`（仅本机）。
+    pub host: String,
     /// Used when `mode == "external"`.
     pub base_url: String,
-    /// `off` (default) | `local` | `system`.
+    /// `local` (default) | `system` | `off`（仅当 `host == "127.0.0.1"` 时允许）.
     pub auth: String,
+    /// 首次启动允许在网页上「创建本地账户」（默认开）。
+    ///
+    /// `true` 时不生成随机管理员密码，而是把后端切到 `AUTH_ALLOW_SETUP=1`，
+    /// 由登录页创建第一个账户；`false` 时退回旧行为（随机密码 + `初始密码.txt`）。
+    pub allow_setup: bool,
+    /// `auto` (default): 确保 Windows 防火墙放行本程序（首次会弹一次 UAC）.
+    /// `off`: 不动防火墙，由用户自己 `netsh advfirewall` 配置。
+    pub firewall: String,
     /// Extra media directories; `<DATA_DIR>/media` is always prepended.
     pub media_dirs: Vec<String>,
     /// Reserved for a future tray mode; kept so the file matches DESIGN §7.
@@ -49,8 +65,11 @@ impl Default for Config {
         Self {
             mode: "embedded".to_string(),
             port: 0,
+            host: LAN_HOST.to_string(),
             base_url: String::new(),
-            auth: "off".to_string(),
+            auth: "local".to_string(),
+            allow_setup: true,
+            firewall: "auto".to_string(),
             media_dirs: Vec::new(),
             close_to_tray: false,
             admin_password: String::new(),
@@ -65,6 +84,16 @@ impl Config {
         let mode = self.mode.trim().to_ascii_lowercase();
         self.mode = if mode == "external" { "external" } else { "embedded" }.to_string();
 
+        // host：只认「仅本机」的几种写法，其余一律按「监听全部网卡」处理。老版本的
+        // config.json 没有这个键，`#[serde(default)]` 会填上默认值 —— 也就是说升级
+        // 安装的桌面端会从「仅本机」自动变成「局域网可访问」。
+        let host = self.host.trim().to_ascii_lowercase();
+        self.host = match host.as_str() {
+            "127.0.0.1" | "localhost" | "loopback" | "local-only" | "localonly" => LOOPBACK_HOST,
+            _ => LAN_HOST,
+        }
+        .to_string();
+
         let auth = self.auth.trim().to_ascii_lowercase();
         self.auth = match auth.as_str() {
             "local" => "local",
@@ -73,7 +102,31 @@ impl Config {
         }
         .to_string();
 
+        // 安全不变量：既然默认对局域网开放，就不允许「开放但无鉴权」——否则同一网段里
+        // 任何设备都能读走整个库，甚至调 `DELETE /api/media/:id`。想关鉴权就显式把
+        // host 写回 127.0.0.1（那才是 1.3.1 及以前的行为）。
+        if self.lan_reachable() && self.auth == "off" {
+            self.auth = "local".to_string();
+        }
+
+        let firewall = self.firewall.trim().to_ascii_lowercase();
+        self.firewall = match firewall.as_str() {
+            "off" | "0" | "false" | "none" | "manual" | "skip" => "off",
+            _ => "auto",
+        }
+        .to_string();
+
         self.base_url = self.base_url.trim().to_string();
+    }
+
+    /// 是否对局域网开放（默认 `0.0.0.0` = 是；`127.0.0.1` = 否）。
+    pub fn lan_reachable(&self) -> bool {
+        self.host != LOOPBACK_HOST
+    }
+
+    /// 后端是否要开 `AUTH_ALLOW_SETUP`（首次启动在网页上创建账户）。
+    pub fn allow_setup_env(&self) -> bool {
+        self.allow_setup && self.auth == "local"
     }
 }
 
@@ -198,10 +251,17 @@ fn reanchor_appdata(from_tauri: PathBuf, _exe_dir: &Path) -> PathBuf {
 /// once, persist it in `config.json` (`adminPassword`) **and** drop a copy in
 /// `<DATA_DIR>/初始密码.txt` so a first-time user can read it.
 ///
+/// 1.3.2 起默认**不**走这条路：`allowSetup == true` 时后端开 `AUTH_ALLOW_SETUP=1`，
+/// 第一次打开网页自己创建账户（用户选的方案），这里直接返回 `None`。只有用户
+/// 在 `config.json` 里显式把 `allowSetup` 改成 `false` 时才生成随机密码。
+///
 /// Returns the password to feed into `AUTH_ADMIN_PASSWORD` (or `None` when
 /// another auth mode is active).
 pub fn ensure_admin_password(data_dir: &Path, cfg: &mut Config) -> Option<String> {
     if cfg.auth != "local" {
+        return None;
+    }
+    if cfg.allow_setup {
         return None;
     }
     if !cfg.admin_password.is_empty() {
@@ -214,12 +274,13 @@ pub fn ensure_admin_password(data_dir: &Path, cfg: &mut Config) -> Option<String
 
     let _ = fs::create_dir_all(data_dir);
     let note = format!(
-        "ScreenPlay 本机管理员密码\r\n\
+        "ScreenPlay 备用管理员密码\r\n\
          ============================\r\n\
          用户名：admin\r\n\
          密码：{pwd}\r\n\r\n\
-         此密码由程序首次启动时随机生成，并保存在 config.json 的 adminPassword 字段中。\r\n\
-         如需更换，请删除 config.json 里的 adminPassword 后重新启动。\r\n\
+         默认情况下，首次启动会在网页上让你「创建本地账户」，本文件用不到。\r\n\
+         只有把 config.json 里的 allowSetup 改成 false 时，才会使用上面这个随机密码。\r\n\
+         此密码保存在 config.json 的 adminPassword 字段中；如需更换，删掉该字段后重启即可。\r\n\
          生成时间：{}\r\n",
         now_human()
     );

@@ -6,6 +6,53 @@
 
 ---
 
+## [1.3.2 桌面端] — 2026-10-04（Windows：默认局域网访问 + 防火墙默认放行 + 首次启动在网页创建账户）
+
+**这一轮只改 Windows 桌面端的默认行为**，且桌面端这次**与 Linux 服务端同号**（都叫 `1.3.2`，不再是
+`1.3.1` 那样的独立版号线；`windows/package.json` / `tauri.conf.json` / `Cargo.toml` 三处同步为 `1.3.2`）。
+改的是用户直接能感到的三件事：
+
+1. **默认对局域网开放** —— 监听地址从写死的 `127.0.0.1` 改成配置项 `host`（默认 `0.0.0.0`），
+   同一局域网里的手机、平板、电视盒子打开 `http://<本机局域网 IP>:<端口>/` 即可用；
+   本机窗口、健康检查依旧走 `http://127.0.0.1:<端口>/`（绑 `0.0.0.0` 时回环一样可达）。
+   后端本来就默认绑 `0.0.0.0`（`backend/src/main.ts:102`），本次只是让壳别再压回环。
+2. **程序默认放行（防火墙）** —— 新增 `windows/src-tauri/src/firewall.rs`（不引第三方 crate）：
+   首次启动**在监听之前**先查 `ScreenPlay` 规则（只读查询不需要管理员权限），缺失就写
+   `<数据目录>\firewall\allow-screenplay.ps1` 并提权执行**一次**（一次 UAC），再写
+   `attempted.txt` 保证不反复弹窗；规则按 TCP 端口段 `3210-3309` 放行，段内自动换端口不失效、
+   也不依赖 `node.exe` 路径。拒绝授权 / 无 PowerShell / 组策略禁止**都不阻断启动**（退回系统自带的
+   「允许访问」对话框，日志里给出以管理员身份手工跑脚本的路径）。`config.json` 的 `"firewall": "off"`
+   可让壳完全不碰防火墙；免安装启动器（`launcher/launch.mjs`）用同一规则、同一份脚本内容。
+3. **首次启动在网页创建账户** —— 因为默认不再只绑回环，「鉴权关闭」等于把整个媒体库
+   （含 `DELETE /api/media/:id` 这类接口）对整栋楼开放，所以默认 `auth` 由 `off` 改为 `local`，
+   并加了一条安全不变量：**对局域网开放时 `auth: "off"` 会被自动提升为 `local`**（要关鉴权必须同时把
+   `host` 改回 `127.0.0.1`）。后端新增 `AUTH_ALLOW_SETUP` 与 `POST /api/auth/setup`
+   （HTTP 201，会话 token **只在 `Set-Cookie: screenplay_session=…; HttpOnly`**，响应体不含 token；
+   `/api/auth/setup` 进 `PUBLIC_PATHS`，`login` 在「还没有账户」时 401 并提示去网页创建）；
+   登录页 `web/src/pages/Login.tsx` 在 `session.needsSetup` 时直接渲染「创建账户」表单（zh/en 共 15 个
+   `setup.*` 键）。`"allowSetup": false` 时完全回到旧行为（随机密码写 `<数据目录>\初始密码.txt`，
+   该文件文案已改为「备用管理员密码」）；已有账户的老用户 `needsSetup=false`，登录照旧。
+
+**范围与兼容**：改动落在 `windows/**`、`web/src/**`（登录页与 i18n，三端共用）、`backend/src/**`
+（鉴权三处 + 配置键）。**没有**新增/修改任何既有 HTTP 接口形状，数据库结构未动，`flutter/**` 一行未改，
+Dockerfile 与 `docker-compose*` 未动。因此 Android 端无需重打包，Web/Linux 侧重建后自动带上「创建账户」页。
+源码指纹 `521c4985d95f713c` → **`f9864755a02c7576`**（仍是 137 个文件，`.source-hash` 已重新生成；
+下面 `[1.3.2]` 条目里的 `521c4985d95f713c` 是那次发布时的现场值）。
+
+**有意保留**：仍是 HTTP（不引入自签证书）；不改 NSIS 的 `installMode: "currentUser"`（放行走 PowerShell
+提权，两种形态行为一致）；规则按端口段而非 exe 路径；除 `config.json` 外不自动改写用户任何配置。
+
+**验证**（本机 NAS，2026-10-04）：`npx tsc --noEmit` 后端/前端 EXIT=0；`node windows/scripts/verify-desktop.mjs`
+**80 项通过 / 0 项失败**；新增 `node windows/scripts/verify-lan.mjs` **20 项通过 / 0 项失败**（真拉启动器，
+断言 `0.0.0.0` 监听、用局域网 IP 打开网页 200、首次 `needsSetup:true`、无凭证 401、`POST /api/auth/setup` 201
+且 token 只在 cookie、重复 setup 403）；`bash scripts/verify-suites.sh` **20 项通过 / 0 项失败**；
+`node scripts/gen-source-hash.mjs --check` ✓ `f9864755a02c7576`（137 文件）。
+
+**产物**：本机没有 Windows 也没有 Rust 工具链（`cargo`/`rustc` 均无），**本轮未产出 exe / 安装包 / zip**，
+真机编译与防火墙行为必须在 Windows 上验收 —— 步骤与清单见
+[`windows/docs/RELEASE-1.3.2.md`](windows/docs/RELEASE-1.3.2.md)（`npm run prepare` → `npx tauri build` →
+`npm run portable:win` → `npm run verify:win` → `npm run verify:lan`）。
+
 ## [1.3.2] — 2026-10-04（服务端：Steam 成就图标 URL 归一化 + 存量数据一次性修复；安卓端 `1.3.2+3`：卡片比例 / 拖拽排序 / 轮播同步三项交互修复）
 
 **只动后端（`backend/src`）**：源码指纹由 `1.3.1+2` 的 `a0e18c54d5340a97` 变为
@@ -18,7 +65,7 @@
 **`1.3.2+3`**（`versionCode` 3 / `versionName` 1.3.2，与后端同一发布版号），三个分包重新构建
 （详见下方「安卓端（`1.3.2+3`）」一节）；`1.3.1+2` 的旧包除这三项交互外行为完全相同。
 Windows 桌面端内置的是旧 `backend/dist`，若要一并带上服务端修复需在 Windows 机重新打包
-（届时版号同样可为 `1.3.2`）。
+（届时版号同样可为 `1.3.2`）—— 该改动已在同日完成，见上方 `[1.3.2 桌面端]` 条目。
 
 ### 修复：Steam 成就图标 81% 是「双重 URL」，怎么取都 502
 

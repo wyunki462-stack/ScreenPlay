@@ -63,7 +63,8 @@ ScreenPlay_<version>_x64-portable/
 | 其他运行库 | 无（SQLite 与图像处理均已静态打包进 `resources/`） |
 | 磁盘占用 | 安装包：见 §5；安装后展开约 320–350 MB（主要为 `node.exe`、`node_modules`、`ffmpeg`）；数据库与缩略图会随媒体库增长 |
 | 内存占用 | 主进程（WebView2）+ 后端 Node 进程，空闲约 200–400 MB，扫描/转码时更高 |
-| 端口 | 默认从 **3210** 起自动探测空闲端口，仅监听 `127.0.0.1`（`embedded` 模式）；端口冲突时壳会自动换端口 |
+| 端口 | 默认从 **3210** 起自动探测空闲端口，监听地址默认 **`0.0.0.0`**（`embedded` 模式；`1.3.2` 起，同一局域网可通过 `http://<本机局域网 IP>:<端口>/` 访问，地址见启动日志）；端口冲突时壳会自动换端口；只想本机访问就把 `config.json` 的 `"host"` 设成 `"127.0.0.1"` |
+| 防火墙 | `1.3.2` 起默认放行：首次启动请求一次管理员授权，添加名为 `ScreenPlay` 的入站规则（TCP `3210-3309`）。拒绝授权不影响使用（系统会弹它自己的「允许访问」，点允许即可）；标记文件 `<数据目录>\firewall\attempted.txt`，手工脚本同目录 `allow-screenplay.ps1` |
 | 网络 | 仅在使用联网元数据源 / 下载代理媒体时需要 |
 
 ### 3.1 启动速度与内存（对应需求「精简优化」）
@@ -128,8 +129,11 @@ ScreenPlay_<version>_x64-portable/
 {
   "mode": "embedded",
   "port": 0,
+  "host": "0.0.0.0",
   "baseUrl": "",
-  "auth": "off",
+  "auth": "local",
+  "allowSetup": true,
+  "firewall": "auto",
   "mediaDirs": [],
   "closeToTray": false
 }
@@ -139,8 +143,11 @@ ScreenPlay_<version>_x64-portable/
 | --- | --- | --- |
 | `mode` | `embedded`（默认）/ `external` | `embedded` = 壳自己拉起随包后端；`external` = **不启动后端**，直接连 `baseUrl` 指向的已有服务（例如 NAS 上跑着的 ScreenPlay） |
 | `port` | `0` = 自动探测；或固定端口（如 `3210`） | 端口冲突时改这里 |
+| `host` | `0.0.0.0`（默认）/ `127.0.0.1`（也可写 `localhost`/`loopback`/`local-only`） | `1.3.2` 起默认整个局域网可访问；写回环地址则表示仅本机 |
 | `baseUrl` | 形如 `http://192.168.1.10:3210` | 仅 `external` 模式使用 |
-| `auth` | `off`（默认）/ `local` / `system` | 桌面端默认关闭鉴权，见 `windows/docs/PARITY.md` 差异说明 ⑥ |
+| `auth` | `local`（默认）/ `off` / `system` | 见 `windows/docs/PARITY.md` 差异说明 ⑥ 与 ⑨。**对局域网开放时不允许 `off`**（会被自动提升为 `local`） |
+| `allowSetup` | `true`（默认）/ `false` | `true` = 首次打开网页时自己创建账户；`false` = 首启生成随机密码并写入 `<DATA_DIR>\初始密码.txt` |
+| `firewall` | `auto`（默认）/ `off` | `auto` = 首次运行请求一次管理员授权，添加 `ScreenPlay` 入站放行规则（TCP `3210-3309`）；`off` = 完全不碰防火墙 |
 | `mediaDirs` | 媒体库目录列表 | 空 = 用 `<DATA_DIR>\media` |
 | `closeToTray` | `true` / `false` | 关闭窗口时是否最小化到托盘 |
 

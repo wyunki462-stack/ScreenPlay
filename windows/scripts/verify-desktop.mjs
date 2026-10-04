@@ -183,6 +183,101 @@ if (exePath) {
   }
 }
 
+// ───────── 1.3.2 行为断言：默认局域网监听 + 防火墙默认放行 + 版号一致（源码级，无需构建） ─────────
+section('1.3.2 行为断言（默认监听 0.0.0.0、程序默认放行、版号一致）');
+{
+  const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '');
+  const rel = (p) => path.relative(WIN, p);
+  const backendRs = path.join(WIN, 'src-tauri', 'src', 'backend.rs');
+  const configRs = path.join(WIN, 'src-tauri', 'src', 'config.rs');
+  const firewallRs = path.join(WIN, 'src-tauri', 'src', 'firewall.rs');
+  const mainRs = path.join(WIN, 'src-tauri', 'src', 'main.rs');
+  const launchJs = path.join(WIN, 'launcher', 'launch.mjs');
+  const tauriConfJson = path.join(WIN, 'src-tauri', 'tauri.conf.json');
+  const winPkgJson = path.join(WIN, 'package.json');
+  const cargoToml = path.join(WIN, 'src-tauri', 'Cargo.toml');
+  const sBackend = read(backendRs);
+  const sConfig = read(configRs);
+  const sFirewall = read(firewallRs);
+  const sMain = read(mainRs);
+  const sLaunch = read(launchJs);
+  let winVer = '';
+  let tauriVer = '';
+  try {
+    winVer = JSON.parse(read(winPkgJson)).version || '';
+  } catch (e) {
+    bad(`${rel(winPkgJson)} 可解析`, e.message);
+  }
+  try {
+    tauriVer = JSON.parse(read(tauriConfJson)).version || '';
+  } catch (e) {
+    bad(`${rel(tauriConfJson)} 可解析`, e.message);
+  }
+  const cargoVer = (read(cargoToml).match(/^version = "([^"]+)"/m) || [])[1] || '';
+
+  // ① 版号三件套（+ Cargo.lock）必须同步，否则 exe 属性/安装包名会不一致
+  check(winVer === '1.3.2', `${rel(winPkgJson)} 版号为 1.3.2`, winVer);
+  check(tauriVer === winVer && !!tauriVer, `${rel(tauriConfJson)} 版号与 package.json 一致`, tauriVer);
+  check(cargoVer === winVer && !!cargoVer, `${rel(cargoToml)} 版号与 package.json 一致`, cargoVer);
+  check(
+    new RegExp(`name = "screenplay"\\nversion = "${winVer}"`).test(read(path.join(WIN, 'src-tauri', 'Cargo.lock'))),
+    'Cargo.lock 里 screenplay 的版号同步（否则 cargo 会改写锁文件）',
+    winVer,
+  );
+
+  // ② 壳：监听地址来自 config.host，默认 0.0.0.0（1.3.2 起局域网可访问）
+  check(/LAN_HOST/.test(sConfig) && /"0\.0\.0\.0"/.test(sConfig), `${rel(configRs)} 默认监听 0.0.0.0（LAN_HOST）`);
+  check(/pub fn lan_reachable\(&self\)/.test(sConfig), `${rel(configRs)} 提供 lan_reachable()`);
+  check(/cmd\.env\("HOST", &cfg\.host\)/.test(sBackend), `${rel(backendRs)} 把 config.host 传给后端的 HOST`);
+  check(!/cmd\.env\("HOST", "127\.0\.0\.1"\)/.test(sBackend), `${rel(backendRs)} 不再硬编码 HOST=127.0.0.1`);
+  check(/pub fn pick_port\(host: &str, preferred: u16\)/.test(sBackend), `${rel(backendRs)} pick_port 按 host 探测端口（0.0.0.0 下不会误判）`);
+  // 安全不变量：一旦对局域网开放，就不允许无鉴权
+  check(
+    /self\.auth == "off"/.test(sConfig) && /self\.auth = "local"/.test(sConfig),
+    `${rel(configRs)}：局域网可达且 auth=off 时强制降级为 local（不裸奔）`,
+  );
+  check(
+    /AUTH_ALLOW_SETUP/.test(sBackend) && /pub fn allow_setup_env/.test(sConfig),
+    '首次启动「在网页上创建账户」已接线（allowSetup → AUTH_ALLOW_SETUP=1）',
+  );
+
+  // ③ 程序默认放行：防火墙规则 + 先放行后监听
+  check(!!sFirewall, `${rel(firewallRs)} 存在（防火墙放行实现）`);
+  check(/RULE_NAME: &str = "ScreenPlay"/.test(sFirewall), '防火墙规则名固定为 ScreenPlay（不会重复堆规则）');
+  check(
+    /New-NetFirewallRule/.test(sFirewall) && /netsh advfirewall firewall add rule/.test(sFirewall),
+    '防火墙脚本用 New-NetFirewallRule 且保留 netsh 兜底（老系统可用）',
+  );
+  check(/-Verb RunAs/.test(sFirewall), '放行走一次 UAC 提权（检查规则本身不提权）');
+  check(/ATTEMPTED_FILE/.test(sFirewall), '用户拒绝后只问一次（attempted.txt 标记）');
+  check(
+    /crate::firewall::ensure_allowed/.test(sBackend) && /mod firewall;/.test(sMain),
+    `${rel(backendRs)} spawn 后端子进程前调用 ensure_allowed（先放行后监听）`,
+  );
+
+  // ④ 启动器（免安装 webapp 形态）与壳行为一致
+  check(/HOST,/.test(sLaunch) && !/HOST: '127\.0\.0\.1'/.test(sLaunch), `${rel(launchJs)} 不再硬编码 HOST`);
+  check(/ensureFirewall\(/.test(sLaunch), `${rel(launchJs)} 启动前调用 ensureFirewall()`);
+  check(/lanUrls\(/.test(sLaunch), `${rel(launchJs)} 打印局域网访问地址（手机/平板可直接访问）`);
+  check(/AUTH_ALLOW_SETUP/.test(sLaunch), `${rel(launchJs)} 传 AUTH_ALLOW_SETUP=1`);
+  check(
+    /HOST === '0\.0\.0\.0' && authMode\(\) === 'off'/.test(sLaunch),
+    `${rel(launchJs)} 同样有「局域网 + auth=off ⇒ local」不变量`,
+  );
+  // 端口段必须与壳里的 FIRST_PORT/PORT_PROBE_RANGE 对齐，否则改端口后放行失效
+  const first = Number((sBackend.match(/FIRST_PORT: u16 = (\d+)/) || [])[1]);
+  const range = Number((sBackend.match(/PORT_PROBE_RANGE: u16 = (\d+)/) || [])[1]);
+  const fwFirst = Number((sLaunch.match(/FW_FIRST = (\d+)/) || [])[1]);
+  const fwLast = Number((sLaunch.match(/FW_LAST = (\d+)/) || [])[1]);
+  check(
+    first > 0 && range > 0 && fwFirst === first && fwLast === first + range - 1,
+    '启动器放行端口段与壳的端口探测区间一致',
+    `启动器 ${fwFirst}-${fwLast} / 壳 ${first}-${first + range - 1}`,
+  );
+
+  notes.push('烟测仍用 HOST=127.0.0.1：自检不该改动开发机的防火墙，也不该触发 Windows 的「允许访问」弹窗。');
+}
+
 // ───────────────────────── 3. 真实启动烟测（可选） ─────────────────────────
 async function smoke() {
   section('端到端烟测（用本机 node 启动打包后的后端 dist）');
